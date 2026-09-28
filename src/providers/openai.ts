@@ -97,8 +97,12 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
   let usage: any;
   let model: string | undefined;
   const calls: Array<{ id: string; name: string; args: string }> = [];
+  let complete = false;
   for await (const ev of readSse(res)) {
-    if (ev.data === '[DONE]') break;
+    if (ev.data === '[DONE]') {
+      complete = true;
+      break;
+    }
     const chunk = JSON.parse(ev.data);
     if (chunk.error) throw new ProviderError(500, `stream error: ${chunk.error.message ?? JSON.stringify(chunk.error)}`);
     model ??= chunk.model;
@@ -116,8 +120,10 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
       if (tc.function?.name) slot.name += tc.function.name;
       if (tc.function?.arguments) slot.args += tc.function.arguments;
     }
-    if (choice.finish_reason) finish = choice.finish_reason;
+    if (choice.finish_reason) (finish = choice.finish_reason), (complete = true);
   }
+  // A dropped connection must not look like an empty successful answer (retryable 502).
+  if (!complete) throw new ProviderError(502, 'stream ended before completion');
   const parts: Part[] = text ? [{ type: 'text', text }] : [];
   for (const c of calls.filter(Boolean)) parts.push({ type: 'tool_call', id: c.id, name: c.name, args: parseArgs(c.args) });
   const hasCalls = calls.length > 0;

@@ -16,7 +16,8 @@ export function reduce(state: RunState, ev: RunEvent): RunState {
       state.messages.push(ev.data.message);
       break;
     case 'model_response':
-      state.messages.push(ev.data.message);
+      // Empty answers (no text, no tool calls) are accounted for but kept out of the history, so the turn is retried.
+      if (ev.data.message.parts.length) state.messages.push(ev.data.message);
       state.usage = addUsage(state.usage, ev.data.usage);
       state.costUsd += ev.data.costUsd;
       state.turns = Math.max(state.turns, ev.data.turn);

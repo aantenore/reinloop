@@ -116,6 +116,17 @@ describe('loop', () => {
     assert.equal(tool.calls, 1);
   });
 
+  it('retries empty model answers and fails after repeated ones', async () => {
+    const ok = makeAgent([{ usage: { inputTokens: 5, outputTokens: 3 } }, { text: 'finally' }]);
+    const res = await run(ok, 'go');
+    assert.equal(res.output, 'finally');
+    assert.equal(res.turns, 2);
+    assert.equal(res.messages.filter((m) => m.role === 'assistant').length, 1);
+    const bad = await run(makeAgent([{}, {}, {}]), 'go');
+    assert.equal(bad.status, 'failed');
+    assert.match(bad.reason!, /3 empty responses/);
+  });
+
   it('continues a session with new input', async () => {
     const store = memoryStore();
     const agent = makeAgent([{ text: 'first' }, { text: 'second' }]);

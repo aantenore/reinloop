@@ -118,9 +118,13 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
   let usage: any = {};
   let stop: string | undefined;
   let model: string | undefined;
+  let complete = false;
   for await (const ev of readSse(res)) {
     const data = JSON.parse(ev.data);
     switch (data.type) {
+      case 'message_stop':
+        complete = true;
+        break;
       case 'message_start':
         model = data.message?.model;
         usage = { ...data.message?.usage };
@@ -143,6 +147,7 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
         throw new ProviderError(data.error?.type === 'overloaded_error' ? 529 : 500, `stream error: ${data.error?.message ?? ev.data}`);
     }
   }
+  if (!complete) throw new ProviderError(502, 'stream ended before completion');
   for (const [i, raw] of Object.entries(json)) blocks[Number(i)].input = raw ? JSON.parse(raw) : {};
   return { message: { role: 'assistant', parts: toParts(blocks.filter(Boolean)) }, usage: toUsage(usage), stopReason: STOP[stop ?? ''] ?? 'other', model };
 }

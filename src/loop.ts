@@ -15,6 +15,9 @@ export interface RunHandle extends AsyncIterable<RunEvent> {
   abort(reason?: unknown): void;
 }
 
+/** Consecutive empty model answers retried before the run fails. */
+export const MAX_EMPTY_RESPONSES = 2;
+
 /** Feedback sent to the model when a structured final answer fails validation. */
 export const OUTPUT_FEEDBACK = (schema: unknown, problems: string) =>
   `Your final answer must be only JSON matching this schema: ${JSON.stringify(schema)}. Problems: ${problems}`;
@@ -86,6 +89,7 @@ async function drive(
   let data: unknown;
   let outputRetries = agent.output?.retries ?? 1;
   let lastStop: string | undefined;
+  let emptyStreak = 0;
 
   emit('run_start', { agent: agent.name, resumed: prior.length > 0, parentRunId: opts.parentRunId });
   for (const message of normalizeInput(input)) emit('message', { message, source: 'input' });
@@ -179,6 +183,8 @@ async function drive(
         costUsd: res.cached ? 0 : costOf(agent.model.pricing, res.usage),
       });
       await flush();
+      emptyStreak = res.message.parts.length ? 0 : emptyStreak + 1;
+      if (emptyStreak > MAX_EMPTY_RESPONSES) end = { status: 'failed', reason: `model returned ${emptyStreak} empty responses in a row` };
     }
   } catch (err) {
     end = storeFailure.signal.aborted

@@ -107,6 +107,18 @@ describe('anthropic', () => {
   });
 });
 
+describe('truncated streams', () => {
+  it('reports a stream that ends early as a retryable error, then retries', async () => {
+    const cut = sse([{ data: { choices: [{ delta: { content: '' } }] } }]);
+    await assert.rejects(openaiCompatible({ fetch: fakeFetch([cut]).impl, stream: true }).generate(request, { signal }), (e: unknown) => e instanceof ProviderError && e.status === 502);
+    const acut = sse([{ data: { type: 'message_start', message: { usage: { input_tokens: 1 } } } }]);
+    await assert.rejects(anthropic({ fetch: fakeFetch([acut]).impl, stream: true }).generate(request, { signal }), /stream ended before completion/);
+    const f = fakeFetch([cut, sse([{ data: { choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] } }, { data: '[DONE]' }])]);
+    const res = await withRetry(openaiCompatible({ fetch: f.impl, stream: true }), { baseDelayMs: 1 }).generate(request, { signal });
+    assert.equal(res.message.parts[0]!.type === 'text' && res.message.parts[0]!.text, 'ok');
+  });
+});
+
 describe('resilience', () => {
   it('retries retryable errors honouring retry-after, not client errors', async () => {
     const f = fakeFetch([json({ error: 'slow down' }, 429, { 'retry-after-ms': '5' }), json({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] })]);
