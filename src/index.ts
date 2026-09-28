@@ -43,7 +43,7 @@ export { pathGlob } from './tools/node.ts';
 export { serve, type ServeOptions, type Served } from './serve.ts';
 export { serveMcp, type McpServeOptions } from './mcp/server.ts';
 export { describeMembers, type MemberInfo } from './describe.ts';
-export { architect, architectInstructions } from './architect.ts';
+export { architect, architectInstructions, design, validateProject } from './architect.ts';
 export { DEFAULT_BUDGET } from './policy.ts';
 export type { TeamConfig, RoleBinding } from './config/load.ts';
 export { discoverSkills, selectSkills, skillTool, DEFAULT_SKILL_DIRS, type Skill } from './skills.ts';

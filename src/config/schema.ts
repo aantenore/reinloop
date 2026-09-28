@@ -112,7 +112,7 @@ export const CONFIG_SCHEMA: JsonSchema = {
         additionalProperties: false,
         properties: {
           command: str, args: { type: 'array', items: str }, env: strMap, cwd: str, url: str, headers: strMap,
-          prefix: str, risk, include: { type: 'array', items: str }, exclude: { type: 'array', items: str }, timeoutMs: int,
+          prefix: str, risk, include: { type: 'array', items: str }, exclude: { type: 'array', items: str }, readOnly: { type: 'array', items: str }, timeoutMs: int,
         },
       },
     },

@@ -20,6 +20,8 @@ export interface McpServerConfig {
   prefix?: string;
   /** Force a risk level for every tool; otherwise derived from MCP tool annotations. */
   risk?: Risk;
+  /** Globs of tools known to be read-only when the server does not annotate them (risk "read"). */
+  readOnly?: string[];
   include?: string[];
   exclude?: string[];
   timeoutMs?: number;
@@ -235,8 +237,9 @@ export class McpClient {
   }
 }
 
-function riskOf(info: McpToolInfo, forced?: Risk): Risk {
+function riskOf(info: McpToolInfo, forced?: Risk, readOnly?: RegExp[]): Risk {
   if (forced) return forced;
+  if (readOnly?.some((r) => r.test(info.name))) return 'read';
   if (info.annotations?.readOnlyHint) return 'read';
   if (info.annotations?.destructiveHint === false) return 'write';
   return 'exec';
@@ -247,6 +250,7 @@ export async function mcpTools(name: string, cfg: McpServerConfig): Promise<{ cl
   const client = await McpClient.connect(name, cfg);
   const include = cfg.include?.map(globToRegExp);
   const exclude = cfg.exclude?.map(globToRegExp);
+  const readOnly = cfg.readOnly?.map(globToRegExp);
   const prefix = cfg.prefix ?? name;
   const tools = (await client.listTools())
     .filter((t) => (!include || include.some((r) => r.test(t.name))) && !exclude?.some((r) => r.test(t.name)))
@@ -255,7 +259,7 @@ export async function mcpTools(name: string, cfg: McpServerConfig): Promise<{ cl
         name: safeToolName(`${prefix}__${info.name}`),
         description: info.description ?? info.name,
         schema: info.inputSchema ?? { type: 'object', properties: {} },
-        risk: riskOf(info, cfg.risk),
+        risk: riskOf(info, cfg.risk, readOnly),
         run: (args, ctx) => client.callTool(info.name, args, ctx.signal),
       }),
     );

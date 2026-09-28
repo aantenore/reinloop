@@ -6,7 +6,8 @@ import type { Registry } from './registry.ts';
 import { createRegistry } from './registry.ts';
 import { defineTool } from './tools/define.ts';
 import { workspaceTools } from './tools/node.ts';
-import type { Approver, ModelRef, Sink } from './types.ts';
+import type { RunHandle } from './loop.ts';
+import type { Approver, ModelRef, RunResult, Sink } from './types.ts';
 import { errorMessage } from './util.ts';
 
 /** Instructions of the built-in agent that designs agents and teams from a plain-language request. */
@@ -52,6 +53,21 @@ Method:
 5. Finish with a short summary: files created, how to run them (reinloop run -a <name> "task").`;
 }
 
+/** Loads and builds every member as the CLI would; returns the problems (empty when valid). */
+export async function validateProject(cwd: string): Promise<string[]> {
+  try {
+    const rt = await loadProject({ cwd });
+    try {
+      for (const name of rt.names()) await rt.agent(name);
+      return missingCredentials(rt.config);
+    } finally {
+      await rt.close();
+    }
+  } catch (err) {
+    return [errorMessage(err)];
+  }
+}
+
 /** Validates the project on disk exactly as the CLI would load it. */
 function validateTool(cwd: string) {
   return defineTool({
@@ -60,19 +76,8 @@ function validateTool(cwd: string) {
     risk: 'read',
     schema: { type: 'object', properties: {}, additionalProperties: false },
     async run() {
-      try {
-        const rt = await loadProject({ cwd });
-        try {
-          for (const name of rt.names()) await rt.agent(name);
-          const missing = missingCredentials(rt.config);
-          if (missing.length) return { content: missing.join('\n'), isError: true };
-          return `ok: ${rt.names().join(', ')}`;
-        } finally {
-          await rt.close();
-        }
-      } catch (err) {
-        return { content: errorMessage(err), isError: true };
-      }
+      const problems = await validateProject(cwd);
+      return problems.length ? { content: problems.join('\n'), isError: true } : 'ok';
     },
   });
 }
@@ -109,4 +114,26 @@ export function architect(opts: ArchitectOptions): EasyAgent {
     approve: opts.approve,
     sinks: opts.sinks,
   });
+}
+
+/**
+ * Runs the architect and enforces the result: when the files on disk do not validate, the same session is sent
+ * the errors to fix (up to `rounds` times). `onHandle` can render each streamed attempt.
+ */
+export async function design(
+  request: string,
+  opts: ArchitectOptions & { rounds?: number; onHandle?: (handle: RunHandle) => Promise<unknown> },
+): Promise<{ result: RunResult; problems: string[] }> {
+  const designer = architect(opts);
+  let input = request;
+  let runId: string | undefined;
+  for (let round = 0; ; round++) {
+    const handle = designer.stream(input, { runId });
+    await opts.onHandle?.(handle);
+    const result = await handle.result;
+    runId = result.runId;
+    const problems = await validateProject(opts.cwd);
+    if (!problems.length || round >= (opts.rounds ?? 2) || result.status === 'interrupted') return { result, problems };
+    input = `The project does not validate yet. Fix these problems, then call validate_project:\n${problems.map((p) => `- ${p}`).join('\n')}`;
+  }
 }

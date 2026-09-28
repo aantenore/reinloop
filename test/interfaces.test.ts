@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { architect, loadProject, McpClient, mockProvider, serve } from '../src/index.ts';
+import { architect, design, loadProject, McpClient, mockProvider, serve } from '../src/index.ts';
 
 async function project(files: Record<string, string>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'reinloop-if-'));
@@ -71,7 +71,24 @@ describe('architect', () => {
     assert.equal(existsSync(join(dir, 'x.md')), false);
     assert.equal(await readFile(join(dir, 'agents', 'summarizer.md'), 'utf8'), file);
     const validation = res.messages.flatMap((m) => m.parts).find((p) => p.type === 'tool_result' && p.name === 'validate_project');
-    assert.equal(validation?.type === 'tool_result' && validation.content, 'ok: summarizer');
+    assert.equal(validation?.type === 'tool_result' && validation.content, 'ok');
     assert.match(provider.requests[0]!.instructions!, /Patterns:\n- chain:/);
+  });
+
+  it('sends validation errors back until the files are valid', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reinloop-design-'));
+    const pinned = '---\ndescription: d\nmodel: groq/some-model\n---\nDo.';
+    const fixed = '---\ndescription: d\nmodel: mock/echo\n---\nDo.';
+    const provider = mockProvider([
+      { toolCalls: [{ name: 'write_file', args: { path: 'agents/a.md', content: pinned } }] },
+      { text: 'done' },
+      { toolCalls: [{ name: 'write_file', args: { path: 'agents/a.md', content: fixed } }] },
+      { text: 'fixed' },
+    ]);
+    delete process.env.GROQ_API_KEY;
+    const { result, problems } = await design('make an agent', { cwd: dir, model: { provider, model: 'mock' } });
+    assert.deepEqual(problems, []);
+    assert.equal(result.output, 'fixed');
+    assert.match(JSON.stringify(provider.requests[2]!.messages), /GROQ_API_KEY is not set/);
   });
 });

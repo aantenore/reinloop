@@ -4,7 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
-import { architect } from './architect.ts';
+import { design } from './architect.ts';
 import { loadConfig } from './config/load.ts';
 import { addIntegration, INTEGRATIONS } from './integrations.ts';
 import { describeMembers } from './describe.ts';
@@ -154,8 +154,14 @@ async function main(argv: string[]): Promise<number> {
     case 'create': {
       const request = rest.join(' ').trim() || (await readStdin());
       if (!request) throw new Error('usage: reinloop create "what the agents should do"');
-      const designer = architect({ cwd: process.cwd(), model: values.model, approve: approver(values) });
-      return exitCode(await render(designer.stream(request), values));
+      const { result, problems } = await design(request, {
+        cwd: process.cwd(),
+        model: values.model,
+        approve: approver(values),
+        onHandle: (h) => render(h, values),
+      });
+      for (const p of problems) console.error(`still invalid: ${p}`);
+      return problems.length ? 1 : exitCode(result);
     }
     case 'add': {
       const name = rest[0];

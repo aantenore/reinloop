@@ -201,6 +201,12 @@
               "type": "string"
             }
           },
+          "readOnly": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "timeoutMs": {
             "type": "integer",
             "minimum": 0

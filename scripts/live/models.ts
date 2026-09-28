@@ -5,10 +5,14 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
-  agent, architect, loadProject, mcpTools, missingCredentials, resolveModel, team, workspaceTools, type RunResult, type Tool,
+  agent, design, loadProject, mcpTools, missingCredentials, resolveModel, team, workspaceTools, type RunResult, type Tool,
 } from '../../src/index.ts';
 
-const models = process.argv.slice(2).length ? process.argv.slice(2) : ['gemma4:12b', 'gemma4-quick:12b', 'ornith:9b', 'lfm2.5:8b', 'qwen3.5:9b', 'qwen3:4b'];
+// Usage: node scripts/live/models.ts [--only rag,create] [model ...]
+const args = process.argv.slice(2);
+const onlyAt = args.indexOf('--only');
+const only = onlyAt >= 0 ? new Set(args.splice(onlyAt, 2)[1]!.split(',')) : undefined;
+const models = args.length ? args : ['gemma4:12b', 'gemma4-quick:12b', 'ornith:9b', 'lfm2.5:8b', 'qwen3.5:9b', 'qwen3:4b'];
 const TIMEOUT = 8 * 60_000;
 const repo = resolve(new URL('../..', import.meta.url).pathname);
 const out = mkdtempSync(join(tmpdir(), 'reinloop-matrix-'));
@@ -17,6 +21,7 @@ interface Row { model: string; scenario: string; pass: boolean; seconds: number;
 const rows: Row[] = [];
 
 async function timed(model: string, scenario: string, fn: (signal: AbortSignal) => Promise<{ pass: boolean; turns: number; note: string }>) {
+  if (only && !only.has(scenario)) return;
   const t0 = Date.now();
   let row: Row;
   try {
@@ -36,7 +41,7 @@ const brief = (r: RunResult) => `${r.status}${r.reason ? ` (${r.reason})` : ''}:
 const ws = mkdtempSync(join(tmpdir(), 'reinloop-ws-'));
 mkdirSync(join(ws, 'notes'));
 writeFileSync(join(ws, 'notes', 'project.md'), '# Project\n\nThe project codename is BLUE HERON.\n');
-const chroma = await mcpTools('kb', { command: 'uvx', args: ['--python', '3.12', 'chroma-mcp', '--client-type', 'persistent', '--data-dir', join(out, 'chroma')] });
+const chroma = await mcpTools('kb', { command: 'uvx', args: ['--python', '3.12', 'chroma-mcp', '--client-type', 'persistent', '--data-dir', join(out, 'chroma')], readOnly: ['chroma_query_*'] });
 const add = chroma.tools.find((t) => t.name === 'kb__chroma_add_documents')!;
 const ctx = { signal: AbortSignal.timeout(600_000), agent: 'setup', runId: 'setup', state: {} as never, emit: () => {}, inherit: {} } as never;
 await chroma.tools.find((t) => t.name === 'kb__chroma_create_collection')!.run({ collection_name: 'docs' }, ctx);
@@ -83,9 +88,9 @@ for (const name of models) {
 
   await timed(name, 'create', async (signal) => {
     const dir = mkdtempSync(join(tmpdir(), 'reinloop-create-'));
-    const r = await architect({ cwd: dir, model }).run(
+    const { result: r } = await design(
       'A team that writes a short LinkedIn post on a topic: an author drafts and an editor critiques until it is convincing and concrete.',
-      { signal },
+      { cwd: dir, model, onHandle: async (h) => signal.addEventListener('abort', () => h.abort(signal.reason), { once: true }) },
     );
     let valid = 'invalid';
     try {
