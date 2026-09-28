@@ -19,6 +19,8 @@ export interface ProjectOptions {
   config?: string;
   /** Agent directories; default `agents/` and `.reinloop/agents/` when present. */
   agentsDir?: string[];
+  /** Skill directories; default `skills/` and `.reinloop/skills/` when present. */
+  skillsDir?: string[];
   profile?: string;
   env?: Env;
   cwd?: string;
@@ -43,6 +45,7 @@ export async function loadProject(opts: ProjectOptions = {}): Promise<Runtime> {
       throw new ConfigError((err as Error).message);
     }
   }
+  if (opts.skillsDir) config = { ...config, skillsDir: opts.skillsDir };
   if (!Object.keys(config.agents ?? {}).length && !Object.keys(config.teams ?? {}).length) config = { ...config, agents: { assistant: DEFAULT_AGENT } };
   const errors = checkConfig(config);
   if (errors.length) throw new ConfigError(`invalid agents:\n  ${errors.join('\n  ')}`);

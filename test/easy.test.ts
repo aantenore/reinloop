@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
-  agent, collectSink, createRegistry, definePattern, loadProject, mockProvider, paramsSchema, parseAgentFile, parseFrontmatter, resolveModel,
+  agent, checkConfig, collectSink, missingCredentials, createRegistry, definePattern, loadProject, mockProvider, paramsSchema, parseAgentFile, parseFrontmatter, resolveModel,
   team, tool, withResponseCache, memoryCache, workspaceTools, type Agent, type Team, type ToolContext,
 } from '../src/index.ts';
 
@@ -54,6 +54,9 @@ describe('easy api', () => {
     assert.equal(resolveModel('sonnet', {}).provider.name, 'anthropic');
     assert.equal(resolveModel(undefined, {}).provider.name, 'ollama');
     assert.throws(() => resolveModel('nope/x', {}), /unknown provider "nope"/);
+    const cfg = { agents: { a: { model: 'openai/gpt-5-mini' }, b: {}, c: { model: 'ollama/x' } } };
+    assert.deepEqual(missingCredentials(cfg, { REINLOOP_MODEL: 'mock/echo' }).length, 1);
+    assert.deepEqual(missingCredentials(cfg, { OPENAI_API_KEY: 'k' }), []);
   });
 });
 
@@ -156,6 +159,8 @@ Body`);
       roles: { steps: ['a', 'b'] }, nested: [{ key: 'v', other: 2 }], text: 'line 1\nline 2', flag: true,
     });
     assert.equal(body, 'Body');
+    const folded = parseFrontmatter('---\ndescription:\n  Line one\n  continues here.\nname: n\nnote: starts\n  and goes on\n---\n');
+    assert.deepEqual(folded.data, { description: 'Line one continues here.', name: 'n', note: 'starts and goes on' });
   });
 
   it('maps common tool aliases and detects teams', () => {
@@ -164,6 +169,8 @@ Body`);
     const t = parseAgentFile('---\npattern: evaluator\nroles: { generator: a, evaluator: b }\n---\nWrites and reviews.', 'loop');
     assert.deepEqual(t, { kind: 'team', name: 'loop', config: { pattern: 'evaluator', roles: { generator: 'a', evaluator: 'b' }, description: 'Writes and reviews.' } });
     assert.throws(() => parseAgentFile('---\ntool: x\n---\n', 'x'), /unknown field\(s\) tool/);
+    const bad = parseAgentFile('---\noutput: { schema: { type: object, properties: { text: string } } }\n---\n', 'x');
+    assert.match(checkConfig({ agents: { x: bad.config as never } }).join(), /output\.schema\.properties\.text: expected object/);
   });
 
   it('loads a zero-config project from agents/*.md with teams, cache and memory', async () => {

@@ -81,3 +81,27 @@ export function resolveModel(spec: string | ModelRef | undefined, env: Env = pro
   if (!cache.has(key)) cache.set(key, presetProvider(parts.provider, env));
   return { provider: cache.get(key)!, model: parts.model };
 }
+
+/**
+ * Agents whose model resolves to a built-in preset that needs an API key which is not set.
+ * Pure config analysis: nothing is called.
+ */
+export function missingCredentials(
+  config: { agents?: Record<string, { model?: string }>; models?: Record<string, { provider: string }>; providers?: Record<string, unknown>; defaultModel?: string },
+  env: Env = process.env,
+): string[] {
+  const problems: string[] = [];
+  for (const [name, a] of Object.entries(config.agents ?? {})) {
+    let spec = a.model === undefined || a.model === 'inherit' ? (config.defaultModel ?? defaultModel(env)) : a.model;
+    if (spec.includes('${')) continue;
+    if (config.models?.[spec]) continue; // explicit provider config: its own apiKey setting applies
+    spec = MODEL_ALIASES[spec] ?? spec;
+    const parts = splitModel(spec);
+    if (!parts || config.providers?.[parts.provider]) continue;
+    const keyEnv = PRESETS[parts.provider]?.apiKeyEnv;
+    if (keyEnv && !env[keyEnv] && !['ollama', 'lmstudio', 'vllm'].includes(parts.provider)) {
+      problems.push(`agent "${name}" uses ${spec} but ${keyEnv} is not set (set it, or remove "model" to use the default ${defaultModel(env)})`);
+    }
+  }
+  return problems;
+}

@@ -34,6 +34,8 @@ export interface ModelRequest {
   messages: Message[];
   tools: ToolSpec[];
   params?: ModelParams;
+  /** Ask the provider to constrain the answer to this JSON Schema, when it supports native structured output. */
+  responseSchema?: JsonSchema;
 }
 
 export type StopReason = 'end' | 'tool_calls' | 'max_tokens' | 'other';

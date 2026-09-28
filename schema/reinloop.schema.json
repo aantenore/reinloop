@@ -23,6 +23,19 @@
         }
       ]
     },
+    "skillsDir": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
     "extends": {
       "anyOf": [
         {
@@ -502,7 +515,21 @@
             "additionalProperties": false,
             "properties": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "properties": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object"
+                    }
+                  },
+                  "required": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
               },
               "retries": {
                 "type": "integer",
@@ -518,6 +545,12 @@
           },
           "responseCache": {
             "type": "boolean"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "asTool": {
             "type": "object",
@@ -742,7 +775,21 @@
                       "additionalProperties": false,
                       "properties": {
                         "schema": {
-                          "type": "object"
+                          "type": "object",
+                          "properties": {
+                            "properties": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "object"
+                              }
+                            },
+                            "required": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          }
                         },
                         "retries": {
                           "type": "integer",
@@ -758,6 +805,12 @@
                     },
                     "responseCache": {
                       "type": "boolean"
+                    },
+                    "skills": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     },
                     "asTool": {
                       "type": "object",
@@ -965,7 +1018,21 @@
                             "additionalProperties": false,
                             "properties": {
                               "schema": {
-                                "type": "object"
+                                "type": "object",
+                                "properties": {
+                                  "properties": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
                               },
                               "retries": {
                                 "type": "integer",
@@ -981,6 +1048,12 @@
                           },
                           "responseCache": {
                             "type": "boolean"
+                          },
+                          "skills": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
                           },
                           "asTool": {
                             "type": "object",

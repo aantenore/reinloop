@@ -90,6 +90,7 @@ async function drive(
   let outputRetries = agent.output?.retries ?? 1;
   let lastStop: string | undefined;
   let emptyStreak = 0;
+  let correcting = false;
 
   emit('run_start', { agent: agent.name, resumed: prior.length > 0, parentRunId: opts.parentRunId });
   for (const message of normalizeInput(input)) emit('message', { message, source: 'input' });
@@ -122,6 +123,7 @@ async function drive(
           data = checked.data;
           end = { status: 'completed', reason: lastStop === 'max_tokens' ? 'max_tokens' : undefined };
         } else if (outputRetries-- > 0) {
+          correcting = true;
           emit('message', { message: userMessage(OUTPUT_FEEDBACK(agent.output!.schema, checked.error)), source: 'harness' });
         } else {
           end = { status: 'failed', reason: `invalid structured output: ${checked.error}` };
@@ -165,6 +167,9 @@ async function drive(
       const turn = state.turns + 1;
       emit('turn_start', { turn });
       let req: ModelRequest = { model: agent.model.model, instructions: agent.instructions, messages: [...state.messages], tools: specs, params: agent.model.params };
+      // Native schema-constrained decoding would block tool calls, so it is used when the agent has no tools
+      // or once the model is only being asked to fix its final JSON.
+      if (agent.output && (!specs.length || correcting)) req.responseSchema = agent.output.schema;
       for (const mw of agent.middleware ?? []) req = (await mw.beforeModel?.(req, hookCtx)) ?? req;
       emit('model_request', { turn, model: req.model, messages: req.messages.length, estTokens: contextTokens(state, agent, specs) });
 
@@ -263,15 +268,31 @@ export function costOf(pricing: Pricing | undefined, usage: Usage): number {
 
 type OutputCheck = { ok: true; data?: unknown } | { ok: false; error: string };
 
+/** Tolerant JSON extraction: code fences, surrounding prose, and `\'` escapes that small models emit. */
+export function parseJsonLoose(text: string): unknown {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/, '$1');
+  const start = trimmed.search(/[{[]/);
+  const end = Math.max(trimmed.lastIndexOf('}'), trimmed.lastIndexOf(']'));
+  const candidates = [trimmed];
+  if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1));
+  for (const c of [...candidates, ...candidates.map((c) => c.replace(/\\'/g, "'"))]) {
+    try {
+      return JSON.parse(c);
+    } catch {
+      // try the next candidate
+    }
+  }
+  return undefined;
+}
+
 function checkOutput(agent: Agent, text: string): OutputCheck {
   if (!agent.output) return { ok: true };
-  const candidate = text.trim().replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/, '$1');
-  let data: unknown;
-  try {
-    data = JSON.parse(candidate);
-  } catch {
-    return { ok: false, error: 'not valid JSON' };
-  }
+  const data = parseJsonLoose(text);
+  if (data === undefined) return { ok: false, error: 'not valid JSON' };
   const errors = validate(agent.output.schema, data, '$');
-  return errors.length ? { ok: false, error: errors.join('; ') } : { ok: true, data };
+  if (!errors.length) return { ok: true, data };
+  // Some models echo the schema shape ({ type, properties: {...values} }): accept the values when they validate.
+  const inner = (data as { properties?: unknown })?.properties;
+  if (inner && typeof inner === 'object' && !validate(agent.output.schema, inner, '$').length) return { ok: true, data: inner };
+  return { ok: false, error: errors.join('; ') };
 }

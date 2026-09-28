@@ -1,0 +1,39 @@
+# Models it has been run against
+
+Results from real runs, with dates. "Contract tests" means the wire format is covered by unit tests with recorded
+request/response shapes, but no live call was made. Please add a row when you run it against something new.
+
+| Model | Provider path | Date | What was exercised | Result |
+|---|---|---|---|---|
+| deterministic mock | `mock/echo`, scripted `mockProvider` | every CI run | the whole test suite: loop, tools, policy, resume, teams, patterns, serve, MCP, skills, OTLP | passing on Node 22 and 24 |
+| qwen3.5:9b (local) | `ollama/qwen3.5:9b` via Ollama's OpenAI-compatible API, streaming | 2026-09-28 | quickstart agent: tool calls (`find_files`, `list_dir`, `read_file`), multi-turn `chat` session, Italian answers, native JSON-schema output | works |
+| qwen3.5:9b (local) | same | 2026-09-28 | `reinloop create` (architect writes and validates agent files) | works, but weak: needs several validation rounds, ignores some instructions (for example it adds a `model:` line). Larger models are recommended for `create`. |
+| qwen3.5:9b (local) | same | 2026-09-28 | evaluator team (writer + editor) | see "Findings" |
+| OpenAI (GPT-5 family) | `openai/...` | – | contract tests only (Chat Completions, streaming, tool calls, `max_completion_tokens`, `response_format`) | not yet run live |
+| Anthropic (Claude family) | `anthropic/...` | – | contract tests only (Messages API, streaming, tool use, cache breakpoints) | not yet run live |
+| Gemini, OpenRouter, Groq, Mistral, DeepSeek, xAI, Together, LM Studio, vLLM | presets over the OpenAI-compatible adapter | – | none beyond the shared adapter's tests | not yet run live |
+
+## Findings from real runs
+
+Running against a local reasoning model found four problems that the mocked tests could not. All four are fixed and
+now covered by tests:
+
+1. **Truncated streams.** A connection that dropped mid-stream (Ollama loading a model) produced an empty
+   "successful" answer. Streams that end without `finish_reason` / `[DONE]` (or `message_stop`) are now a retryable
+   error.
+2. **Empty turns.** Reasoning models sometimes think and then end the turn with no text and no tool call. Such turns
+   now stay out of the history and are retried, and the run fails after three in a row.
+3. **Invalid JSON from small models.** Answers had `\'` escapes, prose around the JSON, or the JSON wrapped in a copy
+   of the schema. The harness now asks for native schema-constrained output (`response_format: json_schema`) when
+   the agent has no tools or is only fixing its answer, parses tolerantly, and accepts schema-wrapped values.
+4. **Architect output.** Generated files used an invalid output schema (`text: "string"`), contradicted the pattern's
+   JSON contract, and pinned a model without a key. There is now a schema shape check, explicit pattern contracts in
+   the architect prompt, and a validation error for models whose API key is missing.
+
+## Practical guidance
+
+- Tool calling and chat work well with 8-9B local models. Multi-agent quality loops and `create` benefit from larger
+  or hosted models.
+- Reasoning models spend many output tokens thinking. Set `budget.maxTotalTokens` or `maxDurationMs` accordingly.
+- For deterministic tests of your own agents, use `mock/echo` or scripted `mockProvider`, plus the exact
+  `responseCache` in a `ci` profile.

@@ -1,6 +1,6 @@
 import { normalize, sep } from 'node:path';
 import { agent, type EasyAgent } from './easy.ts';
-import { PRESETS } from './presets.ts';
+import { missingCredentials, PRESETS } from './presets.ts';
 import { loadProject } from './project.ts';
 import type { Registry } from './registry.ts';
 import { createRegistry } from './registry.ts';
@@ -20,10 +20,11 @@ export function architectInstructions(registry: Registry): string {
 Agent file (agents/<name>.md):
 ---
 description: one line saying what the agent does (used for delegation and routing)
-model: provider/model   # optional; omit to use the project default. Providers: ${Object.keys(PRESETS).join(', ')}
+model: provider/model   # OMIT unless the user names a model: the project default is used. Providers: ${Object.keys(PRESETS).join(', ')}
 tools: [tool, other-agent]   # built-in tools: ${tools}; any agent or team name delegates to it
 budget: { maxTurns: 20 }     # optional: maxTurns, maxToolCalls, maxTotalTokens, maxCostUsd, maxDurationMs
 output: { schema: { type: object, properties: { ... }, required: [...] } }   # optional structured answer
+skills: [skill-name]         # optional Agent Skills (folders with SKILL.md in skills/)
 ---
 Instructions in plain Markdown: role, goal, method, output format, constraints.
 
@@ -38,9 +39,14 @@ options: { ... }   # optional
 Patterns:
 ${patterns}
 
+Contracts the harness enforces (do not contradict them in instructions):
+- evaluator pattern: the evaluator must answer { "pass": boolean, "feedback": string }; the harness adds this schema. Tell it what to judge, not the format. The generator answers in plain text.
+- router pattern: the router must answer { "route": <name>, "reason": string }; routes are chosen from their description fields.
+- Add "output" to an agent only when its caller needs JSON. Schema properties are objects: { "field": { "type": "string" } }.
+
 Method:
 1. Choose the simplest design that satisfies the request: one agent beats a team; add a team only for a clear reason (quality loop, parallel work, routing).
-2. Give each agent only the tools it needs. Prefer read-only tools; add write_file, edit_file or shell only when required.
+2. Do not set "model" unless the user asked for a specific one. Give each agent only the tools it needs. Prefer read-only tools; add write_file, edit_file or shell only when required.
 3. Write concrete, specific instructions; no filler.
 4. Write the files with write_file, then call validate_project and fix every reported error.
 5. Finish with a short summary: files created, how to run them (reinloop run -a <name> "task").`;
@@ -58,6 +64,8 @@ function validateTool(cwd: string) {
         const rt = await loadProject({ cwd });
         try {
           for (const name of rt.names()) await rt.agent(name);
+          const missing = missingCredentials(rt.config);
+          if (missing.length) return { content: missing.join('\n'), isError: true };
           return `ok: ${rt.names().join(', ')}`;
         } finally {
           await rt.close();

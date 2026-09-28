@@ -11,6 +11,7 @@ import { withFallback } from '../providers/resilient.ts';
 import { createRegistry, type FactoryContext, type Registry } from '../registry.ts';
 import { fileArtifacts } from '../store/file.ts';
 import { agentTool } from '../subagent.ts';
+import { DEFAULT_SKILL_DIRS, discoverSkills, selectSkills, skillTool, type Skill } from '../skills.ts';
 import { type Member, streamMember } from '../team.ts';
 import { memoryArtifacts, readArtifactTool } from '../tools/define.ts';
 import type { Agent, ArtifactStore, Message, ModelRef, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
@@ -128,6 +129,12 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     return Object.entries(config.mcpServers ?? {}).find(([name, s]) => (s.prefix ?? name) === prefix && pattern.includes('__'))?.[0];
   };
 
+  let skills: Promise<Skill[]> | undefined;
+  const allSkills = () => {
+    const dirs = config.skillsDir === undefined ? DEFAULT_SKILL_DIRS : Array.isArray(config.skillsDir) ? config.skillsDir : [config.skillsDir];
+    return (skills ??= discoverSkills(dirs, baseDir));
+  };
+
   const agentDefs = config.agents ?? {};
   const teamDefs = config.teams ?? {};
   const built = new Map<string, Promise<Member>>();
@@ -179,6 +186,14 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       model.provider = withResponseCache(model.provider, responseCache, { ttlMs, namespace });
     }
     const tools = await resolveTools(name, a.tools ?? [], stack);
+    if (a.skills?.length) {
+      try {
+        const chosen = selectSkills(await allSkills(), a.skills);
+        if (chosen.length) tools.push(skillTool(chosen));
+      } catch (err) {
+        throw new ConfigError(`$.agents.${name}.skills: ${(err as Error).message}`);
+      }
+    }
     const instructions = a.instructions?.startsWith('file:') ? await readFile(resolve(baseDir, a.instructions.slice(5)), 'utf8') : a.instructions;
     const middleware = await Promise.all(
       (a.middleware ?? []).map((m, i) => make('middleware', registry.middleware, { type: m }, `$.agents.${name}.middleware[${i}]`)),

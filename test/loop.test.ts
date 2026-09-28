@@ -81,6 +81,20 @@ describe('loop', () => {
     assert.match(bad.reason!, /\$\.n: required/);
   });
 
+  it('parses sloppy JSON, unwraps schema echoes and requests native schemas without tools', async () => {
+    const schema = { type: 'object', properties: { pass: { type: 'boolean' }, note: { type: 'string' } }, required: ['pass'] };
+    const sloppy = makeAgent([{ text: String.raw`Sure! {"pass": true, "note": "d\'uso"} hope it helps` }], { output: { schema } });
+    const a = await run(sloppy, 'go');
+    assert.deepEqual(a.data, { pass: true, note: "d'uso" });
+    assert.deepEqual(sloppy.provider.requests[0]!.responseSchema, schema);
+    const echo = await run(makeAgent([{ text: '{"type":"object","properties":{"pass":false}}' }], { output: { schema } }), 'go');
+    assert.deepEqual(echo.data, { pass: false });
+    const withTools = makeAgent([{ text: 'nope' }, { text: '{"pass":true}' }], { tools: [echoTool()], output: { schema } });
+    await run(withTools, 'go');
+    assert.equal(withTools.provider.requests[0]!.responseSchema, undefined, 'no constrained decoding while tools may be called');
+    assert.deepEqual(withTools.provider.requests[1]!.responseSchema, schema, 'constrained when only fixing the JSON');
+  });
+
   it('resumes a crashed run without re-executing completed tools', async () => {
     const store = memoryStore();
     const tool = echoTool();

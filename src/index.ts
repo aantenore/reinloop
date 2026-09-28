@@ -33,7 +33,7 @@ export { ReinloopError, ProviderError, userMessage, textOf, toolCallsOf } from '
 export { agent, team, tool, paramsSchema, type AgentOptions, type EasyAgent, type EasyTeam, type Runnable, type Session, type ToolExtras } from './easy.ts';
 export { isTeam, runMember, streamMember, streamTeam, type Member, type Team, type TeamContext, type TeamOutcome } from './team.ts';
 export { BUILTIN_PATTERNS, TEMPLATES, createTeam, definePattern, fill, type PatternDefinition, type RoleSpec } from './patterns.ts';
-export { PRESETS, MODEL_ALIASES, defaultModel, presetProvider, resolveModel, splitModel, type ProviderPreset } from './presets.ts';
+export { PRESETS, MODEL_ALIASES, defaultModel, missingCredentials, presetProvider, resolveModel, splitModel, type ProviderPreset } from './presets.ts';
 export { parseAgentFile, loadAgentDir, withAgentFiles, TOOL_ALIASES, DEFAULT_AGENT_DIRS, type ParsedFile } from './agentfile.ts';
 export { parseFrontmatter, parseYaml } from './frontmatter.ts';
 export { loadProject, DEFAULT_AGENT, CONFIG_FILE, type ProjectOptions } from './project.ts';
@@ -46,3 +46,6 @@ export { describeMembers, type MemberInfo } from './describe.ts';
 export { architect, architectInstructions } from './architect.ts';
 export { DEFAULT_BUDGET } from './policy.ts';
 export type { TeamConfig, RoleBinding } from './config/load.ts';
+export { discoverSkills, selectSkills, skillTool, DEFAULT_SKILL_DIRS, type Skill } from './skills.ts';
+export { otlpSink, type OtlpOptions } from './observe/otlp.ts';
+export { INTEGRATIONS, addIntegration, type Integration } from './integrations.ts';

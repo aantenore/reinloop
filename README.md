@@ -71,6 +71,20 @@ reinloop create "a team that triages GitHub issues and drafts replies, with a re
 A built-in architect agent writes the agent and team files. It validates them and fixes its own errors. It can only
 write inside `agents/`. The result is plain files you own, version and edit, not a canvas locked inside a tool.
 
+## Connect what already exists
+
+reinloop does not ship a vector DB, an eval platform or guardrail models. It connects the maintained ones through
+open standards: MCP for tools, RAG and memory; Agent Skills for procedures; OpenAI-compatible gateways; OTLP for
+tracing.
+
+```bash
+reinloop add            # catalogue: qdrant, chroma, memory-graph, fetch, git, github, playwright, litellm, otel, langfuse, promptfoo
+reinloop add qdrant     # writes the MCP config; then give an agent  tools: [qdrant__*]
+```
+
+Skills in the open `SKILL.md` format are loaded on demand with `skills: [name]`. See [docs/integrations.md](docs/integrations.md),
+which also explains what is deliberately not built and why (for example, why semantic caching stays out of the agent loop).
+
 ## Use them anywhere
 
 ```bash
@@ -107,12 +121,15 @@ too. See [docs/architecture.md](docs/architecture.md).
 | Long tasks | Compaction (`window` or `summarize`); large tool outputs offloaded to artifacts with a paging tool |
 | Speed | Parallel tool calls, streaming, ~30 ms cold import, ~20 µs kernel overhead per turn |
 | Caching | Provider prompt caching (Anthropic breakpoints, stable prefixes); optional response cache (memory/file, TTL) for dev, tests and evals |
-| Memory | `remember` / `recall` tools with durable notes, shared or per agent |
+| Memory | `remember` / `recall` tools with durable notes, shared or per agent; richer memory via MCP |
+| Skills | Open Agent Skills (`SKILL.md` folders), progressively disclosed |
+| Structured output | JSON Schema validated with retries; native `response_format` when the provider supports it; tolerant parsing |
 | Tools | Built-ins (files, search, edit, shell), MCP servers (stdio/HTTP), your functions, other agents and teams |
-| Observability | Typed events, console, JSONL traces, OpenTelemetry GenAI spans. Nothing leaves your machine unless you add a sink. |
+| Observability | Typed events, console, JSONL traces, OTLP export with OpenTelemetry GenAI spans. Nothing leaves your machine unless you add a sink. |
 | Extension | Plugins register providers, tools, patterns, stores, sinks, caches, compaction and middleware by name |
 
 Configuration reference: [docs/configuration.md](docs/configuration.md). Agent file format: [docs/agent-files.md](docs/agent-files.md).
+Models it has been run against, with results: [docs/models.md](docs/models.md).
 
 ## Why another agent framework?
 

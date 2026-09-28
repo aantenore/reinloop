@@ -6,11 +6,12 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { architect } from './architect.ts';
 import { loadConfig } from './config/load.ts';
+import { addIntegration, INTEGRATIONS } from './integrations.ts';
 import { describeMembers } from './describe.ts';
 import type { RunHandle } from './loop.ts';
 import { serveMcp } from './mcp/server.ts';
 import { consoleSink } from './observe/sinks.ts';
-import { defaultModel } from './presets.ts';
+import { defaultModel, missingCredentials } from './presets.ts';
 import { CONFIG_FILE, loadProject } from './project.ts';
 import { serve } from './serve.ts';
 import type { Approver, RunResult } from './types.ts';
@@ -23,6 +24,7 @@ const HELP = `reinloop — agents as files, harness included
   reinloop new <name>            Create agents/<name>.md from a template
   reinloop create "description"  Let the architect agent design agents/teams for you
   reinloop list                  List agents and teams
+  reinloop add [integration]     Connect an existing technology (RAG, memory, GitHub, tracing, evals...)
   reinloop serve                 HTTP API + web console (default http://127.0.0.1:8787)
   reinloop mcp                   Expose agents as MCP tools over stdio
   reinloop resume <runId> [task] Resume an interrupted run or continue a session
@@ -33,6 +35,7 @@ Options:
   -m, --model <p/model>   Model for new/create (default: $REINLOOP_MODEL or auto-detected)
   -c, --config <file>     Config file (default: ${CONFIG_FILE} when present)
       --agents <dir>      Agent files directory (default: agents/ and .reinloop/agents/)
+      --skills <dir>      Agent Skills directory (default: skills/ and .reinloop/skills/)
   -p, --profile <name>    Config profile overlay
   -y, --yes               Approve tool calls that policy marks "ask"
       --json              Print events as JSON lines
@@ -116,6 +119,7 @@ async function main(argv: string[]): Promise<number> {
       model: { type: 'string', short: 'm' },
       config: { type: 'string', short: 'c' },
       agents: { type: 'string', multiple: true },
+      skills: { type: 'string', multiple: true },
       profile: { type: 'string', short: 'p' },
       yes: { type: 'boolean', short: 'y' },
       json: { type: 'boolean' },
@@ -133,7 +137,7 @@ async function main(argv: string[]): Promise<number> {
     console.log(HELP);
     return values.help ? 0 : 1;
   }
-  const project = () => loadProject({ config: values.config, agentsDir: values.agents, profile: values.profile });
+  const project = () => loadProject({ config: values.config, agentsDir: values.agents, skillsDir: values.skills, profile: values.profile });
 
   switch (command) {
     case 'new':
@@ -153,11 +157,24 @@ async function main(argv: string[]): Promise<number> {
       const designer = architect({ cwd: process.cwd(), model: values.model, approve: approver(values) });
       return exitCode(await render(designer.stream(request), values));
     }
+    case 'add': {
+      const name = rest[0];
+      if (!name) {
+        const width = Math.max(...Object.keys(INTEGRATIONS).map((k) => k.length));
+        for (const [key, it] of Object.entries(INTEGRATIONS)) console.log(`${key.padEnd(width)}  ${it.kind.padEnd(13)} ${it.description}`);
+        console.log('\nreinloop add <name>   (writes the configuration; the technology itself stays upstream)');
+        return 0;
+      }
+      const { changed, next } = await addIntegration(name, { configPath: values.config ?? CONFIG_FILE, agent: values.agent });
+      console.log(`updated ${changed} (source: ${INTEGRATIONS[name]!.source})\nnext:\n${next.map((n) => `  - ${n}`).join('\n')}`);
+      return 0;
+    }
     case 'validate': {
       if (values.config) await loadConfig(values.config, { profile: values.profile });
       const rt = await project();
       try {
         for (const name of rt.names()) await rt.agent(name);
+        for (const warning of missingCredentials(rt.config)) console.error(`warning: ${warning}`);
         console.log(`ok: ${rt.names().join(', ')}`);
       } finally {
         await rt.close();

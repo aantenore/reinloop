@@ -41,6 +41,16 @@ describe('openai-compatible', () => {
     assert.deepEqual(res.usage, { inputTokens: 20, outputTokens: 5, cacheReadTokens: 8 });
   });
 
+  it('sends native structured output unless disabled', async () => {
+    const reply = json({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] });
+    const schema = { type: 'object', properties: {} };
+    const f = fakeFetch([reply, reply]);
+    await openaiCompatible({ fetch: f.impl }).generate({ ...request, responseSchema: schema }, { signal });
+    assert.deepEqual(f.requests[0]!.body.response_format, { type: 'json_schema', json_schema: { name: 'output', schema, strict: false } });
+    await openaiCompatible({ fetch: f.impl, structuredOutput: false }).generate({ ...request, responseSchema: schema }, { signal });
+    assert.equal(f.requests[1]!.body.response_format, undefined);
+  });
+
   it('assembles streamed text and tool call deltas', async () => {
     const f = fakeFetch([
       sse([

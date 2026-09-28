@@ -10,6 +10,8 @@ export interface OpenAICompatibleOptions {
   stream?: boolean;
   /** Newer OpenAI models require `max_completion_tokens`; most compatible servers accept `max_tokens`. */
   maxTokensParam?: 'max_tokens' | 'max_completion_tokens';
+  /** Send `response_format: json_schema` when a schema is requested (default true; disable for servers that reject it). */
+  structuredOutput?: boolean;
   fetch?: FetchLike;
 }
 
@@ -32,6 +34,9 @@ export function openaiCompatible(opts: OpenAICompatibleOptions = {}): Provider {
         ...(p.topP !== undefined && { top_p: p.topP }),
         ...(p.stop && { stop: p.stop }),
         ...(p.maxTokens !== undefined && { [opts.maxTokensParam ?? 'max_tokens']: p.maxTokens }),
+        ...(req.responseSchema && opts.structuredOutput !== false && {
+          response_format: { type: 'json_schema', json_schema: { name: 'output', schema: req.responseSchema, strict: false } },
+        }),
         ...(stream && { stream: true, stream_options: { include_usage: true } }),
         ...p.extra,
       };

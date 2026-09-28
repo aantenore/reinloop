@@ -4,6 +4,7 @@ import { summarizeCompaction, windowCompaction } from './compaction.ts';
 import type { Env, HarnessConfig } from './config/load.ts';
 import { BUILTIN_PATTERNS, type PatternDefinition } from './patterns.ts';
 import { fileNotes, memoryNotes, memoryTools } from './tools/memory.ts';
+import { otlpSink } from './observe/otlp.ts';
 import { consoleSink, jsonlSink } from './observe/sinks.ts';
 import { anthropic } from './providers/anthropic.ts';
 import { mockProvider } from './providers/mock.ts';
@@ -61,6 +62,7 @@ export function createRegistry(): Registry {
   r.stores.set('file', (o, ctx) => fileStore(resolve(ctx.baseDir, o.dir ?? '.reinloop/runs')));
 
   r.sinks.set('console', (o) => consoleSink({ level: o.level }));
+  r.sinks.set('otlp', (o) => otlpSink({ endpoint: o.endpoint ?? 'http://localhost:4318', headers: o.headers, serviceName: o.serviceName, captureContent: o.captureContent, intervalMs: o.intervalMs }));
   r.sinks.set('jsonl', (o, ctx) => jsonlSink(resolve(ctx.baseDir, o.dir ?? '.reinloop/traces'), { includeDeltas: o.includeDeltas }));
 
   r.compaction.set('window', (o) => windowCompaction(o));

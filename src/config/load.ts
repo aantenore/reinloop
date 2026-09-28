@@ -25,6 +25,8 @@ export interface AgentConfig {
   asTool?: { name?: string; description: string; context?: 'fresh' | 'fork' };
   /** Set to false to bypass the global response cache for this agent. */
   responseCache?: boolean;
+  /** Agent Skills (names or globs) this agent may load. */
+  skills?: string[];
 }
 
 /** A role is filled by an agent/team name, an inline agent definition, or a list of them. */
@@ -46,6 +48,8 @@ export interface HarnessConfig {
   defaultModel?: string;
   /** Directories with Markdown agent files (default: agents/ and .reinloop/agents/ when present). */
   agentsDir?: string | string[];
+  /** Directories with Agent Skills (folders containing SKILL.md); default skills/ and .reinloop/skills/. */
+  skillsDir?: string | string[];
   providers?: Record<string, ComponentConfig>;
   models?: Record<string, { provider: string; model: string; params?: ModelParams; pricing?: Pricing; fallback?: string[] }>;
   mcpServers?: Record<string, McpServerConfig>;

@@ -67,12 +67,26 @@ function parseMap(lines: Line[], start: number, indent: number, src: string): [R
       out[key] = rest.startsWith('|') ? body.join('\n') : body.join(' ').replace(/\s+/g, ' ').trim();
       while (i < lines.length && lines[i]!.num <= j) i++;
     } else if (rest === undefined || rest === '') {
-      if (i < lines.length && lines[i]!.indent > indent) [out[key], i] = parseBlock(lines, i, lines[i]!.indent, src);
+      if (i < lines.length && lines[i]!.indent > indent && !isSeqItem(lines[i]!) && !KEY.test(lines[i]!.text)) {
+        [out[key], i] = plainContinuation(lines, i, indent, '');
+      } else if (i < lines.length && lines[i]!.indent > indent) [out[key], i] = parseBlock(lines, i, lines[i]!.indent, src);
       else if (i < lines.length && lines[i]!.indent === indent && isSeqItem(lines[i]!)) [out[key], i] = parseSeq(lines, i, indent, src);
       else out[key] = null;
+    } else if (!/^["'[{]/.test(rest) && i < lines.length && lines[i]!.indent > indent) {
+      [out[key], i] = plainContinuation(lines, i, indent, rest); // plain scalar folded over several lines
     } else out[key] = parseInline(rest, line.num);
   }
   return [out, i];
+}
+
+const KEY = /^("[^"]*"|'[^']*'|[^:\s][^:]*?)\s*:(\s|$)/;
+
+/** Multi-line plain scalar: deeper-indented lines are folded into one string with single spaces. */
+function plainContinuation(lines: Line[], start: number, indent: number, first: string): [string, number] {
+  const parts = first ? [first] : [];
+  let i = start;
+  while (i < lines.length && lines[i]!.indent > indent) parts.push(lines[i++]!.text);
+  return [parts.join(' '), i];
 }
 
 function parseSeq(lines: Line[], start: number, indent: number, src: string): [unknown[], number] {

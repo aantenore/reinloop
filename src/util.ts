@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { Message, ToolCallPart, Usage } from './types.ts';
 
 export class ReinloopError extends Error {
@@ -78,4 +80,9 @@ export function truncate(text: string, max: number): string {
 
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** Expands a leading `~/` to the home directory (for user-level agent and skill folders). */
+export function expandHome(path: string): string {
+  return path === '~' ? homedir() : path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
 }

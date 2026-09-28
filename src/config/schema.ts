@@ -4,6 +4,11 @@ const str = { type: 'string' };
 const num = { type: 'number', minimum: 0 };
 const int = { type: 'integer', minimum: 0 };
 const strMap = { type: 'object', additionalProperties: str };
+/** Shallow shape check of a JSON Schema: catches `{ text: "string" }` instead of `{ text: { type: "string" } }`. */
+const jsonSchema = {
+  type: 'object',
+  properties: { properties: { type: 'object', additionalProperties: { type: 'object' } }, required: { type: 'array', items: { type: 'string' } } },
+};
 const decision = { enum: ['allow', 'deny', 'ask'] };
 const risk = { enum: ['read', 'write', 'exec'] };
 
@@ -51,9 +56,10 @@ properties: {
   policy,
   budget,
   compaction: { type: 'object', required: ['type', 'thresholdTokens'], properties: { type: str, thresholdTokens: int } },
-  output: { type: 'object', required: ['schema'], additionalProperties: false, properties: { schema: { type: 'object' }, retries: int } },
+  output: { type: 'object', required: ['schema'], additionalProperties: false, properties: { schema: jsonSchema, retries: int } },
   middleware: { type: 'array', items: str },
   responseCache: { type: 'boolean' },
+  skills: { type: 'array', items: str },
   asTool: {
     type: 'object',
     additionalProperties: false,
@@ -74,6 +80,7 @@ export const CONFIG_SCHEMA: JsonSchema = {
     $schema: str,
     defaultModel: str,
     agentsDir: { anyOf: [str, { type: 'array', items: str }] },
+    skillsDir: { anyOf: [str, { type: 'array', items: str }] },
     extends: { anyOf: [str, { type: 'array', items: str }] },
     plugins: { type: 'array', items: str },
     defaultAgent: str,

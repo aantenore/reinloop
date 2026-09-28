@@ -12,6 +12,7 @@ registry, so plugins can add their own. Editors get completion from `schema/rein
   "defaultAgent": "ship",
   "defaultModel": "${env:REINLOOP_MODEL:-anthropic/claude-sonnet-5}",
   "agentsDir": ["agents", "shared/agents"],
+  "skillsDir": ["skills", "~/team-skills"],
 
   "providers": {
     "corp": { "type": "openai-compatible", "baseUrl": "https://llm.internal/v1", "apiKey": "${env:CORP_KEY}", "stream": true, "retry": { "maxAttempts": 4 } }
@@ -55,7 +56,7 @@ needs it is built, so an unused provider never blocks a run.
 
 | Section | Notes |
 |---|---|
-| `providers.<name>` | `type`: `openai-compatible` (`baseUrl`, `apiKey`, `headers`, `stream`, `maxTokensParam`), `anthropic` (`baseUrl`, `apiKey`, `version`, `stream`, `cache`, `defaultMaxTokens`), `mock` (`responses`, `loop`), or a plugin type. `retry: false \| { maxAttempts, baseDelayMs, maxDelayMs, retryOn }` (retries are on by default). A provider named `x` makes `x/<model>` strings work. |
+| `providers.<name>` | `type`: `openai-compatible` (`baseUrl`, `apiKey`, `headers`, `stream`, `maxTokensParam`, `structuredOutput`), `anthropic` (`baseUrl`, `apiKey`, `version`, `stream`, `cache`, `defaultMaxTokens`), `mock` (`responses`, `loop`), or a plugin type. `retry: false \| { maxAttempts, baseDelayMs, maxDelayMs, retryOn }` (retries are on by default). A provider named `x` makes `x/<model>` strings work. |
 | `models.<alias>` | `provider`, `model`, `params`, `pricing` (USD per million tokens, used for cost budgets), `fallback` (aliases tried in order). |
 | `mcpServers.<name>` | stdio (`command`, `args`, `env`, `cwd`) or HTTP (`url`, `headers`); `prefix`, `include`/`exclude` globs, `risk` (otherwise derived from tool annotations), `timeoutMs`. Tools appear as `<prefix>__<tool>`. |
 | `tools` | Workspace root and execution limits; `artifacts: none \| memory \| file` enables offloading when an agent lists `read_artifact`. |
@@ -63,7 +64,8 @@ needs it is built, so an unused provider never blocks a run.
 | `store` | `memory` or `file`: the event log used for sessions and resume. |
 | `responseCache` | `memory` or `file` (+ `ttlMs`, `namespace`): identical requests replay at zero cost. Agents opt out with `responseCache: false`. |
 | `memory` | Backing store for `remember` / `recall`; `scope: shared \| agent`. |
-| `sinks` | `console`, `jsonl`, or plugin sinks (for example OpenTelemetry). |
+| `sinks` | `console`, `jsonl`, `otlp` (`endpoint`, `headers`, `serviceName`, `captureContent`), or plugin sinks. |
+| `skillsDir` | Folders with Agent Skills (default `skills/`, `.reinloop/skills/`). |
 | `agents`, `teams` | Same fields as agent files ([agent-files.md](agent-files.md), [patterns.md](patterns.md)). |
 
 ## Plugins

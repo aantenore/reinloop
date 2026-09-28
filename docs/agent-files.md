@@ -34,6 +34,7 @@ You review code. Report only concrete defects with file and line.
 | `middleware` | Names registered by plugins. |
 | `asTool` | `{ name, description, context: fresh \| fork }` to customise how other agents delegate to it. |
 | `responseCache` | `false` to bypass the global response cache. |
+| `skills` | Agent Skills (names or globs) the agent may load on demand; see [integrations.md](integrations.md#skills). |
 
 ## Models
 

@@ -3,6 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import type { AgentConfig, HarnessConfig, TeamConfig } from './config/load.ts';
 import { parseFrontmatter } from './frontmatter.ts';
+import { expandHome } from './util.ts';
 
 /** Tool names used by other agent-file ecosystems, mapped to built-in tools. */
 export const TOOL_ALIASES: Record<string, string> = {
@@ -19,7 +20,7 @@ export const TOOL_ALIASES: Record<string, string> = {
 /** Directories scanned for `*.md` agents when nothing else is configured. */
 export const DEFAULT_AGENT_DIRS = ['agents', '.reinloop/agents'];
 
-const FIELDS = new Set(['name', 'description', 'model', 'tools', 'params', 'policy', 'budget', 'compaction', 'output', 'middleware', 'asTool', 'responseCache']);
+const FIELDS = new Set(['name', 'description', 'model', 'tools', 'params', 'policy', 'budget', 'compaction', 'output', 'middleware', 'asTool', 'responseCache', 'skills']);
 const TEAM_FIELDS = new Set(['name', 'description', 'pattern', 'roles', 'options']);
 
 /** Keys from other agent-file formats that have no meaning here and are skipped. */
@@ -76,7 +77,7 @@ export async function withAgentFiles(config: HarnessConfig, baseDir: string, dir
   const agents: Record<string, AgentConfig> = { ...config.agents };
   const teams: Record<string, TeamConfig> = { ...config.teams };
   for (const dir of list) {
-    const abs = resolve(baseDir, dir);
+    const abs = resolve(baseDir, expandHome(dir));
     if (!existsSync(abs)) {
       if (dirs || configured) throw new Error(`agents directory not found: ${abs}`);
       continue;
