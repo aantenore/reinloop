@@ -197,7 +197,9 @@ async function main(argv: string[]): Promise<number> {
         let runId: string | undefined;
         console.error(`chat with ${values.agent ?? (rt.config.defaultAgent || rt.names()[0])} — empty line or /exit to quit`);
         for (;;) {
-          const line = (await getRl().question('\n> ')).trim();
+          // The prompt must not contain a newline: readline redraws it on every edit (e.g. backspace).
+          process.stdout.write('\n');
+          const line = (await getRl().question('> ')).trim();
           if (!line || line === '/exit') break;
           const handle = await rt.stream(values.agent, line, { runId, approve });
           const onSigint = () => handle.abort(new Error('interrupted by user'));
