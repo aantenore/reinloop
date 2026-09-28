@@ -25,7 +25,7 @@ const HELP = `reinloop — agents as files, harness included
   reinloop create "description"  Let the architect agent design agents/teams for you
   reinloop list                  List agents and teams
   reinloop add [integration]     Connect an existing technology (RAG, memory, GitHub, tracing, evals...)
-  reinloop serve                 HTTP API + web console (default http://127.0.0.1:8787)
+  reinloop serve                 HTTP API + web console (default http://127.0.0.1:7878)
   reinloop mcp                   Expose agents as MCP tools over stdio
   reinloop resume <runId> [task] Resume an interrupted run or continue a session
   reinloop runs | validate       Stored runs | check configuration

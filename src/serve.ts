@@ -7,6 +7,8 @@ import type { Approver } from './types.ts';
 import { CONSOLE_HTML } from './ui.ts';
 import { errorMessage } from './util.ts';
 
+export const DEFAULT_PORT = 7878;
+
 export interface ServeOptions {
   port?: number;
   /** Default 127.0.0.1: exposing agents beyond localhost is an explicit choice. */
@@ -112,12 +114,19 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
       if (status === 413) res.once('finish', () => req.destroy());
     }
   });
-  await new Promise<void>((resolve) => server.listen(opts.port ?? 8787, opts.host ?? '127.0.0.1', resolve));
-  const { address, port } = server.address() as AddressInfo;
+  const port = opts.port ?? DEFAULT_PORT;
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', (err: NodeJS.ErrnoException) =>
+      reject(err.code === 'EADDRINUSE' ? new Error(`port ${port} is already in use; pass --port <n>`) : err),
+    );
+    server.listen(port, opts.host ?? '127.0.0.1', resolve);
+  });
+  const { address } = server.address() as AddressInfo;
+  const bound = (server.address() as AddressInfo).port;
   const host = address.includes(':') ? `[${address}]` : address;
   return {
     server,
-    url: `http://${host}:${port}`,
+    url: `http://${host}:${bound}`,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());

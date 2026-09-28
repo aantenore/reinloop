@@ -89,7 +89,7 @@ which also explains what is deliberately not built and why (for example, why sem
 
 ```bash
 reinloop chat -a researcher      # interactive session with memory of the conversation
-reinloop serve                   # HTTP + SSE API and a small web console at http://127.0.0.1:8787
+reinloop serve                   # HTTP + SSE API and a small web console at http://127.0.0.1:7878
 reinloop mcp                     # every agent/team becomes an MCP tool for IDEs and assistants
 ```
 

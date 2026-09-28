@@ -27,7 +27,8 @@ export const INTEGRATIONS: Record<string, Integration> = {
     kind: 'knowledge',
     description: 'Semantic search over a Qdrant collection (RAG)',
     source: 'https://github.com/qdrant/mcp-server-qdrant',
-    mcp: { command: 'uvx', args: ['mcp-server-qdrant'], env: { QDRANT_URL: '${env:QDRANT_URL:-http://localhost:6333}', COLLECTION_NAME: '${env:QDRANT_COLLECTION:-docs}' } },
+    // Pinned interpreter: some native dependencies ship no wheels for the newest Python yet.
+    mcp: { command: 'uvx', args: ['--python', '3.12', 'mcp-server-qdrant'], env: { QDRANT_URL: '${env:QDRANT_URL:-http://localhost:6333}', COLLECTION_NAME: '${env:QDRANT_COLLECTION:-docs}' } },
     env: { QDRANT_URL: 'Qdrant endpoint', QDRANT_COLLECTION: 'collection to search' },
     tools: 'qdrant__*',
     next: 'Load documents with your ingestion pipeline (Qdrant clients, LlamaIndex, Unstructured) or the server\'s store tool for small sets.',
@@ -36,7 +37,7 @@ export const INTEGRATIONS: Record<string, Integration> = {
     kind: 'knowledge',
     description: 'Local persistent Chroma collections: add, query, filter (RAG without a server)',
     source: 'https://github.com/chroma-core/chroma-mcp',
-    mcp: { command: 'uvx', args: ['chroma-mcp', '--client-type', 'persistent', '--data-dir', '.reinloop/chroma'] },
+    mcp: { command: 'uvx', args: ['--python', '3.12', 'chroma-mcp', '--client-type', 'persistent', '--data-dir', '.reinloop/chroma'] },
     tools: 'chroma__*',
     next: 'Small corpora can be added by an agent with the add-documents tool; use Chroma loaders for bulk ingestion.',
   },
@@ -121,7 +122,7 @@ description: ${agent} regression suite
 providers:
   - id: http
     config:
-      url: http://127.0.0.1:8787/v1/agents/${agent}/runs
+      url: http://127.0.0.1:7878/v1/agents/${agent}/runs
       method: POST
       headers:
         content-type: application/json

@@ -107,6 +107,21 @@ repeatable regression runs, turn on the exact `responseCache` in a `ci` profile.
 
 ## Status of the catalogue
 
-The commands and packages come from each project's official documentation (checked September 2026). The
-wiring (config generation and validation) is covered by tests. The upstream servers themselves are not run in this
-repository's CI, because they need network downloads. Report problems per entry: each one links its source.
+Run live on 2026-09-28 with `npm run live:integrations` (plus promptfoo and LiteLLM by hand), on macOS, Node 24,
+uv 0.11:
+
+| Entry | Live result |
+|---|---|
+| `chroma` | create collection, add documents, semantic query returns the right document |
+| `qdrant` | local embedded mode (`QDRANT_LOCAL_PATH`): store and semantic find. Needs Python 3.12: the entry pins it, because a native dependency had no wheel for the newest Python. |
+| `memory-graph` | create entities, read graph |
+| `fetch` | fetches and converts a page to Markdown |
+| `git` | reads the log of this repository |
+| `playwright` | connects and lists 25 tools (browser actions not exercised) |
+| `litellm` | reinloop → LiteLLM proxy → Ollama: a tool-using agent answered correctly |
+| `promptfoo` | the generated config evaluates an agent through `reinloop serve`: 1/1 passing |
+| `github`, `langfuse` | not run: they need your credentials |
+| `otel` | covered by tests against a local OTLP receiver; no external collector run |
+
+Run `npm run live:integrations [name ...]` to repeat the check on your machine. Each entry links its upstream
+source.
