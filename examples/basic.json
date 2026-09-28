@@ -1,0 +1,17 @@
+{
+  "$schema": "../schema/reinloop.schema.json",
+  "providers": {
+    "offline": {
+      "type": "mock",
+      "responses": [
+        { "toolCalls": [{ "name": "list_dir", "args": { "path": "." } }] },
+        { "text": "I listed the directory. Replace the mock provider with a real one to get real answers." }
+      ]
+    }
+  },
+  "models": { "default": { "provider": "offline", "model": "mock" } },
+  "tools": { "workspace": "." },
+  "agents": {
+    "demo": { "model": "default", "instructions": "You explore the workspace.", "tools": ["list_dir", "read_file"] }
+  }
+}

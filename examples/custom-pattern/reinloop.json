@@ -1,0 +1,17 @@
+{
+  "$schema": "../../schema/reinloop.schema.json",
+  "plugins": ["./plugins/debate.mjs"],
+  "defaultAgent": "decide",
+  "teams": {
+    "decide": {
+      "pattern": "debate",
+      "description": "Stress-tests a decision before you make it",
+      "roles": {
+        "pro": { "instructions": "Argue FOR the proposal. Be concrete and honest about evidence." },
+        "con": { "instructions": "Argue AGAINST the proposal. Be concrete and honest about evidence." },
+        "judge": "judge"
+      },
+      "options": { "rounds": 2 }
+    }
+  }
+}

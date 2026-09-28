@@ -1,0 +1,31 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: node dist/cli.js run -c examples/basic.json "smoke test"
+      - name: validate example projects
+        env:
+          REINLOOP_MODEL: mock/echo
+        run: |
+          for d in examples/quickstart examples/dev-team examples/custom-pattern; do (cd "$d" && node ../../dist/cli.js validate); done
+      - run: node examples/programmatic.ts
+      - run: TURNS=500 npm run bench

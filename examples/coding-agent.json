@@ -1,0 +1,55 @@
+{
+  "$schema": "../schema/reinloop.schema.json",
+  "plugins": ["./plugins/redact-secrets.mjs"],
+  "providers": {
+    "local": {
+      "type": "openai-compatible",
+      "baseUrl": "${env:OPENAI_BASE_URL:-http://localhost:11434/v1}",
+      "apiKey": "${env:OPENAI_API_KEY:-}",
+      "stream": true,
+      "retry": { "maxAttempts": 4 }
+    },
+    "anthropic": { "type": "anthropic", "apiKey": "${env:ANTHROPIC_API_KEY}", "stream": true, "cache": true }
+  },
+  "models": {
+    "worker": { "provider": "local", "model": "${env:WORKER_MODEL:-qwen3:14b}", "params": { "temperature": 0.2 } },
+    "reviewer": { "provider": "local", "model": "${env:REVIEWER_MODEL:-qwen3:14b}", "params": { "temperature": 0 } }
+  },
+  "tools": { "workspace": "..", "concurrency": 8, "maxResultChars": 20000, "artifacts": "file", "shellTimeoutMs": 60000 },
+  "policy": {
+    "rules": [
+      { "match": "shell", "action": "ask", "reason": "shell commands need approval" },
+      { "match": "write_file", "action": "allow" }
+    ]
+  },
+  "store": { "type": "file", "dir": ".reinloop/runs" },
+  "sinks": [{ "type": "console" }, { "type": "jsonl", "dir": ".reinloop/traces" }],
+  "defaultAgent": "coder",
+  "agents": {
+    "coder": {
+      "description": "Implements small changes and verifies them",
+      "model": "worker",
+      "instructions": "file:./prompts/coder.md",
+      "tools": ["read_file", "list_dir", "write_file", "shell", "read_artifact", "reviewer"],
+      "middleware": ["redact-secrets"],
+      "budget": { "maxTurns": 40, "maxTotalTokens": 400000, "maxDurationMs": 900000 },
+      "compaction": { "type": "summarize", "thresholdTokens": 48000, "keepLast": 12 }
+    },
+    "reviewer": {
+      "model": "reviewer",
+      "instructions": "You review a change for bugs. Read the files you need. Reply with a short list of concrete defects, or 'LGTM'.",
+      "tools": ["read_file", "list_dir"],
+      "budget": { "maxTurns": 12 },
+      "asTool": { "description": "Independent reviewer with a fresh context. Pass the goal and the files changed.", "context": "fresh" }
+    }
+  },
+  "profiles": {
+    "cloud": {
+      "models": {
+        "worker": { "provider": "anthropic", "model": "claude-sonnet-5", "pricing": { "inputPerMTok": 3, "outputPerMTok": 15, "cacheReadPerMTok": 0.3 } },
+        "reviewer": { "provider": "anthropic", "model": "claude-haiku-4-5", "pricing": { "inputPerMTok": 1, "outputPerMTok": 5, "cacheReadPerMTok": 0.1 } }
+      },
+      "agents": { "coder": { "budget": { "maxCostUsd": 2 } } }
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "reinloop",
+  "version": "0.1.0",
+  "description": "Agents as files, harness included: zero-dependency agent runtime with budgets, permissions, durable resume, multi-agent patterns, MCP and OpenTelemetry.",
+  "license": "MIT",
+  "author": "Antonio Antenore",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aantenore/reinloop.git"
+  },
+  "keywords": [
+    "agents",
+    "llm",
+    "harness",
+    "agent-framework",
+    "mcp",
+    "opentelemetry",
+    "tool-calling"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema.json": "./schema/reinloop.schema.json"
+  },
+  "bin": {
+    "reinloop": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "schema",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && node scripts/gen-schema.ts && chmod +x dist/cli.js",
+    "prepare": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-reporter=dot \"test/**/*.test.ts\"",
+    "bench": "node bench/overhead.ts",
+    "check": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run check && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "typescript": "^7.0.2"
+  }
+}

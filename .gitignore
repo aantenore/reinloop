@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.reinloop/
+*.log
+.DS_Store

@@ -1,0 +1,19 @@
+{
+  "$schema": "../schema/reinloop.schema.json",
+  "providers": {
+    "openai": { "type": "openai-compatible", "apiKey": "${env:OPENAI_API_KEY}", "maxTokensParam": "max_completion_tokens" }
+  },
+  "models": { "default": { "provider": "openai", "model": "${env:MODEL:-gpt-5-mini}" } },
+  "mcpServers": {
+    "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."], "exclude": ["write_*", "edit_*", "move_*"] },
+    "docs": { "url": "${env:DOCS_MCP_URL:-http://localhost:8080/mcp}", "headers": { "authorization": "Bearer ${env:DOCS_MCP_TOKEN:-}" }, "risk": "read" }
+  },
+  "agents": {
+    "researcher": {
+      "model": "default",
+      "instructions": "Answer questions using the files and the docs server. Cite file paths.",
+      "tools": ["fs__*", "mcp:docs"],
+      "budget": { "maxTurns": 15 }
+    }
+  }
+}

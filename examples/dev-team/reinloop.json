@@ -1,0 +1,12 @@
+{
+  "$schema": "../../schema/reinloop.schema.json",
+  "plugins": ["./plugins/redact-secrets.mjs"],
+  "defaultModel": "${env:REINLOOP_MODEL:-ollama/qwen3:14b}",
+  "defaultAgent": "ship",
+  "tools": { "workspace": "../..", "artifacts": "file" },
+  "policy": { "rules": [{ "match": "shell", "action": "ask", "reason": "commands need approval" }] },
+  "responseCache": { "type": "file", "ttlMs": 86400000 },
+  "memory": { "type": "file" },
+  "store": { "type": "file" },
+  "sinks": [{ "type": "jsonl" }]
+}
