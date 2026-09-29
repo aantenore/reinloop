@@ -5,8 +5,9 @@ request/response shapes, but no live call was made. Please add a row when you ru
 
 ## Local model matrix
 
-`npm run live:models` on 2026-09-28: Ollama on Apple Silicon, reinloop 0.1, streaming, native JSON-schema output.
-Each cell is one run of the scenario (no retries beyond the harness's own), with a time limit of 8 minutes.
+`npm run live:models` on 2026-09-28/29: Ollama on Apple Silicon, reinloop 0.1, streaming, native JSON-schema output,
+8-minute limit per run. Passing cells ran once. Failing cells were re-run twice more, and the table shows successes
+out of attempts, so one-off failures can be told apart from real limits.
 
 | Scenario | What passes |
 |---|---|
@@ -18,15 +19,15 @@ Each cell is one run of the scenario (no retries beyond the harness's own), with
 
 | Model | tools | structured | rag | team | create |
 |---|---|---|---|---|---|
-| gemma4:12b | yes | yes | yes | yes | yes |
-| gemma4-quick:12b | yes | yes | yes | no: critic emitted malformed JSON | yes |
-| ornith:9b | yes | yes | yes | yes | no: valid files, no team |
-| lfm2.5:8b | no: tool calls written as text | yes | yes | yes | no: valid files, no team |
-| qwen3.5:9b | yes | yes | yes | yes (approved in round 2) | no: valid files, no team |
-| qwen3:4b | no: guessed instead of reading | yes | no: answered without searching | yes | no: valid files, no team |
+| gemma4:12b | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 |
+| gemma4-quick:12b | 1/1 | 1/1 | 1/1 | 2/3 (once malformed critic JSON) | 1/1 |
+| ornith:9b | 1/1 | 1/1 | 1/1 | 1/1 | 0/3: valid files, no team |
+| qwen3.5:9b | 1/1 | 1/1 | 1/1 | 1/1 | 0/3: no team, or a team pointing to a missing agent |
+| lfm2.5:8b | 0/3: tool calls as text or no search | 1/1 | 1/1 | 1/1 | 0/3: valid files, no team |
+| qwen3:4b | 2/3 (once guessed instead of reading) | 1/1 | 0/3: searches but misses the answer | 1/1 | 0/3: valid files, no team |
 
 **Recommendation for local use:** `gemma4:12b` passed everything. For single agents with tools, RAG and structured
-output, any of the 9-12B models above works. Use a 12B+ model for `create`.
+output, the 9-12B models work except lfm2.5 (tool calling). `create` only succeeded with the 12B models.
 
 ## Other providers
 

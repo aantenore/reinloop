@@ -41,16 +41,22 @@ const brief = (r: RunResult) => `${r.status}${r.reason ? ` (${r.reason})` : ''}:
 const ws = mkdtempSync(join(tmpdir(), 'reinloop-ws-'));
 mkdirSync(join(ws, 'notes'));
 writeFileSync(join(ws, 'notes', 'project.md'), '# Project\n\nThe project codename is BLUE HERON.\n');
-const chroma = await mcpTools('kb', { command: 'uvx', args: ['--python', '3.12', 'chroma-mcp', '--client-type', 'persistent', '--data-dir', join(out, 'chroma')], readOnly: ['chroma_query_*'] });
-const add = chroma.tools.find((t) => t.name === 'kb__chroma_add_documents')!;
-const ctx = { signal: AbortSignal.timeout(600_000), agent: 'setup', runId: 'setup', state: {} as never, emit: () => {}, inherit: {} } as never;
-await chroma.tools.find((t) => t.name === 'kb__chroma_create_collection')!.run({ collection_name: 'docs' }, ctx);
-const chunks = ['README.md', ...readdirSync(join(repo, 'docs')).map((f) => `docs/${f}`)].flatMap((f) =>
-  readFileSync(join(repo, f), 'utf8').split(/\n(?=## )/).map((text, i) => ({ id: `${f}#${i}`, text: text.slice(0, 4000) })),
-);
-await add.run({ collection_name: 'docs', documents: chunks.map((c) => c.text), ids: chunks.map((c) => c.id) }, ctx);
-const query: Tool = chroma.tools.find((t) => t.name === 'kb__chroma_query_documents')!;
-console.log(`indexed ${chunks.length} chunks; results in ${out}`);
+// The Chroma knowledge base is built only when the rag scenario runs.
+let chroma: Awaited<ReturnType<typeof mcpTools>> | undefined;
+let query: Tool | undefined;
+if (!only || only.has('rag')) {
+  chroma = await mcpTools('kb', { command: 'uvx', args: ['--python', '3.12', 'chroma-mcp', '--client-type', 'persistent', '--data-dir', join(out, 'chroma')], readOnly: ['chroma_query_*'] });
+  const add = chroma!.tools.find((t) => t.name === 'kb__chroma_add_documents')!;
+  const ctx = { signal: AbortSignal.timeout(600_000), agent: 'setup', runId: 'setup', state: {} as never, emit: () => {}, inherit: {} } as never;
+  await chroma.tools.find((t) => t.name === 'kb__chroma_create_collection')!.run({ collection_name: 'docs' }, ctx);
+  const chunks = ['README.md', ...readdirSync(join(repo, 'docs')).map((f) => `docs/${f}`)].flatMap((f) =>
+    readFileSync(join(repo, f), 'utf8').split(/\n(?=## )/).map((text, i) => ({ id: `${f}#${i}`, text: text.slice(0, 4000) })),
+  );
+  await add.run({ collection_name: 'docs', documents: chunks.map((c) => c.text), ids: chunks.map((c) => c.id) }, ctx);
+  query = chroma.tools.find((t) => t.name === 'kb__chroma_query_documents')!;
+  console.log(`indexed ${chunks.length} chunks`);
+}
+console.log(`results in ${out}`);
 
 for (const name of models) {
   const model = resolveModel(`ollama/${name}`);
@@ -71,7 +77,7 @@ for (const name of models) {
   await timed(name, 'rag', async (signal) => {
     const r = await agent({
       model,
-      tools: [query],
+      tools: [query!],
       instructions: 'Answer only from the knowledge base (collection "docs"). Search it first. Be brief.',
       budget: { maxTurns: 10 },
     }).run('On which port does `reinloop serve` listen by default?', { signal });
@@ -106,7 +112,7 @@ for (const name of models) {
   });
 }
 
-await chroma.client.close();
+await chroma?.client.close();
 const table = ['| Model | Scenario | Pass | Turns | Time | Note |', '|---|---|---|---|---|---|', ...rows.map((r) => `| ${r.model} | ${r.scenario} | ${r.pass ? 'yes' : 'no'} | ${r.turns} | ${r.seconds}s | ${r.note.replace(/\|/g, '/')} |`)];
 writeFileSync(join(out, 'results.md'), `${table.join('\n')}\n`);
 console.log(`\n${table.join('\n')}\n\nresults: ${out}`);
