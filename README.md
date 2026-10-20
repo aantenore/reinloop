@@ -2,6 +2,16 @@
 
 **Agents as files. Harness included.**
 
+> **Where this is going.** reinloop is the reference implementation and test bench for these ideas. The pieces that
+> fill real gaps in the [Pi](https://github.com/earendil-works/pi) ecosystem now ship as small, focused Pi packages:
+>
+> - [**pi-otel**](https://github.com/aantenore/pi-otel): OpenTelemetry for Pi; passes Pi's official telemetry
+>   conformance suite and works with Jaeger, Tempo, Langfuse, Phoenix or any OTLP backend.
+> - [**pi-budget**](https://github.com/aantenore/pi-budget): hard USD, token, turn, tool-call and time limits for the Pi
+>   coding agent and pi-agent-core apps.
+>
+> Use reinloop if you want a standalone, zero-dependency runtime; use the Pi packages if you already run Pi.
+
 reinloop is the smallest way to build an agent that is ready for real use. Write the agent as a Markdown file and run
 it on any model. The harness that production agents need is already there: permissions, budgets, crash-safe resume,
 context compaction, parallel tools, MCP, retries, caching, tracing and multi-agent patterns. It has zero runtime
