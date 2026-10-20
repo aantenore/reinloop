@@ -158,6 +158,10 @@ Current limits: text-only messages, no passthrough of provider "thinking" blocks
 (member runs do). Token estimates before the first response are heuristic. The `shell` tool is confined to a
 directory but is not a sandbox, so use a container for untrusted work.
 
+## Why "reinloop"
+
+*Rein* + *loop*. The agent loop stays yours, small and readable; you hold the reins through policy, budgets and approvals. Own the loop, hold the reins.
+
 ## Development
 
 ```bash
