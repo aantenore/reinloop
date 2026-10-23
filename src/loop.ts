@@ -87,6 +87,7 @@ async function drive(
 
   let end: { status: RunStatus; reason?: string } | undefined;
   let data: unknown;
+  let stopOutput: string | undefined;
   let outputRetries = agent.output?.retries ?? 1;
   let lastStop: string | undefined;
   let emptyStreak = 0;
@@ -109,6 +110,18 @@ async function drive(
         });
         await flush();
         continue;
+      }
+
+      // A tool asked to end the run: the whole batch has run (also after a resume), the first stop in call order wins.
+      const stop = firstStop(state);
+      if (stop) {
+        stopOutput = stop.content;
+        const checked = agent.output ? checkStopData(agent, stop) : { ok: true as const, data: stop.data };
+        if (checked.ok) {
+          data = checked.data;
+          end = { status: 'completed', reason: `tool:${stop.name}` };
+        } else end = { status: 'failed', reason: `invalid structured output from tool ${stop.name}: ${checked.error}` };
+        break;
       }
 
       const last = state.messages.at(-1);
@@ -200,7 +213,7 @@ async function drive(
     end = { status: 'failed', reason: `store: ${errorMessage(err)}` };
   });
   const lastAssistant = [...state.messages].reverse().find((m) => m.role === 'assistant');
-  const output = textOf(lastAssistant);
+  const output = stopOutput ?? textOf(lastAssistant);
   emit('run_end', { status: end!.status, reason: end!.reason, output, usage: state.usage, turns: state.turns, costUsd: state.costUsd });
   await flush().catch(() => {});
   return { runId, status: end!.status, reason: end!.reason, output, data, usage: state.usage, costUsd: state.costUsd, turns: state.turns, messages: state.messages };
@@ -264,6 +277,23 @@ export function costOf(pricing: Pricing | undefined, usage: Usage): number {
 }
 
 type OutputCheck = { ok: true; data?: unknown } | { ok: false; error: string };
+
+type Stop = NonNullable<RunState['stops']>[string];
+
+/** The stop requested by the latest batch of tool calls, in the model's call order. */
+function firstStop(state: RunState): Stop | undefined {
+  if (!state.stops) return undefined;
+  const lastCall = [...state.messages].reverse().find((m) => m.role === 'assistant');
+  for (const p of lastCall?.parts ?? []) if (p.type === 'tool_call' && state.stops[p.id]) return state.stops[p.id];
+  return undefined;
+}
+
+/** Validates a stopping tool's `data` (or its content parsed as JSON) against the output schema; no model retry. */
+function checkStopData(agent: Agent, stop: Stop): OutputCheck {
+  if (!('data' in stop)) return checkOutput(agent, stop.content);
+  const errors = validate(agent.output!.schema, stop.data, '$');
+  return errors.length ? { ok: false, error: errors.join('; ') } : { ok: true, data: stop.data };
+}
 
 /** Tolerant JSON extraction: code fences, surrounding prose, and `\'` escapes that small models emit. */
 export function parseJsonLoose(text: string): unknown {

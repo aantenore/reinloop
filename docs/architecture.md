@@ -37,9 +37,9 @@ The state of a run is a fold over its events (`state.ts: reduce`):
 | `message` | yes | appends an input or harness message |
 | `model_response` | yes | appends the assistant message; adds usage and cost; sets the turn |
 | `tool_decision` | yes | (audit) |
-| `tool_result` | yes | appends a tool result |
+| `tool_result` | yes | appends a tool result; records a `stop` request |
 | `compaction` | yes | replaces the history |
-| `run_end` | yes | final status |
+| `run_end` | yes | final status; clears stop requests |
 | `turn_start`, `model_request`, `text_delta`, `tool_start` | no | streaming and tracing only |
 
 Persistence is awaited at checkpoints: after each model response and after each tool batch. Crash semantics:
@@ -51,6 +51,17 @@ Persistence is awaited at checkpoints: after each model response and after each 
   consistent prefix.
 - Tools are executed **at least once**. A tool that finished just before a crash, but before its result was
   persisted, runs again on resume. Make side-effecting tools idempotent, or check their effect before acting.
+
+### Tools that end the run
+
+A tool may return `{ content, stop: true, data? }`. The rest of that batch still runs, then the run ends `completed`
+(reason `tool:<name>`) without another model turn. Its `output` is the tool's `content` and its `data` is the tool's
+`data`. With several stopping calls in one batch, the first in the model's call order wins. Error results (including
+those turned into errors by middleware) never stop the run. The request is part of the persisted `tool_result`, so a
+run that crashed after the batch resumes straight to the end; `data` must therefore be JSON-serializable.
+
+With an `output` schema, `data` (or `content` parsed as JSON when there is no `data`) is validated. A mismatch fails
+the run (`invalid structured output from tool <name>: ...`) with no retry, because the model is no longer asked.
 
 A session is the same mechanism: `run(agent, input, { runId })` appends new input to the stored log and continues.
 

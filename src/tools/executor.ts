@@ -1,6 +1,6 @@
 import { decide } from '../policy.ts';
 import { validate } from '../schema.ts';
-import type { Agent, Approver, HookContext, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolResultPart } from '../types.ts';
+import type { Agent, Approver, HookContext, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
 import { errorMessage } from '../util.ts';
 import { normalizeOutput } from './define.ts';
 
@@ -51,9 +51,10 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   const started = performance.now();
   const hookCtx: HookContext = { runId: env.runId, agent: env.agent.name, state: env.state };
   let call = original;
-  const finish = async (content: string, isError: boolean, artifact?: string) => {
+  const finish = async (content: string, isError: boolean, artifact?: string, stop?: Pick<ToolOutput, 'data'>) => {
     let result: ToolResultPart = { type: 'tool_result', callId: original.id, name: original.name, content, isError };
     for (const mw of env.agent.middleware ?? []) result = (await mw.afterTool?.(result, hookCtx)) ?? result;
+    const stops = stop && !result.isError;
     env.emit('tool_result', {
       callId: original.id,
       name: original.name,
@@ -61,6 +62,7 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
       isError: result.isError ?? false,
       durationMs: Math.round(performance.now() - started),
       artifact,
+      ...(stops && { stop: true, ...('data' in stop && { data: stop.data }) }),
     });
   };
 
@@ -100,7 +102,7 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
       ),
     );
     const { content, artifact } = await limitSize(out.content, env);
-    return finish(content, out.isError ?? false, artifact);
+    return finish(content, out.isError ?? false, artifact, out.stop ? ('data' in out ? { data: out.data } : {}) : undefined);
   } catch (err) {
     if (env.signal.aborted) throw err;
     const msg = signal.aborted ? `timed out after ${timeoutMs}ms` : errorMessage(err);

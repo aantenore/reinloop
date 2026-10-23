@@ -106,6 +106,64 @@ describe('loop', () => {
     assert.deepEqual(agent.provider.requests[0]!.responseSchema, schema);
   });
 
+  it('ends the run when a tool returns stop, without another model turn', async () => {
+    const finish = defineTool<{ n: number }>({
+      name: 'finish', description: 'Final answer', risk: 'read',
+      schema: { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] },
+      run: ({ n }) => ({ content: `answer ${n}`, stop: true, data: { n } }),
+    });
+    const echo = echoTool();
+    const agent = makeAgent(
+      [{ toolCalls: [{ name: 'echo', args: { text: 'a' } }, { name: 'finish', args: { n: 1 } }, { name: 'finish', args: { n: 2 } }] }],
+      { tools: [echo, finish] },
+    );
+    const sink = collectSink();
+    const res = await run(agent, 'go', { sinks: [sink] });
+    assert.equal(res.status, 'completed');
+    assert.equal(res.reason, 'tool:finish');
+    assert.equal(res.output, 'answer 1', 'first stop in call order wins');
+    assert.deepEqual(res.data, { n: 1 });
+    assert.equal(echo.calls, 1, 'the whole batch runs');
+    assert.equal(agent.provider.requests.length, 1);
+    const end = sink.events.find((e) => e.type === 'run_end')!;
+    assert.equal(end.type === 'run_end' && end.data.output, 'answer 1');
+    assert.equal(sink.events.filter((e) => e.type === 'tool_result' && e.data.stop).length, 2);
+
+    const failing = defineTool({ name: 'oops', description: 'x', schema: { type: 'object', properties: {} }, run: () => ({ content: 'bad', isError: true, stop: true }) });
+    const ignored = await run(makeAgent([{ toolCalls: [{ name: 'oops' }] }, { text: 'recovered' }], { tools: [failing] }), 'go');
+    assert.equal(ignored.output, 'recovered', 'error results never stop the run');
+  });
+
+  it('validates a stopping tool\'s data against the output schema', async () => {
+    const schema = { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] };
+    const stopWith = (out: object) => defineTool({ name: 'done', description: 'x', schema: { type: 'object', properties: {} }, run: () => out as never });
+    const script = [{ toolCalls: [{ name: 'done' }] }];
+    const ok = await run(makeAgent(script, { tools: [stopWith({ content: 'x', stop: true, data: { n: 4 } })], output: { schema } }), 'go');
+    assert.deepEqual([ok.status, ok.data], ['completed', { n: 4 }]);
+    const parsed = await run(makeAgent(script, { tools: [stopWith({ content: '{"n":5}', stop: true })], output: { schema } }), 'go');
+    assert.deepEqual(parsed.data, { n: 5 });
+    const bad = await run(makeAgent(script, { tools: [stopWith({ content: 'x', stop: true, data: { n: 'no' } })], output: { schema } }), 'go');
+    assert.equal(bad.status, 'failed');
+    assert.match(bad.reason!, /invalid structured output from tool done: \$\.n: expected integer/);
+  });
+
+  it('resumes a run that crashed after a stopping tool without calling the model', async () => {
+    const store = memoryStore();
+    const done = defineTool({ name: 'done', description: 'x', schema: { type: 'object', properties: {} }, run: () => ({ content: 'over', stop: true, data: [1] }) });
+    const first = await run(makeAgent([{ toolCalls: [{ name: 'done' }] }], { tools: [done] }), 'go', { store });
+    const events = await store.load(first.runId);
+    const crashed = memoryStore();
+    for (const ev of events.filter((e) => e.type !== 'run_end')) await crashed.append(ev);
+    const resumed = makeAgent([], { tools: [done] });
+    const res = await run(resumed, undefined, { store: crashed, runId: first.runId });
+    assert.deepEqual([res.status, res.output, res.data], ['completed', 'over', [1]]);
+    assert.equal(resumed.provider.requests.length, 0);
+
+    const continued = makeAgent([{ text: 'next answer' }], { tools: [done] });
+    const again = await run(continued, 'more', { store, runId: first.runId });
+    assert.equal(again.output, 'next answer', 'a finished stop does not end a continued session');
+  });
+
   it('resumes a crashed run without re-executing completed tools', async () => {
     const store = memoryStore();
     const tool = echoTool();

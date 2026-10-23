@@ -72,7 +72,17 @@ export interface ModelRef {
 
 export type Risk = 'read' | 'write' | 'exec';
 
-export interface ToolOutput { content: string; isError?: boolean }
+export interface ToolOutput {
+  content: string;
+  isError?: boolean;
+  /**
+   * End the run (status `completed`) once the current batch of tool calls has finished, without another model turn.
+   * The run output is `content` and its data is `data` (must be JSON-serializable: it is persisted for resume).
+   * Ignored on error results. With several stopping calls in one batch, the first in the model's call order wins.
+   */
+  stop?: boolean;
+  data?: unknown;
+}
 
 export interface ToolContext {
   runId: string;
@@ -188,7 +198,7 @@ export interface EventMap {
   model_response: { turn: number; model: string; message: Message; usage: Usage; stopReason: StopReason; latencyMs: number; costUsd: number };
   tool_start: { callId: string; name: string; args: unknown };
   tool_decision: { callId: string; name: string; allowed: boolean; reason: string };
-  tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string };
+  tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string; stop?: boolean; data?: unknown };
   compaction: { strategy: string; beforeTokens: number; afterTokens: number; messages: Message[]; usage?: Usage; costUsd?: number };
   run_end: { status: RunStatus; reason?: string; output?: string; usage: Usage; turns: number; costUsd: number; failures?: MemberFailure[] };
 }
@@ -213,6 +223,8 @@ export interface RunState {
   lastUsage?: Usage;
   /** Number of messages covered by lastUsage. */
   lastUsageAt?: number;
+  /** Tool results that asked to end the run, by call id; cleared by run_end. */
+  stops?: Record<string, { name: string; content: string; data?: unknown }>;
 }
 
 /** A team member (or worker) whose run did not complete. */

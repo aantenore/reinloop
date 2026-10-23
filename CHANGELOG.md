@@ -11,3 +11,6 @@
 - Team results and their `run_end` event carry optional `failures` (`{ name, status, reason, runId }` per member run
   that did not complete) for `parallel`, `chain`, `router`, `evaluator` and `orchestrator`; nested teams are flattened.
   `MemberFailure` and `memberFailures` are exported, and `agentTool` accepts `onResult`.
+- Tools can end the run: returning `{ content, stop: true, data? }` completes the run after the current batch without
+  another model turn (first stop in call order wins, error results never stop, `data` validated against the output
+  schema). The stop is persisted with `tool_result`, so resume is consistent.

@@ -30,6 +30,10 @@ export function reduce(state: RunState, ev: RunEvent): RunState {
         role: 'tool',
         parts: [{ type: 'tool_result', callId: ev.data.callId, name: ev.data.name, content: ev.data.content, isError: ev.data.isError }],
       });
+      if (ev.data.stop) {
+        state.stops ??= {};
+        state.stops[ev.data.callId] = { name: ev.data.name, content: ev.data.content, ...('data' in ev.data && { data: ev.data.data }) };
+      }
       break;
     case 'compaction':
       state.messages = [...ev.data.messages];
@@ -43,6 +47,7 @@ export function reduce(state: RunState, ev: RunEvent): RunState {
       break;
     case 'run_end':
       state.status = ev.data.status;
+      state.stops = undefined;
       break;
   }
   return state;
