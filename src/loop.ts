@@ -90,7 +90,6 @@ async function drive(
   let outputRetries = agent.output?.retries ?? 1;
   let lastStop: string | undefined;
   let emptyStreak = 0;
-  let correcting = false;
 
   emit('run_start', { agent: agent.name, resumed: prior.length > 0, parentRunId: opts.parentRunId });
   for (const message of normalizeInput(input)) emit('message', { message, source: 'input' });
@@ -123,7 +122,6 @@ async function drive(
           data = checked.data;
           end = { status: 'completed', reason: lastStop === 'max_tokens' ? 'max_tokens' : undefined };
         } else if (outputRetries-- > 0) {
-          correcting = true;
           emit('message', { message: userMessage(OUTPUT_FEEDBACK(agent.output!.schema, checked.error)), source: 'harness' });
         } else {
           end = { status: 'failed', reason: `invalid structured output: ${checked.error}` };
@@ -167,9 +165,8 @@ async function drive(
       const turn = state.turns + 1;
       emit('turn_start', { turn });
       let req: ModelRequest = { model: agent.model.model, instructions: agent.instructions, messages: [...state.messages], tools: specs, params: agent.model.params };
-      // Native schema-constrained decoding would block tool calls, so it is used when the agent has no tools
-      // or once the model is only being asked to fix its final JSON.
-      if (agent.output && (!specs.length || correcting)) req.responseSchema = agent.output.schema;
+      // Always offered: providers map it to native structured output that coexists with tool calls, or skip it.
+      if (agent.output) req.responseSchema = agent.output.schema;
       for (const mw of agent.middleware ?? []) req = (await mw.beforeModel?.(req, hookCtx)) ?? req;
       emit('model_request', { turn, model: req.model, messages: req.messages.length, estTokens: contextTokens(state, agent, specs) });
 

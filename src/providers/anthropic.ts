@@ -1,3 +1,4 @@
+import { closedSchema } from '../schema.ts';
 import type { GenerateContext, Message, ModelResponse, Part, Provider, StopReason, Usage } from '../types.ts';
 import { ProviderError } from '../util.ts';
 import { type FetchLike, postJson, readSse } from './http.ts';
@@ -12,6 +13,8 @@ export interface AnthropicOptions {
   /** Adds prompt-cache breakpoints on system prompt, tool catalog and the latest message. */
   cache?: boolean;
   defaultMaxTokens?: number;
+  /** Send `output_config.format: json_schema` when a schema is requested (default true; disable for gateways that reject it). */
+  structuredOutput?: boolean;
   fetch?: FetchLike;
 }
 
@@ -43,6 +46,11 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
         ...(stream && { stream: true }),
         ...p.extra,
       };
+      // Structured outputs work alongside tools; an `output_config` from params.extra (e.g. effort) is kept.
+      if (req.responseSchema && opts.structuredOutput !== false) {
+        const format = { type: 'json_schema', schema: closedSchema(req.responseSchema) };
+        body.output_config = { ...(body.output_config as Record<string, unknown> | undefined), format };
+      }
       const headers = {
         'anthropic-version': opts.version ?? '2023-06-01',
         ...(opts.apiKey && { 'x-api-key': opts.apiKey }),

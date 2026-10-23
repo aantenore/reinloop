@@ -81,7 +81,7 @@ describe('loop', () => {
     assert.match(bad.reason!, /\$\.n: required/);
   });
 
-  it('parses sloppy JSON, unwraps schema echoes and requests native schemas without tools', async () => {
+  it('parses sloppy JSON, unwraps schema echoes and requests native schemas', async () => {
     const schema = { type: 'object', properties: { pass: { type: 'boolean' }, note: { type: 'string' } }, required: ['pass'] };
     const sloppy = makeAgent([{ text: String.raw`Sure! {"pass": true, "note": "d\'uso"} hope it helps` }], { output: { schema } });
     const a = await run(sloppy, 'go');
@@ -91,8 +91,19 @@ describe('loop', () => {
     assert.deepEqual(echo.data, { pass: false });
     const withTools = makeAgent([{ text: 'nope' }, { text: '{"pass":true}' }], { tools: [echoTool()], output: { schema } });
     await run(withTools, 'go');
-    assert.equal(withTools.provider.requests[0]!.responseSchema, undefined, 'no constrained decoding while tools may be called');
-    assert.deepEqual(withTools.provider.requests[1]!.responseSchema, schema, 'constrained when only fixing the JSON');
+    assert.deepEqual(withTools.provider.requests[0]!.responseSchema, schema, 'requested even when tools may be called');
+    assert.deepEqual(withTools.provider.requests[1]!.responseSchema, schema);
+  });
+
+  it('completes a structured run with tools in one turn when the first answer is valid', async () => {
+    const schema = { type: 'object', properties: { n: { type: 'integer' } }, required: ['n'] };
+    const agent = makeAgent([{ text: '{"n": 7}' }], { tools: [echoTool()], output: { schema } });
+    const res = await run(agent, 'go');
+    assert.equal(res.status, 'completed');
+    assert.deepEqual(res.data, { n: 7 });
+    assert.equal(res.turns, 1);
+    assert.equal(agent.provider.requests.length, 1, 'no OUTPUT_FEEDBACK retry turn');
+    assert.deepEqual(agent.provider.requests[0]!.responseSchema, schema);
   });
 
   it('resumes a crashed run without re-executing completed tools', async () => {

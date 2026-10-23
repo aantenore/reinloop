@@ -51,6 +51,17 @@ describe('openai-compatible', () => {
     assert.equal(f.requests[1]!.body.response_format, undefined);
   });
 
+  it("skips the schema next to tools in 'without-tools' mode", async () => {
+    const reply = json({ choices: [{ message: { content: '{}' }, finish_reason: 'stop' }] });
+    const schema = { type: 'object', properties: {} };
+    const f = fakeFetch([reply, reply]);
+    const p = openaiCompatible({ fetch: f.impl, structuredOutput: 'without-tools' });
+    await p.generate({ ...request, responseSchema: schema }, { signal });
+    assert.equal(f.requests[0]!.body.response_format, undefined);
+    await p.generate({ ...request, tools: [], responseSchema: schema }, { signal });
+    assert.equal(f.requests[1]!.body.response_format.type, 'json_schema');
+  });
+
   it('assembles streamed text and tool call deltas', async () => {
     const f = fakeFetch([
       sse([
@@ -93,6 +104,24 @@ describe('anthropic', () => {
     assert.ok(body.messages[2].content[1].cache_control);
     assert.equal(res.message.parts[0]!.type === 'text' && res.message.parts[0]!.text, 'fine');
     assert.deepEqual(res.usage, { inputTokens: 115, outputTokens: 2, cacheReadTokens: 100, cacheWriteTokens: 10 });
+  });
+
+  it('sends structured output next to tools, closing objects and keeping output_config from extra', async () => {
+    const reply = json({ model: 'claude-x', stop_reason: 'end_turn', content: [{ type: 'text', text: '{"n":1}' }], usage: {} });
+    const schema = { type: 'object', properties: { n: { type: 'integer' }, tags: { type: 'array', items: { type: 'object', properties: { k: { type: 'string' } } } } } };
+    const f = fakeFetch([reply, reply]);
+    const params = { ...request.params, extra: { output_config: { effort: 'low' } } };
+    await anthropic({ fetch: f.impl }).generate({ ...request, params, responseSchema: schema }, { signal });
+    const { body } = f.requests[0]!;
+    assert.equal(body.tools.length, 1);
+    assert.equal(body.tool_choice, undefined);
+    assert.equal(body.output_config.effort, 'low');
+    assert.equal(body.output_config.format.type, 'json_schema');
+    assert.equal(body.output_config.format.schema.additionalProperties, false);
+    assert.equal(body.output_config.format.schema.properties.tags.items.additionalProperties, false);
+    assert.equal((schema as any).additionalProperties, undefined, 'caller schema untouched');
+    await anthropic({ fetch: f.impl, structuredOutput: false }).generate({ ...request, responseSchema: schema }, { signal });
+    assert.equal(f.requests[1]!.body.output_config, undefined);
   });
 
   it('parses the streaming protocol', async () => {

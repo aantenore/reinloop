@@ -27,9 +27,10 @@ export const PRESETS: Record<string, ProviderPreset> = {
   deepseek: { kind: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY' },
   xai: { kind: 'openai-compatible', baseUrl: 'https://api.x.ai/v1', apiKeyEnv: 'XAI_API_KEY' },
   together: { kind: 'openai-compatible', baseUrl: 'https://api.together.xyz/v1', apiKeyEnv: 'TOGETHER_API_KEY' },
-  ollama: { kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1', baseUrlEnv: 'OLLAMA_BASE_URL' },
-  lmstudio: { kind: 'openai-compatible', baseUrl: 'http://localhost:1234/v1', baseUrlEnv: 'LMSTUDIO_BASE_URL' },
-  vllm: { kind: 'openai-compatible', baseUrl: 'http://localhost:8000/v1', baseUrlEnv: 'VLLM_BASE_URL', apiKeyEnv: 'VLLM_API_KEY' },
+  // Local servers enforce schemas with a grammar that leaves no room for tool calls.
+  ollama: { kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1', baseUrlEnv: 'OLLAMA_BASE_URL', options: { structuredOutput: 'without-tools' } },
+  lmstudio: { kind: 'openai-compatible', baseUrl: 'http://localhost:1234/v1', baseUrlEnv: 'LMSTUDIO_BASE_URL', options: { structuredOutput: 'without-tools' } },
+  vllm: { kind: 'openai-compatible', baseUrl: 'http://localhost:8000/v1', baseUrlEnv: 'VLLM_BASE_URL', apiKeyEnv: 'VLLM_API_KEY', options: { structuredOutput: 'without-tools' } },
   mock: { kind: 'mock' },
 };
 

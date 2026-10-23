@@ -76,3 +76,26 @@ function check(schema: JsonSchema, value: unknown, path: string, errors: string[
     }
   }
 }
+
+const NESTED = ['items', 'additionalProperties', 'not'];
+const NESTED_LISTS = ['anyOf', 'allOf', 'oneOf', 'prefixItems'];
+const NESTED_MAPS = ['properties', '$defs', 'definitions'];
+
+/**
+ * Copy of a schema where every object without an explicit `additionalProperties` gets `false`,
+ * as providers with strict structured outputs (Anthropic) require.
+ */
+export function closedSchema(schema: JsonSchema): JsonSchema {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
+  const out: JsonSchema = { ...schema };
+  for (const k of NESTED) if (out[k] && typeof out[k] === 'object') out[k] = closedSchema(out[k] as JsonSchema);
+  for (const k of NESTED_LISTS) if (Array.isArray(out[k])) out[k] = (out[k] as JsonSchema[]).map(closedSchema);
+  for (const k of NESTED_MAPS) {
+    if (out[k] && typeof out[k] === 'object') {
+      out[k] = Object.fromEntries(Object.entries(out[k] as Record<string, JsonSchema>).map(([n, s]) => [n, closedSchema(s)]));
+    }
+  }
+  const isObject = out.type === 'object' || (Array.isArray(out.type) && out.type.includes('object')) || ('properties' in out && out.type === undefined);
+  if (isObject && out.additionalProperties === undefined) out.additionalProperties = false;
+  return out;
+}

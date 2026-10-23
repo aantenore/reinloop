@@ -36,7 +36,7 @@ output, the 9-12B models work except lfm2.5 (tool calling). `create` only succee
 | deterministic mock | `mock/echo`, scripted `mockProvider` | the whole test suite on every CI run | passing on Node 22 and 24 |
 | qwen3.5:9b through LiteLLM | `litellm/ollama_chat/qwen3.5:9b` | tool-using agent through the LiteLLM proxy | works |
 | OpenAI (GPT-5 family) | `openai/...` | contract tests only (Chat Completions, streaming, tool calls, `max_completion_tokens`, `response_format`) | not run live |
-| Anthropic (Claude family) | `anthropic/...` | contract tests only (Messages API, streaming, tool use, cache breakpoints) | not run live |
+| Anthropic (Claude family) | `anthropic/...` | contract tests only (Messages API, streaming, tool use, cache breakpoints, `output_config.format`) | not run live |
 | Gemini, OpenRouter, Groq, Mistral, DeepSeek, xAI, Together, LM Studio, vLLM | presets over the OpenAI-compatible adapter | none beyond the shared adapter's tests | not run live |
 
 ## Findings from real runs
@@ -50,14 +50,27 @@ now covered by tests:
 2. **Empty turns.** Reasoning models sometimes think and then end the turn with no text and no tool call. Such turns
    now stay out of the history and are retried, and the run fails after three in a row.
 3. **Invalid JSON from small models.** Answers had `\'` escapes, prose around the JSON, or the JSON wrapped in a copy
-   of the schema. The harness now asks for native schema-constrained output (`response_format: json_schema`) when
-   the agent has no tools or is only fixing its answer, parses tolerantly, and accepts schema-wrapped values.
+   of the schema. The harness now asks for native schema-constrained output, parses tolerantly, and accepts
+   schema-wrapped values.
 4. **Architect output.** Generated files used an invalid output schema (`text: "string"`), contradicted the pattern's
    JSON contract, and pinned a model without a key. There is now a schema shape check, explicit pattern contracts in
    the architect prompt, a validation error for missing API keys, and `create` re-validates and sends errors back.
 5. **RAG denied by policy.** Chroma's query tools carry no read-only annotation, so they were treated as `exec` and
    denied without an approver. MCP servers now accept `readOnly` globs, and catalogue entries declare their
    read-only tools. RAG then passed on 5 of 6 models.
+
+## Structured output per provider
+
+When an agent has an `output` schema, every model request carries it, with or without tools:
+
+- **OpenAI-compatible:** `response_format: json_schema`. The `ollama`, `lmstudio` and `vllm` presets use
+  `structuredOutput: "without-tools"`, because their grammar-constrained decoding leaves no room for tool calls; they
+  get the schema only on requests without tools. `structuredOutput: false` never sends it.
+- **Anthropic:** `output_config.format: { type: "json_schema", schema }`, merged into any `output_config` from
+  `params.extra` (e.g. `effort`). Objects without `additionalProperties` are sent with `additionalProperties: false`,
+  as the API requires. No forced `tool_choice` is used. `structuredOutput: false` disables it.
+
+The answer is still validated against the schema, with feedback retries when it does not match.
 
 ## Practical guidance
 

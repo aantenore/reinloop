@@ -10,8 +10,11 @@ export interface OpenAICompatibleOptions {
   stream?: boolean;
   /** Newer OpenAI models require `max_completion_tokens`; most compatible servers accept `max_tokens`. */
   maxTokensParam?: 'max_tokens' | 'max_completion_tokens';
-  /** Send `response_format: json_schema` when a schema is requested (default true; disable for servers that reject it). */
-  structuredOutput?: boolean;
+  /**
+   * Send `response_format: json_schema` when a schema is requested (default true; false for servers that reject it;
+   * `'without-tools'` for servers whose constrained decoding would block tool calls, e.g. local grammar-based ones).
+   */
+  structuredOutput?: boolean | 'without-tools';
   fetch?: FetchLike;
 }
 
@@ -34,7 +37,7 @@ export function openaiCompatible(opts: OpenAICompatibleOptions = {}): Provider {
         ...(p.topP !== undefined && { top_p: p.topP }),
         ...(p.stop && { stop: p.stop }),
         ...(p.maxTokens !== undefined && { [opts.maxTokensParam ?? 'max_tokens']: p.maxTokens }),
-        ...(req.responseSchema && opts.structuredOutput !== false && {
+        ...(req.responseSchema && sendsSchema(opts.structuredOutput, req.tools.length > 0) && {
           response_format: { type: 'json_schema', json_schema: { name: 'output', schema: req.responseSchema, strict: false } },
         }),
         ...(stream && { stream: true, stream_options: { include_usage: true } }),
@@ -45,6 +48,10 @@ export function openaiCompatible(opts: OpenAICompatibleOptions = {}): Provider {
       return stream ? readStream(res, ctx) : fromCompletion(await res.json());
     },
   };
+}
+
+function sendsSchema(mode: OpenAICompatibleOptions['structuredOutput'], hasTools: boolean): boolean {
+  return mode === 'without-tools' ? !hasTools : mode !== false;
 }
 
 export function toOpenAIMessages(req: ModelRequest): unknown[] {
