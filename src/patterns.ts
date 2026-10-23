@@ -198,13 +198,13 @@ export const BUILTIN_PATTERNS: Record<string, PatternDefinition> = {
       orchestrator: { description: 'Lead agent', kind: 'agent' },
       workers: { description: 'Members the lead can delegate to', many: true },
     },
-    options: { type: 'object', additionalProperties: false, properties: { context: { enum: ['fresh', 'fork'] } } },
+    options: { type: 'object', additionalProperties: false, properties: { context: { enum: ['fresh', 'fork'] }, forwardEvents: { type: 'boolean' } } },
     build: ({ orchestrator, workers }, o) => {
       const lead = orchestrator as Agent;
       // Delegates are rebuilt per execution so failed worker runs are collected for that execution only.
       const delegates = (onResult?: (w: Member, r: RunResult) => void) => (workers as Member[]).map((w) =>
         agentTool(w, {
-          name: safeToolName(w.name), description: w.description ?? `Delegate a task to ${w.name}`, context: o.context,
+          name: safeToolName(w.name), description: w.description ?? `Delegate a task to ${w.name}`, context: o.context, forwardEvents: o.forwardEvents,
           ...(onResult && { onResult: (r: RunResult) => onResult(w, r) }),
         }),
       );

@@ -619,6 +619,9 @@
                   "fresh",
                   "fork"
                 ]
+              },
+              "forwardEvents": {
+                "type": "boolean"
               }
             }
           }
@@ -879,6 +882,9 @@
                             "fresh",
                             "fork"
                           ]
+                        },
+                        "forwardEvents": {
+                          "type": "boolean"
                         }
                       }
                     }
@@ -1122,6 +1128,9 @@
                                   "fresh",
                                   "fork"
                                 ]
+                              },
+                              "forwardEvents": {
+                                "type": "boolean"
                               }
                             }
                           }

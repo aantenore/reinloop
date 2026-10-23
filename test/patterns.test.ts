@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { agent, collectSink, mockProvider, team } from '../src/index.ts';
+import { agent, agentTool, collectSink, mockProvider, stream, team, type RunEvent } from '../src/index.ts';
 
 const m = (script: Parameters<typeof mockProvider>[0]) => ({ provider: mockProvider(script), model: 'mock' });
 const broken = (name: string, message = 'boom') => agent({ name, model: m([{ error: { status: 400, message } }]) });
@@ -43,5 +43,49 @@ describe('pattern failures', () => {
     const res = await team('crew', 'orchestrator', { orchestrator: lead, workers: [broken('w', 'down')] }).run('go');
     assert.equal(res.status, 'completed');
     assert.deepEqual(res.failures!.map(({ name, reason }) => ({ name, reason })), [{ name: 'w', reason: 'down' }]);
+  });
+});
+
+describe('delegated run events', () => {
+  const lead = (worker: ReturnType<typeof agent>, forwardEvents?: boolean) =>
+    agent({
+      name: 'lead',
+      model: m([{ toolCalls: [{ name: 'w', args: { task: 't' } }] }, { text: 'done' }]),
+      tools: [agentTool(worker, { description: 'worker', ...(forwardEvents !== undefined && { forwardEvents }) })],
+    });
+  const collect = async (h: AsyncIterable<RunEvent>) => {
+    const events: RunEvent[] = [];
+    for await (const ev of h) events.push(ev);
+    return events;
+  };
+
+  it('stay out of the parent stream by default (sinks still see them)', async () => {
+    const sink = collectSink();
+    const h = stream(lead(agent({ name: 'w', model: m([{ text: 'hi' }]) })), 'go', { sinks: [sink] });
+    const events = await collect(h);
+    assert.ok(events.every((e) => e.runId === h.runId));
+    assert.ok(sink.events.some((e) => e.runId !== h.runId && e.parentRunId === h.runId));
+  });
+
+  it('are forwarded to the parent stream with parentRunId when opted in', async () => {
+    const h = stream(lead(agent({ name: 'w', model: m([{ text: 'hi' }]) }), true), 'go');
+    const events = await collect(h);
+    const child = events.filter((e) => e.runId !== h.runId);
+    assert.ok(child.length > 0);
+    assert.ok(child.every((e) => e.parentRunId === h.runId));
+    assert.deepEqual([child[0]!.type, child.at(-1)!.type], ['run_start', 'run_end']);
+    // forwarded before the parent sees the delegate's result
+    const result = events.findIndex((e) => e.runId === h.runId && e.type === 'tool_result');
+    assert.ok(events.indexOf(child.at(-1)!) < result);
+    assert.equal((await h.result).output, 'done');
+  });
+
+  it('orchestrator forwards worker events through the team stream with forwardEvents', async () => {
+    const lead = agent({ name: 'lead', model: m([{ toolCalls: [{ name: 'w', args: { task: 't' } }] }, { text: 'done' }]) });
+    const crew = team('crew', 'orchestrator', { orchestrator: lead, workers: [agent({ name: 'w', model: m([{ text: 'hi' }]) })] }, { forwardEvents: true });
+    const events = await collect(crew.stream('go'));
+    const leadRun = events.find((e) => e.type === 'run_start' && e.data.agent === 'lead')!;
+    const worker = events.find((e) => e.type === 'run_start' && e.data.agent === 'w');
+    assert.equal(worker?.parentRunId, leadRun.runId);
   });
 });

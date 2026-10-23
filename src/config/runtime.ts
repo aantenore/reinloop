@@ -171,7 +171,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
         matched = true;
         const member = await build(name, stack);
         const description = def.asTool?.description ?? member.description ?? `Delegate a task to ${name}`;
-        byName.set(toolName, agentTool(member, { name: toolName, description, context: def.asTool?.context }));
+        byName.set(toolName, agentTool(member, { name: toolName, description, context: def.asTool?.context, forwardEvents: def.asTool?.forwardEvents }));
       }
       if (pattern === 'read_artifact' && artifacts) {
         matched = true;

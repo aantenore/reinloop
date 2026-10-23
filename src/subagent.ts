@@ -1,5 +1,5 @@
 import { defineTool } from './tools/define.ts';
-import { type Member, runMember } from './team.ts';
+import { type Member, streamMember } from './team.ts';
 import type { Message, RunResult, Tool } from './types.ts';
 import { userMessage } from './util.ts';
 
@@ -13,6 +13,11 @@ export interface AgentToolOptions {
   context?: 'fresh' | 'fork';
   /** Called with every delegated run's result (e.g. to collect failures). */
   onResult?: (result: RunResult) => void;
+  /**
+   * Also push the delegated run's events into the parent's event stream (they keep their own runId and carry
+   * `parentRunId`). Default false: they reach only the shared sinks and store.
+   */
+  forwardEvents?: boolean;
 }
 
 /** Exposes an agent or team as a tool: isolated context, own budget, own event log linked by parentRunId. */
@@ -31,7 +36,9 @@ export function agentTool(agent: Member, opts: AgentToolOptions): Tool<{ task: s
     },
     async run({ task }, ctx) {
       const input: Message[] = mode === 'fork' ? [...forkContext(ctx.state.messages), userMessage(task)] : [userMessage(task)];
-      const handle = await runMember(agent, input, { ...ctx.inherit, signal: ctx.signal, parentRunId: ctx.runId });
+      const child = streamMember(agent, input, { ...ctx.inherit, signal: ctx.signal, parentRunId: ctx.runId });
+      if (opts.forwardEvents) for await (const ev of child) ctx.emit(ev);
+      const handle = await child.result;
       opts.onResult?.(handle);
       if (handle.status !== 'completed') {
         return { content: `Subagent ${agent.name} ${handle.status}${handle.reason ? `: ${handle.reason}` : ''}. Partial output: ${handle.output}`, isError: true };

@@ -30,7 +30,7 @@ them for list roles.
 | `parallel` | `workers[]`, `aggregator?` | `template`, `concurrency` | Workers run concurrently. Without an aggregator the output is labelled sections and `data.results`. Repeating the same worker gives voting. |
 | `router` | `router` (agent), `routes[]` | `template`, `fallback` | The router returns `{ route, reason }` (schema enforced) and the chosen route handles the original task. Route descriptions guide the choice. |
 | `evaluator` | `generator`, `evaluator` (agent) | `maxRounds` (3), `template`, `reviseTemplate` | Generate, then judge (`{ pass, feedback }` enforced), then revise. The generator keeps one conversation across rounds, so its prompt prefix stays cached. Ends `stopped` with `evaluator:maxRounds` if never approved. |
-| `orchestrator` | `orchestrator` (agent), `workers[]` | `context: fresh \| fork` | The lead gets the workers as tools and decides what to delegate. |
+| `orchestrator` | `orchestrator` (agent), `workers[]` | `context: fresh \| fork`, `forwardEvents` | The lead gets the workers as tools and decides what to delegate. |
 
 ### Member failures
 
@@ -49,6 +49,12 @@ and can be replaced per team through `options.template` / `options.reviseTemplat
 Listing an agent or team in another agent's `tools` turns it into a delegate tool (`{ task }`) with an isolated
 context. `asTool.context: fork` passes the parent's conversation text instead of a fresh context. For most cases
 this is simpler than an orchestrator team.
+
+Delegated runs have their own `runId` and event log, and their events carry `parentRunId`. By default they reach
+only the shared sinks and store, so the parent's stream shows just the delegate tool call and its result. With
+`forwardEvents: true` (`asTool.forwardEvents`, orchestrator option, or `agentTool(..., { forwardEvents })`) they are
+also pushed into the parent's stream as they happen, before the tool result; filter them by `runId` /
+`parentRunId`. Forwarded events do not change the parent's state or log.
 
 Delegation itself has risk `read`. What the delegate does is checked against the delegate's own policy, which
 includes the global `policy` rules. Its "ask" decisions go to the same approver as the parent's. So the parent's

@@ -32,7 +32,7 @@ You review code. Report only concrete defects with file and line.
 | `compaction` | `{ type: window \| summarize \| <plugin>, thresholdTokens, ... }`. |
 | `output` | `{ schema, retries }`: the final answer must be JSON matching the schema; parsed into `result.data`. |
 | `middleware` | Names registered by plugins. |
-| `asTool` | `{ name, description, context: fresh \| fork }` to customise how other agents delegate to it. |
+| `asTool` | `{ name, description, context: fresh \| fork, forwardEvents }` to customise how other agents delegate to it (`forwardEvents: true` streams the delegated run's events to the caller). |
 | `responseCache` | `false` to bypass the global response cache. |
 | `skills` | Agent Skills (names or globs) the agent may load on demand; see [integrations.md](integrations.md#skills). |
 

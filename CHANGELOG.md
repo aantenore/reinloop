@@ -20,3 +20,5 @@
   order) and falls back to keyword-overlap ranking of `all()` otherwise.
 - MCP servers accept `prefix: false` (or `""`) to expose tools under the server's own names instead of
   `<prefix>__<tool>`; the default prefix (the server name) is unchanged.
+- Opt-in `forwardEvents` for delegated runs (`agentTool`, `asTool`, orchestrator option): their events, tagged with
+  `parentRunId`, also flow into the parent's stream. Default off: they reach only sinks and store, as before.

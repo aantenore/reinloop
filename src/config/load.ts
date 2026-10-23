@@ -22,7 +22,7 @@ export interface AgentConfig {
   compaction?: ComponentConfig & { thresholdTokens: number };
   output?: { schema: JsonSchema; retries?: number };
   middleware?: string[];
-  asTool?: { name?: string; description: string; context?: 'fresh' | 'fork' };
+  asTool?: { name?: string; description: string; context?: 'fresh' | 'fork'; forwardEvents?: boolean };
   /** Set to false to bypass the global response cache for this agent. */
   responseCache?: boolean;
   /** Agent Skills (names or globs) this agent may load. */

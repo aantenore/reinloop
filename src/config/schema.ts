@@ -65,7 +65,7 @@ properties: {
     type: 'object',
     additionalProperties: false,
     required: ['description'],
-    properties: { name: str, description: str, context: { enum: ['fresh', 'fork'] } },
+    properties: { name: str, description: str, context: { enum: ['fresh', 'fork'] }, forwardEvents: { type: 'boolean' } },
   },
 },
       };
