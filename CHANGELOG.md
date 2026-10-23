@@ -24,3 +24,7 @@
   `parentRunId`, also flow into the parent's stream. Default off: they reach only sinks and store, as before.
 - Frontmatter accepts flow mappings and sequences spread over several lines (`- {code: x,` / `name: y}`); the
   supported YAML subset is documented in `docs/agent-files.md`.
+- Anthropic thinking blocks are no longer dropped: they are kept as `thinking` parts (with signature or redacted data)
+  and echoed back unchanged. A `max_tokens` stop without text or tool calls (e.g. a reasoning-only answer) ends the run
+  as `stopped` / `max_tokens` instead of being retried as an "empty response"; an empty `refusal` (new stop reason)
+  ends it as `failed` / `refusal`.

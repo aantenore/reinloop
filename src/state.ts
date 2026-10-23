@@ -1,5 +1,5 @@
 import type { EventType, Message, RunEvent, RunState, ToolCallPart } from './types.ts';
-import { addUsage, emptyUsage, toolCallsOf } from './util.ts';
+import { addUsage, emptyUsage, hasVisibleParts, toolCallsOf } from './util.ts';
 
 /** Events that are streamed to sinks but never persisted. */
 export const EPHEMERAL: ReadonlySet<EventType> = new Set(['text_delta', 'tool_start', 'turn_start', 'model_request']);
@@ -16,8 +16,8 @@ export function reduce(state: RunState, ev: RunEvent): RunState {
       state.messages.push(ev.data.message);
       break;
     case 'model_response':
-      // Empty answers (no text, no tool calls) are accounted for but kept out of the history, so the turn is retried.
-      if (ev.data.message.parts.length) state.messages.push(ev.data.message);
+      // Answers without text or tool calls (also reasoning-only ones) are accounted for but kept out of the history.
+      if (hasVisibleParts(ev.data.message)) state.messages.push(ev.data.message);
       state.usage = addUsage(state.usage, ev.data.usage);
       state.costUsd += ev.data.costUsd;
       state.turns = Math.max(state.turns, ev.data.turn);

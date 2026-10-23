@@ -7,7 +7,7 @@ import type {
   Agent, EventMap, EventType, HookContext, Message, ModelRequest, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
   RunStore, ToolSpec, Usage,
 } from './types.ts';
-import { addUsage, errorMessage, estimateTokens, newId, textOf, userMessage } from './util.ts';
+import { addUsage, errorMessage, estimateTokens, hasVisibleParts, newId, textOf, userMessage } from './util.ts';
 
 export interface RunHandle extends AsyncIterable<RunEvent> {
   readonly runId: string;
@@ -134,6 +134,8 @@ async function drive(
         if (checked.ok) {
           data = checked.data;
           end = { status: 'completed', reason: lastStop === 'max_tokens' ? 'max_tokens' : undefined };
+        } else if (lastStop === 'max_tokens') {
+          end = { status: 'stopped', reason: 'max_tokens' }; // truncated output: feedback would hit the same limit
         } else if (outputRetries-- > 0) {
           emit('message', { message: userMessage(OUTPUT_FEEDBACK(agent.output!.schema, checked.error)), source: 'harness' });
         } else {
@@ -198,8 +200,13 @@ async function drive(
         costUsd: res.cached ? 0 : costOf(agent.model.pricing, res.usage),
       });
       await flush();
-      emptyStreak = res.message.parts.length ? 0 : emptyStreak + 1;
-      if (emptyStreak > MAX_EMPTY_RESPONSES) end = { status: 'failed', reason: `model returned ${emptyStreak} empty responses in a row` };
+      // No text and no tool calls: a max_tokens stop (e.g. spent on reasoning) or a refusal ends the run with that
+      // reason, since the identical request would end the same way; other empty answers are retried a few times.
+      const visible = hasVisibleParts(res.message);
+      emptyStreak = visible ? 0 : emptyStreak + 1;
+      if (!visible && res.stopReason === 'max_tokens') end = { status: 'stopped', reason: 'max_tokens' };
+      else if (!visible && res.stopReason === 'refusal') end = { status: 'failed', reason: 'refusal' };
+      else if (emptyStreak > MAX_EMPTY_RESPONSES) end = { status: 'failed', reason: `model returned ${emptyStreak} empty responses in a row` };
     }
   } catch (err) {
     end = storeFailure.signal.aborted

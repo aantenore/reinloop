@@ -48,7 +48,11 @@ now covered by tests:
    "successful" answer. Streams that end without `finish_reason` / `[DONE]` (or `message_stop`) are now a retryable
    error.
 2. **Empty turns.** Reasoning models sometimes think and then end the turn with no text and no tool call. Such turns
-   now stay out of the history and are retried, and the run fails after three in a row.
+   now stay out of the history and are retried, and the run fails after three in a row. Two cases are not retried,
+   because the identical request would end the same way: a `max_tokens` stop with no text or tool call (typically the
+   whole limit spent on thinking) ends the run as `stopped` with reason `max_tokens`, and an empty `refusal` ends it
+   as `failed` with reason `refusal`. A truncated answer that fails the output schema also stops with `max_tokens`
+   instead of getting a feedback retry.
 3. **Invalid JSON from small models.** Answers had `\'` escapes, prose around the JSON, or the JSON wrapped in a copy
    of the schema. The harness now asks for native schema-constrained output, parses tolerantly, and accepts
    schema-wrapped values.
@@ -71,6 +75,13 @@ When an agent has an `output` schema, every model request carries it, with or wi
   as the API requires. No forced `tool_choice` is used. `structuredOutput: false` disables it.
 
 The answer is still validated against the schema, with feedback retries when it does not match.
+
+## Thinking blocks
+
+Anthropic `thinking` and `redacted_thinking` blocks are kept in the history as `thinking` parts, with their signature
+(or redacted data), and sent back unchanged on later requests, so tool use with thinking stays valid across turns. On
+models that return them with empty text (the default `display: "omitted"`) they still carry the signature. They are
+never part of the run output. Other providers ignore these parts.
 
 ## Practical guidance
 

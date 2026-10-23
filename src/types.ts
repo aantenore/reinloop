@@ -3,7 +3,12 @@ export type JsonSchema = { [key: string]: unknown };
 export interface TextPart { type: 'text'; text: string }
 export interface ToolCallPart { type: 'tool_call'; id: string; name: string; args: unknown }
 export interface ToolResultPart { type: 'tool_result'; callId: string; name: string; content: string; isError?: boolean }
-export type Part = TextPart | ToolCallPart | ToolResultPart;
+/**
+ * Model reasoning kept for replay (e.g. Anthropic `thinking` / `redacted_thinking` blocks with their signature).
+ * Never part of the output text; providers that do not know it ignore it.
+ */
+export interface ThinkingPart { type: 'thinking'; text: string; signature?: string; redacted?: string }
+export type Part = TextPart | ToolCallPart | ToolResultPart | ThinkingPart;
 
 export type Role = 'user' | 'assistant' | 'tool';
 export interface Message { role: Role; parts: Part[] }
@@ -38,7 +43,7 @@ export interface ModelRequest {
   responseSchema?: JsonSchema;
 }
 
-export type StopReason = 'end' | 'tool_calls' | 'max_tokens' | 'other';
+export type StopReason = 'end' | 'tool_calls' | 'max_tokens' | 'refusal' | 'other';
 
 export interface ModelResponse {
   message: Message;

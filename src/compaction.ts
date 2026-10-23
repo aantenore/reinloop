@@ -76,7 +76,9 @@ function render(m: Message): string {
     .map((p) => {
       if (p.type === 'text') return `${m.role}: ${p.text}`;
       if (p.type === 'tool_call') return `assistant called ${p.name}(${JSON.stringify(p.args)})`;
+      if (p.type === 'thinking') return '';
       return `tool ${p.name}${p.isError ? ' (error)' : ''}: ${p.content.slice(0, 2000)}`;
     })
+    .filter(Boolean)
     .join('\n');
 }

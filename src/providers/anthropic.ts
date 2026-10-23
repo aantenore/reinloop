@@ -73,7 +73,11 @@ export function toAnthropicMessages(messages: Message[]): AMessage[] {
     const content: Block[] = [];
     for (const p of m.parts) {
       if (p.type === 'text' && p.text) content.push({ type: 'text', text: p.text });
-      else if (p.type === 'tool_call') {
+      else if (p.type === 'thinking' && role === 'assistant') {
+        // Echoed back unchanged (signature included) so multi-turn tool use with thinking stays valid.
+        if (p.redacted !== undefined) content.push({ type: 'redacted_thinking', data: p.redacted });
+        else if (p.signature) content.push({ type: 'thinking', thinking: p.text, signature: p.signature });
+      } else if (p.type === 'tool_call') {
         const input = p.args && typeof p.args === 'object' && !Array.isArray(p.args) ? p.args : { _raw: p.args };
         content.push({ type: 'tool_use', id: p.id, name: p.name, input });
       } else if (p.type === 'tool_result') {
@@ -93,7 +97,7 @@ function markLastBlock(messages: AMessage[]): void {
   if (block) block.cache_control = { type: 'ephemeral' };
 }
 
-const STOP: Record<string, StopReason> = { end_turn: 'end', stop_sequence: 'end', tool_use: 'tool_calls', max_tokens: 'max_tokens' };
+const STOP: Record<string, StopReason> = { end_turn: 'end', stop_sequence: 'end', tool_use: 'tool_calls', max_tokens: 'max_tokens', refusal: 'refusal' };
 
 function toUsage(u: any): Usage {
   const read = u?.cache_read_input_tokens ?? 0;
@@ -110,6 +114,8 @@ function toParts(blocks: any[]): Part[] {
   const parts: Part[] = [];
   for (const b of blocks ?? []) {
     if (b.type === 'text' && b.text) parts.push({ type: 'text', text: b.text });
+    else if (b.type === 'thinking') parts.push({ type: 'thinking', text: b.thinking ?? '', ...(b.signature && { signature: b.signature }) });
+    else if (b.type === 'redacted_thinking') parts.push({ type: 'thinking', text: '', redacted: b.data ?? '' });
     else if (b.type === 'tool_use') parts.push({ type: 'tool_call', id: b.id, name: b.name, args: b.input ?? {} });
   }
   return parts;
@@ -145,6 +151,10 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
         if (data.delta?.type === 'text_delta') {
           blocks[data.index].text = (blocks[data.index].text ?? '') + data.delta.text;
           ctx.onText?.(data.delta.text);
+        } else if (data.delta?.type === 'thinking_delta') {
+          blocks[data.index].thinking = (blocks[data.index].thinking ?? '') + data.delta.thinking;
+        } else if (data.delta?.type === 'signature_delta') {
+          blocks[data.index].signature = (blocks[data.index].signature ?? '') + data.delta.signature;
         } else if (data.delta?.type === 'input_json_delta') json[data.index] += data.delta.partial_json;
         break;
       case 'message_delta':

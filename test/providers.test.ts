@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { anthropic, createRuntime, mockProvider, openaiCompatible, presetProvider, ProviderError, withFallback, withRetry, type Agent } from '../src/index.ts';
+import { anthropic, createRuntime, mockProvider, openaiCompatible, presetProvider, ProviderError, run, withFallback, withRetry, type Agent } from '../src/index.ts';
 import type { ModelRequest } from '../src/index.ts';
-import { fakeFetch, json, sse } from './helpers.ts';
+import { echoTool, fakeFetch, json, sse } from './helpers.ts';
 
 const signal = new AbortController().signal;
 const request: ModelRequest = {
@@ -213,5 +213,71 @@ describe('preset headers', () => {
       assert.equal(f.requests[1]!.headers['anthropic-workspace-id'], undefined);
     });
     await assert.rejects(createRuntime({ presets: { nope: {} } }), /\$\.presets\.nope: unknown preset/);
+  });
+});
+
+describe('anthropic thinking', () => {
+  const usage = { input_tokens: 10, output_tokens: 300 };
+  const thinkingAgent = (f: ReturnType<typeof fakeFetch>, extra: Partial<Agent> = {}): Agent => ({
+    name: 'a', model: { provider: anthropic({ fetch: f.impl }), model: 'claude-haiku-5-5', params: { maxTokens: 300 } }, tools: [echoTool()], ...extra,
+  });
+
+  it('reports a thinking-only max_tokens stop as max_tokens, without retrying', async () => {
+    const f = fakeFetch([json({ model: 'm', content: [{ type: 'thinking', thinking: '', signature: 'sig' }], stop_reason: 'max_tokens', usage })]);
+    const res = await run(thinkingAgent(f), 'hi');
+    assert.equal(f.requests.length, 1);
+    assert.equal(res.status, 'stopped');
+    assert.equal(res.reason, 'max_tokens');
+    assert.equal(res.output, '');
+    assert.equal(res.messages.length, 1); // the reasoning-only answer stays out of the history
+  });
+
+  it('ends on an empty refusal instead of retrying', async () => {
+    const f = fakeFetch([json({ model: 'm', content: [], stop_reason: 'refusal', usage })]);
+    const res = await run(thinkingAgent(f), 'hi');
+    assert.equal(f.requests.length, 1);
+    assert.deepEqual([res.status, res.reason], ['failed', 'refusal']);
+  });
+
+  it('keeps thinking blocks with their signature and echoes them back unchanged with tool use', async () => {
+    const f = fakeFetch([
+      json({
+        model: 'm', stop_reason: 'tool_use', usage,
+        content: [
+          { type: 'thinking', thinking: '', signature: 'sig-1' },
+          { type: 'redacted_thinking', data: 'opaque' },
+          { type: 'tool_use', id: 'tu1', name: 'echo', input: { text: 'x' } },
+        ],
+      }),
+      json({ model: 'm', stop_reason: 'end_turn', usage, content: [{ type: 'thinking', thinking: 'why', signature: 'sig-2' }, { type: 'text', text: 'done' }] }),
+    ]);
+    const res = await run(thinkingAgent(f), 'hi');
+    assert.equal(res.status, 'completed');
+    assert.equal(res.output, 'done');
+    assert.deepEqual(f.requests[1]!.body.messages[1], {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: '', signature: 'sig-1' },
+        { type: 'redacted_thinking', data: 'opaque' },
+        { type: 'tool_use', id: 'tu1', name: 'echo', input: { text: 'x' } },
+      ],
+    });
+    assert.deepEqual(res.messages.at(-1)!.parts[0], { type: 'thinking', text: 'why', signature: 'sig-2' });
+  });
+
+  it('assembles streamed thinking and signature deltas', async () => {
+    const f = fakeFetch([
+      sse([
+        { data: { type: 'message_start', message: { model: 'm', usage: { input_tokens: 5, output_tokens: 1 } } } },
+        { data: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } } },
+        { data: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'plan' } } },
+        { data: { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig-s' } } },
+        { data: { type: 'message_delta', delta: { stop_reason: 'max_tokens' }, usage: { output_tokens: 300 } } },
+        { data: { type: 'message_stop' } },
+      ]),
+    ]);
+    const res = await anthropic({ fetch: f.impl, stream: true }).generate(request, { signal });
+    assert.equal(res.stopReason, 'max_tokens');
+    assert.deepEqual(res.message.parts, [{ type: 'thinking', text: 'plan', signature: 'sig-s' }]);
   });
 });

@@ -43,6 +43,9 @@ export function textOf(message: Message | undefined): string {
   return message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
 }
 
+/** True when a message has something to act on: text or tool calls (reasoning alone does not count). */
+export const hasVisibleParts = (message: Message): boolean => message.parts.some((p) => p.type === 'text' || p.type === 'tool_call');
+
 export function toolCallsOf(message: Message | undefined): ToolCallPart[] {
   return message ? message.parts.filter((p): p is ToolCallPart => p.type === 'tool_call') : [];
 }
