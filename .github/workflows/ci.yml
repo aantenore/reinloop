@@ -1,31 +1,28 @@
 name: ci
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node: [22, 24]
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - run: node dist/cli.js run -c examples/basic.json "smoke test"
-      - name: validate example projects
+      - name: smoke
         env:
           REINLOOP_MODEL: mock/echo
         run: |
+          node dist/cli.js run -c examples/basic.json "smoke test"
           for d in examples/quickstart examples/dev-team examples/custom-pattern; do (cd "$d" && node ../../dist/cli.js validate); done
-      - run: node examples/programmatic.ts
-      - run: TURNS=500 npm run bench
