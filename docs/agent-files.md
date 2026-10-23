@@ -27,7 +27,7 @@ You review code. Report only concrete defects with file and line.
 | `model` | `provider/model`, a `models` alias from the config, `sonnet`/`opus`/`haiku`, or `inherit`. Omit it to use the default. |
 | `tools` | List or comma-separated string. Globs are allowed (`fs__*`, `read_*`), as is `mcp:<server>`. |
 | `budget` | `maxTurns`, `maxToolCalls`, `maxInputTokens`, `maxOutputTokens`, `maxTotalTokens`, `maxCostUsd`, `maxDurationMs`. |
-| `params` | `temperature`, `maxTokens`, `topP`, `stop`, `extra` (provider-specific body fields). |
+| `params` | `temperature`, `maxTokens`, `topP`, `stop`, `thinking` (`{ type: adaptive \| enabled \| disabled \| between_tools, budgetTokens, display: omitted \| summarized \| updates }`), `effort` (`low` ... `max`), `retryMaxTokens` (off by default: one repeat with this limit after a `max_tokens` stop), `extra` (provider-specific body fields). See [models](models.md#thinking-and-effort). |
 | `policy` | `default`, `risk: { read, write, exec }`, `rules: [{ match, risk, action, reason }]`. |
 | `compaction` | `{ type: window \| summarize \| <plugin>, thresholdTokens, ... }`. |
 | `output` | `{ schema, retries }`: the final answer must be JSON matching the schema; parsed into `result.data`. |

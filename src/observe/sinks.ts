@@ -49,12 +49,12 @@ export function consoleSink(opts: ConsoleSinkOptions = {}): Sink {
   };
 }
 
-/** Writes every event (including ephemeral ones, except text deltas) to `<dir>/<runId>.trace.jsonl`. */
+/** Writes every event (including ephemeral ones, except text and thinking deltas) to `<dir>/<runId>.trace.jsonl`. */
 export function jsonlSink(dir: string, opts: { includeDeltas?: boolean } = {}): Sink {
   mkdirSync(dir, { recursive: true });
   return {
     onEvent(ev) {
-      if (ev.type === 'text_delta' && !opts.includeDeltas) return;
+      if ((ev.type === 'text_delta' || ev.type === 'thinking_delta') && !opts.includeDeltas) return;
       appendFileSync(join(dir, `${ev.runId}.trace.jsonl`), `${JSON.stringify(ev)}\n`);
     },
   };

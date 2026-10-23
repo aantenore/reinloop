@@ -1,5 +1,5 @@
 import { closedSchema } from '../schema.ts';
-import type { GenerateContext, Message, ModelResponse, Part, Provider, StopReason, Usage } from '../types.ts';
+import type { Effort, GenerateContext, Message, ModelParams, ModelResponse, Part, Provider, StopReason, ThinkingType, Usage } from '../types.ts';
 import { ProviderError } from '../util.ts';
 import { type FetchLike, postJson, readSse } from './http.ts';
 
@@ -18,6 +18,32 @@ export interface AnthropicOptions {
   fetch?: FetchLike;
 }
 
+/**
+ * Thinking settings each model rejects (the API answers 400). `upToHigh`: accepted only with effort `high` or below
+ * (an unset effort counts as the model default, which is below `high`). Matched by substring of the model id.
+ */
+export const THINKING_RULES: Record<string, { rejects?: ThinkingType[]; upToHigh?: ThinkingType[] }> = {
+  'claude-opus-5-5': { rejects: ['disabled', 'enabled', 'between_tools'] },
+  'claude-sonnet-5-5': { rejects: ['disabled', 'enabled'], upToHigh: ['between_tools'] },
+  'claude-haiku-5-5': { rejects: ['enabled', 'between_tools'], upToHigh: ['disabled'] },
+};
+
+const ABOVE_HIGH: ReadonlySet<Effort> = new Set(['xhigh', 'max']);
+
+/** Fails fast, before a paid request, on thinking settings the model is known to reject. */
+export function checkThinking(model: string, p: ModelParams): void {
+  const type = p.thinking?.type;
+  if (!type) return;
+  if (type === 'enabled' && p.thinking!.budgetTokens === undefined) throw new ProviderError(400, 'thinking type "enabled" needs budgetTokens');
+  for (const [id, rule] of Object.entries(THINKING_RULES)) {
+    if (!model.includes(id)) continue;
+    if (rule.rejects?.includes(type)) throw new ProviderError(400, `${id} does not accept thinking type "${type}"`);
+    if (rule.upToHigh?.includes(type) && p.effort && ABOVE_HIGH.has(p.effort)) {
+      throw new ProviderError(400, `${id} accepts thinking type "${type}" only with effort high or below (got "${p.effort}")`);
+    }
+  }
+}
+
 /** Anthropic Messages API adapter (also works with compatible gateways). */
 export function anthropic(opts: AnthropicOptions = {}): Provider {
   const baseUrl = (opts.baseUrl ?? 'https://api.anthropic.com').replace(/\/+$/, '');
@@ -28,6 +54,7 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
       const stream = opts.stream ?? false;
       const cache = opts.cache ?? false;
       const p = req.params ?? {};
+      checkThinking(req.model, p);
       const messages = toAnthropicMessages(req.messages);
       if (cache) markLastBlock(messages);
       const tools = req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.schema }));
@@ -43,13 +70,20 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
         ...(p.temperature !== undefined && { temperature: p.temperature }),
         ...(p.topP !== undefined && { top_p: p.topP }),
         ...(p.stop && { stop_sequences: p.stop }),
+        ...(p.thinking && {
+          thinking: {
+            type: p.thinking.type,
+            ...(p.thinking.budgetTokens !== undefined && { budget_tokens: p.thinking.budgetTokens }),
+            ...(p.thinking.display && { display: p.thinking.display }),
+          },
+        }),
         ...(stream && { stream: true }),
         ...p.extra,
       };
-      // Structured outputs work alongside tools; an `output_config` from params.extra (e.g. effort) is kept.
-      if (req.responseSchema && opts.structuredOutput !== false) {
-        const format = { type: 'json_schema', schema: closedSchema(req.responseSchema) };
-        body.output_config = { ...(body.output_config as Record<string, unknown> | undefined), format };
+      // Effort and structured output (which works alongside tools) merge into any `output_config` from params.extra.
+      const format = req.responseSchema && opts.structuredOutput !== false ? { type: 'json_schema', schema: closedSchema(req.responseSchema) } : undefined;
+      if (p.effort || format) {
+        body.output_config = { ...(body.output_config as Record<string, unknown> | undefined), ...(p.effort && { effort: p.effort }), ...(format && { format }) };
       }
       const headers = {
         'anthropic-version': opts.version ?? '2023-06-01',
@@ -57,7 +91,10 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
         ...opts.headers,
       };
       const res = await postJson(fetchImpl, `${baseUrl}/v1/messages`, headers, body, ctx.signal);
-      return stream ? readStream(res, ctx) : fromMessage(await res.json());
+      if (stream) return readStream(res, ctx);
+      const out = fromMessage(await res.json());
+      for (const part of out.message.parts) if (part.type === 'thinking' && part.text) ctx.onThinking?.(part.text);
+      return out;
     },
   };
 }
@@ -153,6 +190,7 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
           ctx.onText?.(data.delta.text);
         } else if (data.delta?.type === 'thinking_delta') {
           blocks[data.index].thinking = (blocks[data.index].thinking ?? '') + data.delta.thinking;
+          if (data.delta.thinking) ctx.onThinking?.(data.delta.thinking);
         } else if (data.delta?.type === 'signature_delta') {
           blocks[data.index].signature = (blocks[data.index].signature ?? '') + data.delta.signature;
         } else if (data.delta?.type === 'input_json_delta') json[data.index] += data.delta.partial_json;

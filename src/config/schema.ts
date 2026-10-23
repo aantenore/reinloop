@@ -42,7 +42,15 @@ const budget = {
 const params = {
   type: 'object',
   additionalProperties: false,
-  properties: { temperature: num, maxTokens: int, topP: num, stop: { type: 'array', items: str }, extra: { type: 'object' } },
+  properties: {
+    temperature: num, maxTokens: int, topP: num, stop: { type: 'array', items: str }, extra: { type: 'object' },
+    thinking: {
+      type: 'object', additionalProperties: false, required: ['type'],
+      properties: { type: { enum: ['adaptive', 'enabled', 'disabled', 'between_tools'] }, budgetTokens: int, display: { enum: ['omitted', 'summarized', 'updates'] } },
+    },
+    effort: { enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
+    retryMaxTokens: int,
+  },
 };
 
 const agent = {

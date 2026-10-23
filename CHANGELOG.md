@@ -28,3 +28,7 @@
   and echoed back unchanged. A `max_tokens` stop without text or tool calls (e.g. a reasoning-only answer) ends the run
   as `stopped` / `max_tokens` instead of being retried as an "empty response"; an empty `refusal` (new stop reason)
   ends it as `failed` / `refusal`.
+- First-class `params.thinking` (`type`, `budgetTokens`, `display`) and `params.effort` for Anthropic, merged with the
+  structured output `output_config`; known per-model restrictions of the 5.5 models (`THINKING_RULES`) fail before
+  the request. Reasoning streams as `thinking_delta` events. Optional `params.retryMaxTokens` repeats a `max_tokens`
+  stop once with a higher limit (off by default).

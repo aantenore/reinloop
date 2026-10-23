@@ -280,4 +280,65 @@ describe('anthropic thinking', () => {
     assert.equal(res.stopReason, 'max_tokens');
     assert.deepEqual(res.message.parts, [{ type: 'thinking', text: 'plan', signature: 'sig-s' }]);
   });
+
+  it('maps thinking and effort params, merging effort with the structured output format', async () => {
+    const f = fakeFetch([json({ model: 'm', stop_reason: 'end_turn', usage, content: [{ type: 'text', text: '{}' }] })]);
+    const params = { maxTokens: 300, thinking: { type: 'adaptive' as const, display: 'summarized' as const }, effort: 'low' as const, extra: { output_config: { task_budget: 1 } } };
+    await anthropic({ fetch: f.impl }).generate({ ...request, model: 'claude-haiku-5-5', params, responseSchema: { type: 'object' } }, { signal });
+    const { body } = f.requests[0]!;
+    assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' });
+    assert.deepEqual(Object.keys(body.output_config).sort(), ['effort', 'format', 'task_budget']);
+    assert.equal(body.output_config.effort, 'low');
+  });
+
+  it('rejects thinking settings the model does not accept, before any request', async () => {
+    const f = fakeFetch([]);
+    const p = anthropic({ fetch: f.impl });
+    const gen = (model: string, params: object) => p.generate({ ...request, model, params }, { signal });
+    await assert.rejects(gen('claude-opus-5-5', { thinking: { type: 'disabled' } }), /does not accept thinking type "disabled"/);
+    await assert.rejects(gen('claude-opus-5-5', { thinking: { type: 'enabled', budgetTokens: 2048 } }), /does not accept/);
+    await assert.rejects(gen('claude-haiku-5-5', { thinking: { type: 'disabled' }, effort: 'xhigh' }), /only with effort high or below/);
+    assert.equal(f.requests.length, 0);
+    const ok = fakeFetch([json({ model: 'm', stop_reason: 'end_turn', usage, content: [{ type: 'text', text: 'ok' }] })]);
+    await anthropic({ fetch: ok.impl }).generate({ ...request, model: 'claude-haiku-5-5', params: { thinking: { type: 'disabled' }, effort: 'high' } }, { signal });
+    assert.deepEqual(ok.requests[0]!.body.thinking, { type: 'disabled' });
+  });
+
+  it('emits thinking_delta events apart from text, streaming and not', async () => {
+    const plain = fakeFetch([json({ model: 'm', stop_reason: 'end_turn', usage, content: [{ type: 'thinking', thinking: 'hmm', signature: 's' }, { type: 'text', text: 'hi' }] })]);
+    const streamed = fakeFetch([
+      sse([
+        { data: { type: 'message_start', message: { model: 'm', usage: {} } } },
+        { data: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
+        { data: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'hmm' } } },
+        { data: { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 's' } } },
+        { data: { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } } },
+        { data: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'hi' } } },
+        { data: { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 3 } } },
+        { data: { type: 'message_stop' } },
+      ]),
+    ]);
+    for (const [f, stream] of [[plain, false], [streamed, true]] as const) {
+      const agent: Agent = { name: 'a', model: { provider: anthropic({ fetch: f.impl, stream }), model: 'm' }, tools: [] };
+      const events: Array<[string, string]> = [];
+      const res = await run(agent, 'q', { sinks: [{ onEvent: (e) => (e.type === 'thinking_delta' || e.type === 'text_delta') && events.push([e.type, e.data.text]) }] });
+      assert.equal(res.output, 'hi');
+      assert.deepEqual(events.filter(([t]) => t === 'thinking_delta'), [['thinking_delta', 'hmm']], `stream=${stream}`);
+    }
+  });
+
+  it('repeats a max_tokens stop once with retryMaxTokens when configured', async () => {
+    const thinkingOnly = json({ model: 'm', content: [{ type: 'thinking', thinking: '', signature: 'sig' }], stop_reason: 'max_tokens', usage });
+    const f = fakeFetch([thinkingOnly, json({ model: 'm', stop_reason: 'end_turn', usage, content: [{ type: 'text', text: 'ok' }] })]);
+    const a = thinkingAgent(f);
+    const res = await run({ ...a, model: { ...a.model, params: { maxTokens: 300, retryMaxTokens: 2000 } } }, 'hi');
+    assert.deepEqual(f.requests.map((r) => r.body.max_tokens), [300, 2000]);
+    assert.deepEqual([res.status, res.output, res.turns], ['completed', 'ok', 2]);
+    assert.equal(f.requests[1]!.body.messages.length, 1, 'the discarded answer is not sent back');
+    const twice = fakeFetch([thinkingOnly, thinkingOnly]);
+    const b = thinkingAgent(twice);
+    const stopped = await run({ ...b, model: { ...b.model, params: { maxTokens: 300, retryMaxTokens: 600 } } }, 'hi');
+    assert.equal(twice.requests.length, 2);
+    assert.deepEqual([stopped.status, stopped.reason], ['stopped', 'max_tokens']);
+  });
 });

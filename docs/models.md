@@ -70,8 +70,8 @@ When an agent has an `output` schema, every model request carries it, with or wi
 - **OpenAI-compatible:** `response_format: json_schema`. The `ollama`, `lmstudio` and `vllm` presets use
   `structuredOutput: "without-tools"`, because their grammar-constrained decoding leaves no room for tool calls; they
   get the schema only on requests without tools. `structuredOutput: false` never sends it.
-- **Anthropic:** `output_config.format: { type: "json_schema", schema }`, merged into any `output_config` from
-  `params.extra` (e.g. `effort`). Objects without `additionalProperties` are sent with `additionalProperties: false`,
+- **Anthropic:** `output_config.format: { type: "json_schema", schema }`, merged with `params.effort` and any
+  `output_config` from `params.extra`. Objects without `additionalProperties` are sent with `additionalProperties: false`,
   as the API requires. No forced `tool_choice` is used. `structuredOutput: false` disables it.
 
 The answer is still validated against the schema, with feedback retries when it does not match.
@@ -82,6 +82,25 @@ Anthropic `thinking` and `redacted_thinking` blocks are kept in the history as `
 (or redacted data), and sent back unchanged on later requests, so tool use with thinking stays valid across turns. On
 models that return them with empty text (the default `display: "omitted"`) they still carry the signature. They are
 never part of the run output. Other providers ignore these parts.
+
+## Thinking and effort
+
+`params.thinking` and `params.effort` map to Anthropic's `thinking` (`type`, `budget_tokens`, `display`) and
+`output_config.effort`; OpenAI-compatible providers ignore them. On the 5.5 models thinking is on by default and the
+default `display` is `omitted`, so blocks arrive with empty text. Settings a model is known to reject fail before the
+request (`THINKING_RULES`): Opus 5.5 accepts no `disabled`, `enabled` (budget) or `between_tools`; Sonnet 5.5 no
+`disabled` or `enabled`, and `between_tools` only at effort `high` or below; Haiku 5.5 no `enabled` or
+`between_tools`, and `disabled` only at effort `high` or below.
+
+Reasoning text is streamed as `thinking_delta` events, separate from `text_delta`, from both the streaming and the
+non-streaming path (non-empty text only), so a UI can show or hide it. `jsonlSink` skips both kinds of delta unless
+`includeDeltas` is set.
+
+Thinking counts against `maxTokens`. With a low limit (a few hundred tokens) a turn can end with `max_tokens` before
+any text; the run then stops with reason `max_tokens` (see above). Raise `maxTokens`, lower `effort`, or set
+`params.retryMaxTokens`: after a `max_tokens` stop without tool calls the answer is discarded (`model_response` with
+`discarded: true`, still counted in usage and cost) and the request is repeated once with that limit, which is kept
+for the rest of the run. It is off by default.
 
 ## Practical guidance
 

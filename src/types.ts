@@ -24,11 +24,31 @@ export interface Usage {
 
 export interface ToolSpec { name: string; description: string; schema: JsonSchema }
 
+export type ThinkingType = 'adaptive' | 'enabled' | 'disabled' | 'between_tools';
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/** Model reasoning settings (Anthropic `thinking`); providers without them ignore these fields. */
+export interface ThinkingParams {
+  /** `adaptive`: the model decides; `enabled`: fixed `budgetTokens` (older models); `between_tools`: Sonnet 5.5 only. */
+  type: ThinkingType;
+  budgetTokens?: number;
+  /** What thinking blocks contain: `omitted` (empty text, the default on current models), `summarized`, `updates`. */
+  display?: 'omitted' | 'summarized' | 'updates';
+}
+
 export interface ModelParams {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
   stop?: string[];
+  thinking?: ThinkingParams;
+  /** Reasoning depth and token spend (Anthropic `output_config.effort`). */
+  effort?: Effort;
+  /**
+   * Off by default. After a `max_tokens` stop without tool calls, discard that answer and repeat the request once with
+   * this `maxTokens` (kept for the rest of the run) instead of ending with `max_tokens`.
+   */
+  retryMaxTokens?: number;
   /** Provider-specific fields merged verbatim into the request body. */
   extra?: Record<string, unknown>;
 }
@@ -57,6 +77,8 @@ export interface ModelResponse {
 export interface GenerateContext {
   signal: AbortSignal;
   onText?: (delta: string) => void;
+  /** Reasoning text, kept apart from the answer text (often empty: providers may omit it). */
+  onThinking?: (delta: string) => void;
 }
 
 export interface Provider {
@@ -200,7 +222,9 @@ export interface EventMap {
   turn_start: { turn: number };
   model_request: { turn: number; model: string; messages: number; estTokens: number };
   text_delta: { text: string };
-  model_response: { turn: number; model: string; message: Message; usage: Usage; stopReason: StopReason; latencyMs: number; costUsd: number };
+  thinking_delta: { text: string };
+  /** `discarded`: accounted for but kept out of the history (the request is repeated, e.g. with `retryMaxTokens`). */
+  model_response: { turn: number; model: string; message: Message; usage: Usage; stopReason: StopReason; latencyMs: number; costUsd: number; discarded?: boolean };
   tool_start: { callId: string; name: string; args: unknown };
   tool_decision: { callId: string; name: string; allowed: boolean; reason: string };
   tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string; stop?: boolean; data?: unknown };

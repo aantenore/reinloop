@@ -7,7 +7,7 @@ import type {
   Agent, EventMap, EventType, HookContext, Message, ModelRequest, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
   RunStore, ToolSpec, Usage,
 } from './types.ts';
-import { addUsage, errorMessage, estimateTokens, hasVisibleParts, newId, textOf, userMessage } from './util.ts';
+import { addUsage, errorMessage, estimateTokens, hasVisibleParts, newId, textOf, toolCallsOf, userMessage } from './util.ts';
 
 export interface RunHandle extends AsyncIterable<RunEvent> {
   readonly runId: string;
@@ -91,6 +91,7 @@ async function drive(
   let outputRetries = agent.output?.retries ?? 1;
   let lastStop: string | undefined;
   let emptyStreak = 0;
+  let raisedMaxTokens: number | undefined;
 
   emit('run_start', { agent: agent.name, resumed: prior.length > 0, parentRunId: opts.parentRunId });
   for (const message of normalizeInput(input)) emit('message', { message, source: 'input' });
@@ -179,17 +180,26 @@ async function drive(
 
       const turn = state.turns + 1;
       emit('turn_start', { turn });
-      let req: ModelRequest = { model: agent.model.model, instructions: agent.instructions, messages: [...state.messages], tools: specs, params: agent.model.params };
+      const params = raisedMaxTokens ? { ...agent.model.params, maxTokens: raisedMaxTokens } : agent.model.params;
+      let req: ModelRequest = { model: agent.model.model, instructions: agent.instructions, messages: [...state.messages], tools: specs, params };
       // Always offered: providers map it to native structured output that coexists with tool calls, or skip it.
       if (agent.output) req.responseSchema = agent.output.schema;
       for (const mw of agent.middleware ?? []) req = (await mw.beforeModel?.(req, hookCtx)) ?? req;
       emit('model_request', { turn, model: req.model, messages: req.messages.length, estTokens: contextTokens(state, agent, specs) });
 
       const t0 = performance.now();
-      let res = await agent.model.provider.generate(req, { signal, onText: (text) => emit('text_delta', { text }) });
+      let res = await agent.model.provider.generate(req, {
+        signal,
+        onText: (text) => emit('text_delta', { text }),
+        onThinking: (text) => emit('thinking_delta', { text }),
+      });
       for (const mw of agent.middleware ?? []) res = (await mw.afterModel?.(res, hookCtx)) ?? res;
       for (const part of res.message.parts) if (part.type === 'tool_call' && !part.id) part.id = `call_${newId().slice(0, 12)}`;
       lastStop = res.stopReason;
+      // Opt-in: one repeat with a higher limit after a max_tokens stop that produced no tool calls.
+      const retryMax = agent.model.params?.retryMaxTokens;
+      const discarded = res.stopReason === 'max_tokens' && !raisedMaxTokens && !!retryMax && !toolCallsOf(res.message).length;
+      if (discarded) raisedMaxTokens = retryMax;
       emit('model_response', {
         turn,
         model: res.model ?? req.model,
@@ -198,8 +208,10 @@ async function drive(
         stopReason: res.stopReason,
         latencyMs: Math.round(performance.now() - t0),
         costUsd: res.cached ? 0 : costOf(agent.model.pricing, res.usage),
+        ...(discarded && { discarded: true }),
       });
       await flush();
+      if (discarded) continue;
       // No text and no tool calls: a max_tokens stop (e.g. spent on reasoning) or a refusal ends the run with that
       // reason, since the identical request would end the same way; other empty answers are retried a few times.
       const visible = hasVisibleParts(res.message);

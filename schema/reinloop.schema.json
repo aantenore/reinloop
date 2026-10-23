@@ -127,6 +127,47 @@
               },
               "extra": {
                 "type": "object"
+              },
+              "thinking": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "adaptive",
+                      "enabled",
+                      "disabled",
+                      "between_tools"
+                    ]
+                  },
+                  "budgetTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "display": {
+                    "enum": [
+                      "omitted",
+                      "summarized",
+                      "updates"
+                    ]
+                  }
+                }
+              },
+              "effort": {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "retryMaxTokens": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           },
@@ -431,6 +472,47 @@
               },
               "extra": {
                 "type": "object"
+              },
+              "thinking": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "adaptive",
+                      "enabled",
+                      "disabled",
+                      "between_tools"
+                    ]
+                  },
+                  "budgetTokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "display": {
+                    "enum": [
+                      "omitted",
+                      "summarized",
+                      "updates"
+                    ]
+                  }
+                }
+              },
+              "effort": {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "retryMaxTokens": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           },
@@ -694,6 +776,47 @@
                         },
                         "extra": {
                           "type": "object"
+                        },
+                        "thinking": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "type"
+                          ],
+                          "properties": {
+                            "type": {
+                              "enum": [
+                                "adaptive",
+                                "enabled",
+                                "disabled",
+                                "between_tools"
+                              ]
+                            },
+                            "budgetTokens": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "display": {
+                              "enum": [
+                                "omitted",
+                                "summarized",
+                                "updates"
+                              ]
+                            }
+                          }
+                        },
+                        "effort": {
+                          "enum": [
+                            "low",
+                            "medium",
+                            "high",
+                            "xhigh",
+                            "max"
+                          ]
+                        },
+                        "retryMaxTokens": {
+                          "type": "integer",
+                          "minimum": 0
                         }
                       }
                     },
@@ -940,6 +1063,47 @@
                               },
                               "extra": {
                                 "type": "object"
+                              },
+                              "thinking": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": [
+                                  "type"
+                                ],
+                                "properties": {
+                                  "type": {
+                                    "enum": [
+                                      "adaptive",
+                                      "enabled",
+                                      "disabled",
+                                      "between_tools"
+                                    ]
+                                  },
+                                  "budgetTokens": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  "display": {
+                                    "enum": [
+                                      "omitted",
+                                      "summarized",
+                                      "updates"
+                                    ]
+                                  }
+                                }
+                              },
+                              "effort": {
+                                "enum": [
+                                  "low",
+                                  "medium",
+                                  "high",
+                                  "xhigh",
+                                  "max"
+                                ]
+                              },
+                              "retryMaxTokens": {
+                                "type": "integer",
+                                "minimum": 0
                               }
                             }
                           },

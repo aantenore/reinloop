@@ -11,7 +11,7 @@ export { defineTool, objectSchema, safeToolName, memoryArtifacts, readArtifactTo
 export { workspaceTools, resolveInside, type WorkspaceOptions } from './tools/node.ts';
 
 export { openaiCompatible, type OpenAICompatibleOptions } from './providers/openai.ts';
-export { anthropic, type AnthropicOptions } from './providers/anthropic.ts';
+export { anthropic, checkThinking, THINKING_RULES, type AnthropicOptions } from './providers/anthropic.ts';
 export { mockProvider, type MockTurn, type MockStep, type MockProvider } from './providers/mock.ts';
 export { withRetry, withFallback, DEFAULT_RETRY_ON, type RetryOptions } from './providers/resilient.ts';
 
