@@ -10,7 +10,7 @@ registry, so plugins can add their own. Editors get completion from `schema/rein
   "extends": "./base.json",
   "plugins": ["./plugins/redact-secrets.mjs"],
   "defaultAgent": "ship",
-  "defaultModel": "${env:REINLOOP_MODEL:-anthropic/claude-sonnet-5}",
+  "defaultModel": "${env:REINLOOP_MODEL:-anthropic/claude-sonnet-5-5}",
   "agentsDir": ["agents", "shared/agents"],
   "skillsDir": ["skills", "~/team-skills"],
 

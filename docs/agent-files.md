@@ -7,7 +7,7 @@ is the agent name unless `name` is set.
 ```markdown
 ---
 description: Reviews pull requests for correctness bugs      # used for delegation, routing, listings
-model: anthropic/claude-sonnet-5                               # optional, see "Models"
+model: anthropic/claude-sonnet-5-5                               # optional, see "Models"
 tools: [read_file, search_files, security-auditor]           # tools, MCP tools, other agents or teams
 budget: { maxTurns: 30, maxCostUsd: 0.5 }
 params: { temperature: 0 }

@@ -52,6 +52,9 @@ describe('easy api', () => {
     assert.equal(ref.model, 'gpt-5-mini');
     assert.equal(resolveModel('openrouter/anthropic/claude-x', {}).model, 'anthropic/claude-x');
     assert.equal(resolveModel('sonnet', {}).provider.name, 'anthropic');
+    assert.equal(resolveModel('sonnet', {}).model, 'claude-sonnet-5-5');
+    assert.equal(resolveModel('haiku', {}).model, 'claude-haiku-5-5');
+    assert.equal(resolveModel(undefined, { ANTHROPIC_API_KEY: 'k' }).model, 'claude-sonnet-5-5');
     assert.equal(resolveModel(undefined, {}).provider.name, 'ollama');
     assert.throws(() => resolveModel('nope/x', {}), /unknown provider "nope"/);
     const cfg = { agents: { a: { model: 'openai/gpt-5-mini' }, b: {}, c: { model: 'ollama/x' } } };

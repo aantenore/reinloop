@@ -48,9 +48,9 @@ export const PRESETS: Record<string, ProviderPreset> = {
 
 /** Short names accepted in agent files (compatible with common agent-file conventions). */
 export const MODEL_ALIASES: Record<string, string> = {
-  sonnet: 'anthropic/claude-sonnet-5',
+  sonnet: 'anthropic/claude-sonnet-5-5',
   opus: 'anthropic/claude-opus-5-5',
-  haiku: 'anthropic/claude-haiku-4-5',
+  haiku: 'anthropic/claude-haiku-5-5',
 };
 
 /**
@@ -59,7 +59,7 @@ export const MODEL_ALIASES: Record<string, string> = {
  */
 export function defaultModel(env: Env = process.env): string {
   if (env.REINLOOP_MODEL) return env.REINLOOP_MODEL;
-  if (env.ANTHROPIC_API_KEY) return 'anthropic/claude-sonnet-5';
+  if (env.ANTHROPIC_API_KEY) return 'anthropic/claude-sonnet-5-5';
   if (env.OPENAI_API_KEY) return 'openai/gpt-5-mini';
   if (env.OPENROUTER_API_KEY) return 'openrouter/openai/gpt-5-mini';
   if (env.GEMINI_API_KEY) return 'gemini/gemini-2.5-flash';
