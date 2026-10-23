@@ -32,6 +32,14 @@ them for list roles.
 | `evaluator` | `generator`, `evaluator` (agent) | `maxRounds` (3), `template`, `reviseTemplate` | Generate, then judge (`{ pass, feedback }` enforced), then revise. The generator keeps one conversation across rounds, so its prompt prefix stays cached. Ends `stopped` with `evaluator:maxRounds` if never approved. |
 | `orchestrator` | `orchestrator` (agent), `workers[]` | `context: fresh \| fork` | The lead gets the workers as tools and decides what to delegate. |
 
+### Member failures
+
+When members do not complete, the team result and its `run_end` event carry `failures`: one
+`{ name, status, reason, runId }` entry per failed member run. Repeated workers are labelled `name#2`, ...; failures
+inside a nested team are flattened as `team/member`. `parallel` lists every failed worker (also when the run completes
+with partial results), `chain`, `router` and `evaluator` list the member that stopped them, and `orchestrator` lists
+the delegated worker runs that failed plus the lead if it did. The field is absent when nothing failed.
+
 The texts the patterns add ("Output of the previous step", the evaluation prompt, ...) are exported as `TEMPLATES`
 and can be replaced per team through `options.template` / `options.reviseTemplate`. Placeholders are `{{task}}`,
 `{{previous}}`, `{{results}}`, `{{routes}}`, `{{candidate}}` and `{{feedback}}`.
@@ -73,7 +81,8 @@ The `ctx` passed to the executor provides:
   same `session` key continue one conversation.
 - `ctx.signal`: aborts with the team.
 
-Return `{ output, data?, status?, reason? }`.
+Return `{ output, data?, status?, reason?, failures? }`; `memberFailures(result, name)` builds the `failures` entries
+for a member result.
 
 Role spec fields: `description`, `many` (list role), `optional`, `kind: 'agent'` (for roles whose output schema or
 tools the pattern changes). Roles and options are validated when the team is built, with readable errors.

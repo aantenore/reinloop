@@ -32,7 +32,7 @@ export { ReinloopError, ProviderError, userMessage, textOf, toolCallsOf } from '
 
 export { agent, team, tool, paramsSchema, type AgentOptions, type EasyAgent, type EasyTeam, type Runnable, type Session, type ToolExtras } from './easy.ts';
 export { isTeam, runMember, streamMember, streamTeam, type Member, type Team, type TeamContext, type TeamOutcome } from './team.ts';
-export { BUILTIN_PATTERNS, TEMPLATES, createTeam, definePattern, fill, type PatternDefinition, type RoleSpec } from './patterns.ts';
+export { BUILTIN_PATTERNS, TEMPLATES, createTeam, definePattern, fill, memberFailures, type PatternDefinition, type RoleSpec } from './patterns.ts';
 export { PRICING, pricingFor } from './pricing.ts';
 export { PRESETS, MODEL_ALIASES, defaultModel, missingCredentials, presetProvider, resolveModel, splitModel, type ProviderPreset } from './presets.ts';
 export { parseAgentFile, loadAgentDir, withAgentFiles, TOOL_ALIASES, DEFAULT_AGENT_DIRS, type ParsedFile } from './agentfile.ts';

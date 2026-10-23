@@ -2,7 +2,7 @@ import { validate } from './schema.ts';
 import { agentTool } from './subagent.ts';
 import { safeToolName } from './tools/define.ts';
 import { isTeam, type Member, type Team, type TeamContext, type TeamOutcome } from './team.ts';
-import type { Agent, JsonSchema, Message, RunResult } from './types.ts';
+import type { Agent, JsonSchema, MemberFailure, Message, RunResult } from './types.ts';
 
 export interface RoleSpec {
   description: string;
@@ -52,7 +52,16 @@ function labels(members: Member[]): string[] {
   });
 }
 
-const failed = (r: RunResult, who: string): TeamOutcome => ({ output: r.output, data: r.data, status: r.status, reason: `${who}: ${r.reason ?? r.status}` });
+/** Failure entry of a member run; nested team failures are flattened under `<member>/`. */
+export function memberFailures(r: RunResult, name: string): MemberFailure[] {
+  if (r.status === 'completed') return [];
+  const own: MemberFailure = { name, status: r.status, ...(r.reason && { reason: r.reason }), runId: r.runId };
+  return [own, ...(r.failures ?? []).map((f) => ({ ...f, name: `${name}/${f.name}` }))];
+}
+
+const failed = (r: RunResult, who: string, earlier: MemberFailure[] = []): TeamOutcome => ({
+  output: r.output, data: r.data, status: r.status, reason: `${who}: ${r.reason ?? r.status}`, failures: [...earlier, ...memberFailures(r, who)],
+});
 
 /** Bounded concurrency; after a failure no new items start, running ones finish, then the error is thrown. */
 async function limited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -102,13 +111,18 @@ export const BUILTIN_PATTERNS: Record<string, PatternDefinition> = {
       const names = labels(workers);
       const results = await limited(workers as Member[], o.concurrency ?? workers.length, (w) => ctx.call(w, input));
       const byName = Object.fromEntries(results.map((r, i) => [names[i]!, r.data ?? r.output]));
-      if (results.every((r) => r.status !== 'completed')) return { output: '', data: { results: byName }, status: 'failed', reason: 'all workers failed' };
+      const failures = results.flatMap((r, i) => memberFailures(r, names[i]!));
+      if (results.every((r) => r.status !== 'completed')) {
+        return { output: '', data: { results: byName }, status: 'failed', reason: 'all workers failed', failures };
+      }
       const sections = results
         .map((r, i) => `## ${names[i]}${r.status === 'completed' ? '' : ` (${r.status}${r.reason ? `: ${r.reason}` : ''})`}\n${r.output}`)
         .join('\n\n');
-      if (!aggregator) return { output: sections, data: { results: byName } };
+      if (!aggregator) return { output: sections, data: { results: byName }, failures };
       const merged = await ctx.call(aggregator, fill(o.template ?? TEMPLATES.aggregate, { task: ctx.task, results: sections }));
-      return merged.status === 'completed' ? { output: merged.output, data: merged.data ?? { results: byName } } : failed(merged, aggregator.name);
+      return merged.status === 'completed'
+        ? { output: merged.output, data: merged.data ?? { results: byName }, failures: [...failures, ...(merged.failures ?? [])] }
+        : failed(merged, aggregator.name, failures);
     },
   },
 
@@ -135,7 +149,7 @@ export const BUILTIN_PATTERNS: Record<string, PatternDefinition> = {
         const target = (routes as Member[]).find((r) => r.name === chosen);
         if (!target) return failed(pick, `router ${router.name}`);
         const r = await ctx.call(target, input);
-        return { output: r.output, data: r.data, status: r.status, reason: r.reason };
+        return { output: r.output, data: r.data, status: r.status, reason: r.reason, failures: memberFailures(r, target.name) };
       };
     },
   },
@@ -187,18 +201,23 @@ export const BUILTIN_PATTERNS: Record<string, PatternDefinition> = {
     options: { type: 'object', additionalProperties: false, properties: { context: { enum: ['fresh', 'fork'] } } },
     build: ({ orchestrator, workers }, o) => {
       const lead = orchestrator as Agent;
-      const delegates = (workers as Member[]).map((w) =>
-        agentTool(w, { name: safeToolName(w.name), description: w.description ?? `Delegate a task to ${w.name}`, context: o.context }),
+      // Delegates are rebuilt per execution so failed worker runs are collected for that execution only.
+      const delegates = (onResult?: (w: Member, r: RunResult) => void) => (workers as Member[]).map((w) =>
+        agentTool(w, {
+          name: safeToolName(w.name), description: w.description ?? `Delegate a task to ${w.name}`, context: o.context,
+          ...(onResult && { onResult: (r: RunResult) => onResult(w, r) }),
+        }),
       );
       const taken = new Set(lead.tools.map((t) => t.name));
-      for (const d of delegates) {
+      for (const d of delegates()) {
         if (taken.has(d.name)) throw new Error(`orchestrator: worker tool name "${d.name}" collides with a tool of ${lead.name}`);
         taken.add(d.name);
       }
-      const withWorkers: Agent = { ...lead, tools: [...lead.tools, ...delegates] };
       return async (input, ctx) => {
-        const r = await ctx.call(withWorkers, input);
-        return { output: r.output, data: r.data, status: r.status, reason: r.reason };
+        const failures: MemberFailure[] = [];
+        const tools = delegates((w, r) => failures.push(...memberFailures(r, w.name)));
+        const r = await ctx.call({ ...lead, tools: [...lead.tools, ...tools] }, input);
+        return { output: r.output, data: r.data, status: r.status, reason: r.reason, failures: [...failures, ...memberFailures(r, lead.name)] };
       };
     },
   },

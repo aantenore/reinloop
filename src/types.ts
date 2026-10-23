@@ -190,7 +190,7 @@ export interface EventMap {
   tool_decision: { callId: string; name: string; allowed: boolean; reason: string };
   tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string };
   compaction: { strategy: string; beforeTokens: number; afterTokens: number; messages: Message[]; usage?: Usage; costUsd?: number };
-  run_end: { status: RunStatus; reason?: string; output?: string; usage: Usage; turns: number; costUsd: number };
+  run_end: { status: RunStatus; reason?: string; output?: string; usage: Usage; turns: number; costUsd: number; failures?: MemberFailure[] };
 }
 
 export type EventType = keyof EventMap;
@@ -215,6 +215,15 @@ export interface RunState {
   lastUsageAt?: number;
 }
 
+/** A team member (or worker) whose run did not complete. */
+export interface MemberFailure {
+  /** Member name; repeated workers are labelled `name#2`, `name#3`, ... */
+  name: string;
+  status: RunStatus;
+  reason?: string;
+  runId?: string;
+}
+
 export interface RunResult {
   runId: string;
   status: RunStatus;
@@ -225,6 +234,8 @@ export interface RunResult {
   costUsd: number;
   turns: number;
   messages: Message[];
+  /** Teams: members that did not complete (also when the team itself completed, e.g. a partial parallel run). */
+  failures?: MemberFailure[];
 }
 
 // ---- Persistence / observability -------------------------------------------

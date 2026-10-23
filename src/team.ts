@@ -1,10 +1,10 @@
 import { createEmitter, createHandle, normalizeInput, type RunHandle, stream } from './loop.ts';
 import { initialState } from './state.ts';
 import { memoryStore } from './store/memory.ts';
-import type { Agent, Message, RunOptions, RunResult, RunStatus, Usage } from './types.ts';
+import type { Agent, MemberFailure, Message, RunOptions, RunResult, RunStatus, Usage } from './types.ts';
 import { addUsage, emptyUsage, errorMessage, newId, textOf } from './util.ts';
 
-export interface TeamOutcome { output: string; data?: unknown; status?: RunStatus; reason?: string }
+export interface TeamOutcome { output: string; data?: unknown; status?: RunStatus; reason?: string; failures?: MemberFailure[] }
 
 export interface TeamContext {
   runId: string;
@@ -93,8 +93,12 @@ export function streamTeam(team: Team, input?: string | Message[], opts: RunOpti
     }
     const status = outcome.status ?? 'completed';
     if (outcome.output) emit('message', { message: { role: 'assistant', parts: [{ type: 'text', text: outcome.output }] }, source: 'harness' });
-    emit('run_end', { status, reason: outcome.reason, output: outcome.output, usage, turns, costUsd });
+    const failures = outcome.failures?.length ? outcome.failures : undefined;
+    emit('run_end', { status, reason: outcome.reason, output: outcome.output, usage, turns, costUsd, ...(failures && { failures }) });
     await flush().catch(() => {});
-    return { runId, status, reason: outcome.reason, output: outcome.output, data: outcome.data, usage, costUsd, turns, messages: state.messages };
+    return {
+      runId, status, reason: outcome.reason, output: outcome.output, data: outcome.data, usage, costUsd, turns, messages: state.messages,
+      ...(failures && { failures }),
+    };
   });
 }

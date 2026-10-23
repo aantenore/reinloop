@@ -8,3 +8,6 @@
   `structuredOutput: "without-tools"` mode.
 - Built-in prices for `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5`, and a top-level `pricing`
   config section with per-model overrides merged over the built-in table.
+- Team results and their `run_end` event carry optional `failures` (`{ name, status, reason, runId }` per member run
+  that did not complete) for `parallel`, `chain`, `router`, `evaluator` and `orchestrator`; nested teams are flattened.
+  `MemberFailure` and `memberFailures` are exported, and `agentTool` accepts `onResult`.

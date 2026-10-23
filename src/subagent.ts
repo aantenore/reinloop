@@ -1,6 +1,6 @@
 import { defineTool } from './tools/define.ts';
 import { type Member, runMember } from './team.ts';
-import type { Message, Tool } from './types.ts';
+import type { Message, RunResult, Tool } from './types.ts';
 import { userMessage } from './util.ts';
 
 export interface AgentToolOptions {
@@ -11,6 +11,8 @@ export interface AgentToolOptions {
    * `fork`: it also receives the parent's conversation text (continuing worker).
    */
   context?: 'fresh' | 'fork';
+  /** Called with every delegated run's result (e.g. to collect failures). */
+  onResult?: (result: RunResult) => void;
 }
 
 /** Exposes an agent or team as a tool: isolated context, own budget, own event log linked by parentRunId. */
@@ -30,6 +32,7 @@ export function agentTool(agent: Member, opts: AgentToolOptions): Tool<{ task: s
     async run({ task }, ctx) {
       const input: Message[] = mode === 'fork' ? [...forkContext(ctx.state.messages), userMessage(task)] : [userMessage(task)];
       const handle = await runMember(agent, input, { ...ctx.inherit, signal: ctx.signal, parentRunId: ctx.runId });
+      opts.onResult?.(handle);
       if (handle.status !== 'completed') {
         return { content: `Subagent ${agent.name} ${handle.status}${handle.reason ? `: ${handle.reason}` : ''}. Partial output: ${handle.output}`, isError: true };
       }
