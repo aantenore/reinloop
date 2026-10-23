@@ -1,4 +1,5 @@
 import { anthropic } from './providers/anthropic.ts';
+import { pricingFor } from './pricing.ts';
 import { mockProvider } from './providers/mock.ts';
 import { openaiCompatible } from './providers/openai.ts';
 import { withRetry } from './providers/resilient.ts';
@@ -80,7 +81,7 @@ export function resolveModel(spec: string | ModelRef | undefined, env: Env = pro
   if (!parts) throw new Error(`model "${name}" must look like "provider/model" (e.g. "openai/gpt-5-mini", "ollama/qwen3:8b")`);
   const key = `${parts.provider}|${env === process.env ? '' : JSON.stringify(env)}`;
   if (!cache.has(key)) cache.set(key, presetProvider(parts.provider, env));
-  return { provider: cache.get(key)!, model: parts.model };
+  return { provider: cache.get(key)!, model: parts.model, pricing: pricingFor(parts.model) };
 }
 
 /**

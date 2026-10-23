@@ -9,6 +9,7 @@ const jsonSchema = {
   type: 'object',
   properties: { properties: { type: 'object', additionalProperties: { type: 'object' } }, required: { type: 'array', items: { type: 'string' } } },
 };
+const pricing = { type: 'object', additionalProperties: false, properties: { inputPerMTok: num, outputPerMTok: num, cacheReadPerMTok: num } };
 const decision = { enum: ['allow', 'deny', 'ask'] };
 const risk = { enum: ['read', 'write', 'exec'] };
 
@@ -95,16 +96,12 @@ export const CONFIG_SCHEMA: JsonSchema = {
           provider: str,
           model: str,
           params,
-          pricing: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['inputPerMTok', 'outputPerMTok'],
-            properties: { inputPerMTok: num, outputPerMTok: num, cacheReadPerMTok: num },
-          },
+          pricing: { type: 'object', additionalProperties: false, required: ['inputPerMTok', 'outputPerMTok'], properties: pricing.properties },
           fallback: { type: 'array', items: str },
         },
       },
     },
+    pricing: { type: 'object', additionalProperties: pricing },
     mcpServers: {
       type: 'object',
       additionalProperties: {

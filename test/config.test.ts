@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { createRegistry, createRuntime, defineTool, deepMerge, interpolate, loadConfig, loadRuntime, type Agent, type HarnessConfig } from '../src/index.ts';
+import { costOf, createRegistry, createRuntime, defineTool, deepMerge, interpolate, loadConfig, loadRuntime, pricingFor, resolveModel, type Agent, type HarnessConfig } from '../src/index.ts';
 
 const fixture = new URL('./fixtures/mcp-server.mjs', import.meta.url).pathname;
 
@@ -88,5 +88,27 @@ describe('config', () => {
     } finally {
       await runtime.close();
     }
+  });
+
+  it('prices built-in models and applies per-model overrides from config', async () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 500_000 };
+    for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+      assert.ok(costOf(pricingFor(id), usage) > 0, id);
+      assert.ok(costOf(resolveModel(`anthropic/${id}`, {}).pricing, usage) > 0, id);
+    }
+    assert.equal(costOf(pricingFor('claude-opus-5-5'), usage), 2 + 0.1 + 20);
+    assert.equal(pricingFor('unknown-model'), undefined);
+
+    const config: HarnessConfig = {
+      providers: { mock: { type: 'mock' } },
+      models: { pinned: { provider: 'mock', model: 'claude-haiku-5-5', pricing: { inputPerMTok: 9, outputPerMTok: 9 } } },
+      pricing: { 'claude-opus-5-5': { inputPerMTok: 1 }, 'house-model': { inputPerMTok: 1, outputPerMTok: 2 } },
+      agents: { opus: { model: 'anthropic/claude-opus-5-5' }, house: { model: 'mock/house-model' }, pinned: { model: 'pinned' } },
+    };
+    const runtime = await createRuntime(config, { env: {} });
+    const priceOf = async (name: string) => ((await runtime.agent(name)) as Agent).model.pricing;
+    assert.deepEqual(await priceOf('opus'), { inputPerMTok: 1, outputPerMTok: 20, cacheReadPerMTok: 0.2 });
+    assert.deepEqual(await priceOf('house'), { inputPerMTok: 1, outputPerMTok: 2 });
+    assert.deepEqual(await priceOf('pinned'), { inputPerMTok: 9, outputPerMTok: 9 }, 'models.<alias>.pricing wins');
   });
 });

@@ -17,6 +17,7 @@ registry, so plugins can add their own. Editors get completion from `schema/rein
   "providers": {
     "corp": { "type": "openai-compatible", "baseUrl": "https://llm.internal/v1", "apiKey": "${env:CORP_KEY}", "stream": true, "retry": { "maxAttempts": 4 } }
   },
+  "pricing": { "claude-sonnet-5-5": { "inputPerMTok": 1.8 } },
   "models": {
     "fast": { "provider": "corp", "model": "llama-4-70b", "fallback": ["smart"] },
     "smart": { "provider": "corp", "model": "big-model", "pricing": { "inputPerMTok": 3, "outputPerMTok": 15, "cacheReadPerMTok": 0.3 } }
@@ -58,6 +59,7 @@ needs it is built, so an unused provider never blocks a run.
 |---|---|
 | `providers.<name>` | `type`: `openai-compatible` (`baseUrl`, `apiKey`, `headers`, `stream`, `maxTokensParam`, `structuredOutput: true \| false \| "without-tools"`), `anthropic` (`baseUrl`, `apiKey`, `version`, `headers`, `stream`, `cache`, `defaultMaxTokens`, `structuredOutput`), `mock` (`responses`, `loop`), or a plugin type. `retry: false \| { maxAttempts, baseDelayMs, maxDelayMs, retryOn }` (retries are on by default). A provider named `x` makes `x/<model>` strings work. |
 | `models.<alias>` | `provider`, `model`, `params`, `pricing` (USD per million tokens, used for cost budgets), `fallback` (aliases tried in order). |
+| `pricing.<model id>` | Price overrides (`inputPerMTok`, `outputPerMTok`, `cacheReadPerMTok`, USD per million tokens) keyed by the model id without the provider prefix, merged field by field over the built-in table (`PRICING`: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`). `models.<alias>.pricing` takes precedence. Models without a price cost 0, so `maxCostUsd` does not limit them. |
 | `mcpServers.<name>` | stdio (`command`, `args`, `env`, `cwd`) or HTTP (`url`, `headers`); `prefix`, `include`/`exclude` globs, `risk` (otherwise derived from tool annotations), `timeoutMs`. Tools appear as `<prefix>__<tool>`. |
 | `tools` | Workspace root and execution limits; `artifacts: none \| memory \| file` enables offloading when an agent lists `read_artifact`. |
 | `policy` | Global rules, evaluated after each agent's own rules. Unlabelled tools (your functions) are allowed by default; `read` is allowed, while `write` and `exec` ask. With no approver, "ask" means deny. |

@@ -7,6 +7,7 @@ import { McpClient, mcpTools } from '../mcp/client.ts';
 import { createTeam } from '../patterns.ts';
 import { mergePolicies } from '../policy.ts';
 import { defaultModel, MODEL_ALIASES, resolveModel, splitModel } from '../presets.ts';
+import { pricingFor } from '../pricing.ts';
 import { withFallback } from '../providers/resilient.ts';
 import { createRegistry, type FactoryContext, type Registry } from '../registry.ts';
 import { fileArtifacts } from '../store/file.ts';
@@ -106,7 +107,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     const configured = config.models?.[chosen];
     if (configured) {
       const m = interpolate(configured, env, `$.models.${chosen}`);
-      const ref: ModelRef = { provider: await provider(m.provider), model: m.model, params: m.params, pricing: m.pricing };
+      const ref: ModelRef = { provider: await provider(m.provider), model: m.model, params: m.params, pricing: m.pricing ?? pricingFor(m.model, config.pricing) };
       if (!m.fallback?.length) return ref;
       const chain = [ref, ...(await Promise.all(m.fallback.map(modelRef)))];
       return { ...ref, provider: withFallback(chain) };
@@ -114,8 +115,9 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     const full = MODEL_ALIASES[chosen] ?? chosen;
     const parts = splitModel(full);
     if (!parts) throw new ConfigError(`unknown model "${chosen}"`);
-    if (config.providers?.[parts.provider]) return { provider: await provider(parts.provider), model: parts.model };
-    return resolveModel(full, env);
+    const pricing = pricingFor(parts.model, config.pricing);
+    if (config.providers?.[parts.provider]) return { provider: await provider(parts.provider), model: parts.model, pricing };
+    return { ...resolveModel(full, env), pricing };
   };
 
   const mcp = new Map<string, Promise<{ client: McpClient; tools: Tool[] }>>();

@@ -52,6 +52,8 @@ export interface HarnessConfig {
   skillsDir?: string | string[];
   providers?: Record<string, ComponentConfig>;
   models?: Record<string, { provider: string; model: string; params?: ModelParams; pricing?: Pricing; fallback?: string[] }>;
+  /** Per-model price overrides (USD per million tokens), keyed by model id and merged over the built-in table. */
+  pricing?: Record<string, Partial<Pricing>>;
   mcpServers?: Record<string, McpServerConfig>;
   tools?: {
     workspace?: string;
