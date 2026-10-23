@@ -21,7 +21,7 @@ export { fileStore, fileArtifacts } from './store/file.ts';
 export { consoleSink, jsonlSink, collectSink } from './observe/sinks.ts';
 export { otelSink, type OtelSinkOptions, type OtelTracer, type OtelSpan } from './observe/otel.ts';
 
-export { McpClient, mcpTools, MCP_PROTOCOL_VERSION, type McpServerConfig } from './mcp/client.ts';
+export { McpClient, mcpTools, MCP_PROTOCOL_VERSION, type McpServerConfig, type McpToolInfo } from './mcp/client.ts';
 
 export { Registry, createRegistry, type Factory, type FactoryContext } from './registry.ts';
 export { loadConfig, checkConfig, interpolate, deepMerge, applyProfile, ConfigError, type HarnessConfig, type AgentConfig } from './config/load.ts';

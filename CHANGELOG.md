@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `McpToolInfo` (returned by `McpClient.listTools()`) is exported from the package entry.
 - `sonnet` and `haiku` aliases and the default model for `ANTHROPIC_API_KEY` now point to `claude-sonnet-5-5` and
   `claude-haiku-5-5`.
 - Structured output reaches the model also when the agent has tools: Anthropic gets `output_config.format`

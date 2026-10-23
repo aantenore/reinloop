@@ -5,15 +5,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { promisify } from 'node:util';
-import { mcpTools, mockProvider, otelSink, run, workspaceTools, type OtelSpan, type ToolContext } from '../src/index.ts';
+import { mcpTools, mockProvider, otelSink, run, workspaceTools, type McpServerConfig, type McpToolInfo, type OtelSpan, type ToolContext } from '../src/index.ts';
 
 const fixture = new URL('./fixtures/mcp-server.mjs', import.meta.url).pathname;
 const ctx = { signal: new AbortController().signal } as ToolContext;
 
 describe('mcp', () => {
   it('lists paginated tools, derives risk and calls them', async () => {
-    const { client, tools } = await mcpTools('calc', { command: process.execPath, args: [fixture] });
+    const cfg: McpServerConfig = { command: process.execPath, args: [fixture] };
+    const { client, tools } = await mcpTools('calc', cfg);
     try {
+      const infos: McpToolInfo[] = await client.listTools();
+      assert.deepEqual(infos.map((i) => i.name), ['add', 'fail']);
       assert.deepEqual(tools.map((t) => [t.name, t.risk]), [['calc__add', 'read'], ['calc__fail', 'exec']]);
       assert.deepEqual(await tools[0]!.run({ a: 2, b: 3 }, ctx), { content: '5', isError: false });
       assert.deepEqual(await tools[1]!.run({}, ctx), { content: 'nope', isError: true });
