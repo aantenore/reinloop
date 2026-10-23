@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
-  agent, checkConfig, collectSink, missingCredentials, createRegistry, definePattern, loadProject, mockProvider, paramsSchema, parseAgentFile, parseFrontmatter, resolveModel,
+  agent, checkConfig, collectSink, missingCredentials, createRegistry, definePattern, loadProject, mockProvider, paramsSchema, parseAgentFile, parseFrontmatter, parseYaml, resolveModel,
   team, tool, withResponseCache, memoryCache, workspaceTools, type Agent, type Team, type ToolContext,
 } from '../src/index.ts';
 
@@ -161,6 +161,25 @@ Body`);
     assert.equal(body, 'Body');
     const folded = parseFrontmatter('---\ndescription:\n  Line one\n  continues here.\nname: n\nnote: starts\n  and goes on\n---\n');
     assert.deepEqual(folded.data, { description: 'Line one continues here.', name: 'n', note: 'starts and goes on' });
+  });
+
+  it('parses flow collections spread over several lines', () => {
+    assert.deepEqual(parseYaml('a:\n  - {code: x,\n     name: y}\n'), { a: [{ code: 'x', name: 'y' }] });
+    const yaml = [
+      'items: [1,   # first',
+      '  { label: "a, ] }", tags: [x,',
+      '      y] },',
+      "  'it''s }'",
+      ']',
+      'text: |',
+      '  key: [',
+      '  raw',
+      'after: { k: v }',
+    ].join('\n');
+    assert.deepEqual(parseYaml(yaml), {
+      items: [1, { label: 'a, ] }', tags: ['x', 'y'] }, "it's }"], text: 'key: [\nraw', after: { k: 'v' },
+    });
+    assert.throws(() => parseYaml('a: [1,\n  2\n'), /expected "," or "]"/);
   });
 
   it('maps common tool aliases and detects teams', () => {

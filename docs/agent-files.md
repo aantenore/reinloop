@@ -83,6 +83,13 @@ Sends each customer request to the right specialist.
 
 ## Frontmatter syntax
 
-The accepted subset of YAML covers `key: value`, nested maps by indentation, `- item` lists, flow collections
-(`[a, b]`, `{ a: 1 }`), quoted strings, `|` / `>` block scalars and `#` comments. Anchors, tags and multi-document
-streams are not supported.
+The accepted subset of YAML covers:
+
+- `key: value` pairs and nested maps by indentation; `- item` lists, including `- key: value` items;
+- flow collections (`[a, b]`, `{ a: 1 }`), nested and spread over several lines until the brackets close
+  (`- {code: x,` / `name: y}`);
+- plain scalars (`true`/`false`, `null`/`~`, numbers, otherwise strings), plain values folded over several deeper
+  lines, single- and double-quoted strings (`''` and `\` escapes);
+- `|` / `>` block scalars (with `-`) and `#` comments.
+
+Anchors and aliases, tags, `?` complex keys, multi-line quoted strings and multi-document streams are not supported.

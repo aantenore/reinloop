@@ -22,3 +22,5 @@
   `<prefix>__<tool>`; the default prefix (the server name) is unchanged.
 - Opt-in `forwardEvents` for delegated runs (`agentTool`, `asTool`, orchestrator option): their events, tagged with
   `parentRunId`, also flow into the parent's stream. Default off: they reach only sinks and store, as before.
+- Frontmatter accepts flow mappings and sequences spread over several lines (`- {code: x,` / `name: y}`); the
+  supported YAML subset is documented in `docs/agent-files.md`.

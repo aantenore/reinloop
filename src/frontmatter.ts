@@ -1,7 +1,8 @@
 /**
  * Frontmatter reader for agent files. Supports the YAML subset people actually write in
  * frontmatter: `key: value`, nested maps by indentation, `- item` lists, flow collections
- * (`[a, b]`, `{ maxTurns: 20 }`), quoted strings, `|` / `>` block scalars and `#` comments.
+ * (`[a, b]`, `{ maxTurns: 20 }`, also spread over several lines), quoted strings, `|` / `>` block scalars
+ * and `#` comments.
  */
 export function parseFrontmatter(text: string): { data: Record<string, unknown>; body: string } {
   const normalized = text.replace(/^﻿/, '').replace(/\r\n/g, '\n');
@@ -19,10 +20,58 @@ export function parseYaml(src: string): Record<string, unknown> {
     if (text.trim()) lines.push({ indent: text.length - text.trimStart().length, text: text.trim(), num: i + 1 });
   });
   if (!lines.length) return {};
+  joinFlowLines(lines);
   const [value, next] = parseBlock(lines, 0, lines[0]!.indent, src);
   if (next < lines.length) throw new Error(`frontmatter line ${lines[next]!.num}: unexpected indentation`);
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('frontmatter must be a mapping');
   return value as Record<string, unknown>;
+}
+
+const BLOCK_SCALAR = /:\s+[|>]-?$/;
+
+/** Joins a flow collection spread over several lines (`{a: 1,\n b: 2}`) into its first line, until brackets balance. */
+function joinFlowLines(lines: Line[]): void {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (BLOCK_SCALAR.test(line.text)) {
+      while (i + 1 < lines.length && lines[i + 1]!.indent > line.indent) i++; // block scalar bodies are raw text
+      continue;
+    }
+    const flow = flowStart(line.text);
+    if (flow === undefined) continue;
+    let depth = flowDepth(flow);
+    while (depth > 0 && i + 1 < lines.length) {
+      const next = lines.splice(i + 1, 1)[0]!;
+      line.text += ` ${next.text}`;
+      depth += flowDepth(next.text);
+    }
+  }
+}
+
+/** The flow collection a line's value starts with (after `- ` and `key:`), if any. */
+function flowStart(text: string): string | undefined {
+  let rest = text;
+  while (rest === '-' || rest.startsWith('- ')) rest = rest.slice(1).trimStart();
+  if (/^[[{]/.test(rest)) return rest;
+  const m = KEY.exec(rest);
+  const value = m ? rest.slice(m[0].length).trimStart() : '';
+  return /^[[{]/.test(value) ? value : undefined;
+}
+
+/** Net bracket depth of a flow fragment, ignoring brackets inside quoted strings. */
+function flowDepth(text: string): number {
+  let depth = 0;
+  let quote: string | undefined;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (quote) {
+      if (quote === '"' && c === '\\') i++;
+      else if (c === quote) quote = undefined;
+    } else if (c === '"' || c === "'") quote = c;
+    else if (c === '[' || c === '{') depth++;
+    else if (c === ']' || c === '}') depth--;
+  }
+  return depth;
 }
 
 function stripComment(line: string): string {
