@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { agent, agentTool, collectSink, mockProvider, stream, team, type RunEvent } from '../src/index.ts';
+import { echoTool } from './helpers.ts';
 
 const m = (script: Parameters<typeof mockProvider>[0]) => ({ provider: mockProvider(script), model: 'mock' });
 const broken = (name: string, message = 'boom') => agent({ name, model: m([{ error: { status: 400, message } }]) });
@@ -43,6 +44,29 @@ describe('pattern failures', () => {
     const res = await team('crew', 'orchestrator', { orchestrator: lead, workers: [broken('w', 'down')] }).run('go');
     assert.equal(res.status, 'completed');
     assert.deepEqual(res.failures!.map(({ name, reason }) => ({ name, reason })), [{ name: 'w', reason: 'down' }]);
+  });
+});
+
+describe('budget-stopped members', () => {
+  const capped = (name: string) =>
+    agent({ name, model: m([{ toolCalls: [{ name: 'echo', args: { text: 'x' } }] }, { text: 'never' }]), tools: [echoTool()], budget: { maxTurns: 1 } });
+  const ok = (name: string) => agent({ name, model: m([{ text: 'fine' }]) });
+  const brief = (fs: Array<{ name: string; status: string; reason?: string }> | undefined) => fs?.map(({ name, status, reason }) => ({ name, status, reason }));
+
+  it('count as failures with their reason in parallel, evaluator over parallel and orchestrator', async () => {
+    const stopped = { status: 'stopped', reason: 'budget:maxTurns' };
+    const fan = await team('fan', 'parallel', { workers: [ok('a'), capped('b')] }).run('go');
+    assert.equal(fan.status, 'completed');
+    assert.deepEqual(brief(fan.failures), [{ name: 'b', ...stopped }]);
+
+    const judge = agent({ name: 'judge', model: m([{ text: '{"pass":true,"feedback":""}' }]) });
+    const loop = await team('loop', 'evaluator', { generator: team('fan', 'parallel', { workers: [ok('a'), capped('b')] }), evaluator: judge }).run('go');
+    assert.equal(loop.status, 'completed');
+    assert.deepEqual(brief(loop.failures), [{ name: 'fan/b', ...stopped }]);
+
+    const lead = agent({ name: 'lead', model: m([{ toolCalls: [{ name: 'w', args: { task: 't' } }] }, { text: 'done' }]) });
+    const crew = await team('crew', 'orchestrator', { orchestrator: lead, workers: [capped('w')] }).run('go');
+    assert.deepEqual(brief(crew.failures), [{ name: 'w', ...stopped }]);
   });
 });
 

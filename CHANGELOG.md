@@ -9,7 +9,9 @@
 - Built-in prices for `claude-opus-5-5`, `claude-sonnet-5-5` and `claude-haiku-5-5`, and a top-level `pricing`
   config section with per-model overrides merged over the built-in table.
 - Team results and their `run_end` event carry optional `failures` (`{ name, status, reason, runId }` per member run
-  that did not complete) for `parallel`, `chain`, `router`, `evaluator` and `orchestrator`; nested teams are flattened.
+  that did not complete, including budget-stopped ones) for `parallel`, `chain`, `router`, `evaluator` and
+  `orchestrator`; nested teams are flattened, also when the nested team itself completed (e.g. an evaluator whose
+  generator is a `parallel` team with a stopped worker).
   `MemberFailure` and `memberFailures` are exported, and `agentTool` accepts `onResult`.
 - Tools can end the run: returning `{ content, stop: true, data? }` completes the run after the current batch without
   another model turn (first stop in call order wins, error results never stop, `data` validated against the output

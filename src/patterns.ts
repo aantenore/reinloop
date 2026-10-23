@@ -54,9 +54,11 @@ function labels(members: Member[]): string[] {
 
 /** Failure entry of a member run; nested team failures are flattened under `<member>/`. */
 export function memberFailures(r: RunResult, name: string): MemberFailure[] {
-  if (r.status === 'completed') return [];
+  // A completed team can still carry failed (e.g. budget-stopped) members of its own.
+  const nested = (r.failures ?? []).map((f) => ({ ...f, name: `${name}/${f.name}` }));
+  if (r.status === 'completed') return nested;
   const own: MemberFailure = { name, status: r.status, ...(r.reason && { reason: r.reason }), runId: r.runId };
-  return [own, ...(r.failures ?? []).map((f) => ({ ...f, name: `${name}/${f.name}` }))];
+  return [own, ...nested];
 }
 
 const failed = (r: RunResult, who: string, earlier: MemberFailure[] = []): TeamOutcome => ({
@@ -176,15 +178,17 @@ export const BUILTIN_PATTERNS: Record<string, PatternDefinition> = {
       const maxRounds = o.maxRounds ?? 3;
       const continuing = !isTeam(generator);
       return async (input, ctx) => {
+        const failures: MemberFailure[] = []; // partial failures inside completed generator runs, across rounds
         let candidate = await ctx.call(generator, input, { session: 'generator' });
         for (let round = 1; ; round++) {
-          if (candidate.status !== 'completed') return failed(candidate, generator.name);
+          if (candidate.status !== 'completed') return failed(candidate, generator.name, failures);
+          failures.push(...memberFailures(candidate, generator.name));
           const verdict = await ctx.call(judge, fill(o.template ?? TEMPLATES.evaluate, { task: ctx.task, candidate: candidate.output }));
-          if (verdict.status !== 'completed') return failed(verdict, evaluator.name);
+          if (verdict.status !== 'completed') return failed(verdict, evaluator.name, failures);
           const v = verdict.data as { pass: boolean; feedback: string };
           const data = { rounds: round, passed: v.pass, feedback: v.feedback };
-          if (v.pass) return { output: candidate.output, data };
-          if (round >= maxRounds) return { output: candidate.output, data, status: 'stopped', reason: 'evaluator:maxRounds' };
+          if (v.pass) return { output: candidate.output, data, failures };
+          if (round >= maxRounds) return { output: candidate.output, data, status: 'stopped', reason: 'evaluator:maxRounds', failures };
           const revise = o.reviseTemplate ?? (continuing ? TEMPLATES.revise : TEMPLATES.reviseFresh);
           candidate = await ctx.call(generator, fill(revise, { task: ctx.task, candidate: candidate.output, feedback: v.feedback }), { session: 'generator' });
         }

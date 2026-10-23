@@ -34,9 +34,9 @@ them for list roles.
 
 ### Member failures
 
-When members do not complete, the team result and its `run_end` event carry `failures`: one
-`{ name, status, reason, runId }` entry per failed member run. Repeated workers are labelled `name#2`, ...; failures
-inside a nested team are flattened as `team/member`. `parallel` lists every failed worker (also when the run completes
+When members do not complete (failed, interrupted, or stopped by their budget), the team result and its `run_end`
+event carry `failures`: one `{ name, status, reason, runId }` entry per such member run. Repeated workers are labelled `name#2`, ...; failures
+inside a nested team are flattened as `team/member`, also when the nested team itself completed. `parallel` lists every failed worker (also when the run completes
 with partial results), `chain`, `router` and `evaluator` list the member that stopped them, and `orchestrator` lists
 the delegated worker runs that failed plus the lead if it did. The field is absent when nothing failed.
 
