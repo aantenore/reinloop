@@ -22,6 +22,21 @@ describe('mcp', () => {
     }
   });
 
+  it('keeps server tool names when prefix is false or empty', async () => {
+    for (const prefix of [false, ''] as const) {
+      const { client, tools } = await mcpTools('calc', { command: process.execPath, args: [fixture], prefix });
+      try {
+        assert.deepEqual(tools.map((t) => t.name), ['add', 'fail']);
+        assert.deepEqual(await tools[0]!.run({ a: 1, b: 1 }, ctx), { content: '2', isError: false });
+      } finally {
+        await client.close();
+      }
+    }
+    const { client, tools } = await mcpTools('calc', { command: process.execPath, args: [fixture], prefix: 'm' });
+    await client.close();
+    assert.deepEqual(tools.map((t) => t.name), ['m__add', 'm__fail']);
+  });
+
   it('reports a server that fails to start', async () => {
     await assert.rejects(mcpTools('bad', { command: process.execPath, args: ['-e', 'process.exit(3)'] }), /exited with code 3/);
   });

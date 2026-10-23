@@ -130,7 +130,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
   const serverFor = (pattern: string): string | undefined => {
     if (pattern.startsWith('mcp:')) return pattern.slice(4);
     const prefix = pattern.split('__')[0]!;
-    return Object.entries(config.mcpServers ?? {}).find(([name, s]) => (s.prefix ?? name) === prefix && pattern.includes('__'))?.[0];
+    return Object.entries(config.mcpServers ?? {}).find(([name, s]) => (s.prefix ?? name) === prefix && prefix !== '' && pattern.includes('__'))?.[0];
   };
 
   let skills: Promise<Skill[]> | undefined;

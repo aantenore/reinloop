@@ -18,3 +18,5 @@
   per preset (`ANTHROPIC_WORKSPACE_ID` becomes `anthropic-workspace-id` for `anthropic/...`).
 - `MemoryStore` accepts an optional `search(namespace, query, limit)`; `recall` uses it when present (keeping its
   order) and falls back to keyword-overlap ranking of `all()` otherwise.
+- MCP servers accept `prefix: false` (or `""`) to expose tools under the server's own names instead of
+  `<prefix>__<tool>`; the default prefix (the server name) is unchanged.

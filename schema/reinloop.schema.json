@@ -216,7 +216,14 @@
             }
           },
           "prefix": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "const": false
+              }
+            ]
           },
           "risk": {
             "enum": [

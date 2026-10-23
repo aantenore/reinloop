@@ -16,8 +16,8 @@ export interface McpServerConfig {
   /** Streamable HTTP transport */
   url?: string;
   headers?: Record<string, string>;
-  /** Tool name prefix; defaults to the server name. Tools are exposed as `<prefix>__<tool>`. */
-  prefix?: string;
+  /** Tool name prefix; defaults to the server name. Tools are exposed as `<prefix>__<tool>`; `false` or `''` keeps the server's own names. */
+  prefix?: string | false;
   /** Force a risk level for every tool; otherwise derived from MCP tool annotations. */
   risk?: Risk;
   /** Globs of tools known to be read-only when the server does not annotate them (risk "read"). */
@@ -245,7 +245,7 @@ function riskOf(info: McpToolInfo, forced?: Risk, readOnly?: RegExp[]): Risk {
   return 'exec';
 }
 
-/** Connects to an MCP server and adapts its tools, namespaced as `<prefix>__<tool>`. */
+/** Connects to an MCP server and adapts its tools, namespaced as `<prefix>__<tool>` unless `prefix` is `false` or `''`. */
 export async function mcpTools(name: string, cfg: McpServerConfig): Promise<{ client: McpClient; tools: Tool[] }> {
   const client = await McpClient.connect(name, cfg);
   const include = cfg.include?.map(globToRegExp);
@@ -256,7 +256,7 @@ export async function mcpTools(name: string, cfg: McpServerConfig): Promise<{ cl
     .filter((t) => (!include || include.some((r) => r.test(t.name))) && !exclude?.some((r) => r.test(t.name)))
     .map((info) =>
       defineTool({
-        name: safeToolName(`${prefix}__${info.name}`),
+        name: safeToolName(prefix ? `${prefix}__${info.name}` : info.name),
         description: info.description ?? info.name,
         schema: info.inputSchema ?? { type: 'object', properties: {} },
         risk: riskOf(info, cfg.risk, readOnly),

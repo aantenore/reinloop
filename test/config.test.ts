@@ -90,6 +90,22 @@ describe('config', () => {
     }
   });
 
+  it('accepts prefix: false for MCP servers and selects their tools with mcp:<server>', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reinloop-mcp-'));
+    await writeFile(join(dir, 'reinloop.json'), JSON.stringify({
+      providers: { mock: { type: 'mock', responses: [{ text: 'ok' }] } },
+      models: { m: { provider: 'mock', model: 'x' } },
+      mcpServers: { calc: { command: process.execPath, args: [fixture], prefix: false, include: ['add'] } },
+      agents: { a: { model: 'm', tools: ['mcp:calc'] } },
+    }));
+    const runtime = await loadRuntime(join(dir, 'reinloop.json'), { env: {} });
+    try {
+      assert.deepEqual(((await runtime.agent()) as Agent).tools.map((t) => t.name), ['add']);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   it('prices built-in models and applies per-model overrides from config', async () => {
     const usage = { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 500_000 };
     for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
