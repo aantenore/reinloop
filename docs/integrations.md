@@ -71,6 +71,12 @@ Redis reports a cross-tenant leak with a 0.88 threshold and a global namespace
 **action**, not just a wrong answer. The research direction for agents is caching *plans* and adapting them at run
 time ([Agentic Plan Caching](https://arxiv.org/abs/2506.14852)), not caching responses.
 
+## Memory
+
+`remember` / `recall` write to a `MemoryStore` (`memoryNotes()`, `fileNotes(dir)` or your own). By default `recall`
+loads the namespace with `all()` and ranks notes by keyword overlap. A store that implements the optional
+`search(namespace, query, limit)` (embeddings, full-text, a vector DB) is used instead, and its order is kept.
+
 ## Skills
 
 reinloop reads the open Agent Skills format: a folder with `SKILL.md` (frontmatter `name`, `description`) plus

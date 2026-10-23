@@ -8,6 +8,8 @@ export interface Note { text: string; tags?: string[]; agent: string; ts: number
 export interface MemoryStore {
   add(namespace: string, note: Note): Promise<void>;
   all(namespace: string): Promise<Note[]>;
+  /** Optional ranked search (e.g. embeddings, full-text). When absent, `recall` ranks `all()` by keyword overlap. */
+  search?(namespace: string, query: string, limit: number): Promise<Note[]>;
 }
 
 export function memoryNotes(): MemoryStore {
@@ -94,7 +96,10 @@ export function memoryTools(opts: MemoryToolsOptions): { remember: Tool; recall:
         additionalProperties: false,
       },
       async run({ query, limit = 8 }, ctx) {
-        const hits = rank(await opts.store.all(ns(ctx.agent)), query, limit);
+        const space = ns(ctx.agent);
+        const hits = opts.store.search
+          ? (await opts.store.search(space, query, limit)).slice(0, limit)
+          : rank(await opts.store.all(space), query, limit);
         return hits.length ? hits.map((n) => `- ${n.text}${n.tags?.length ? ` [${n.tags.join(', ')}]` : ''}`).join('\n') : 'no matching notes';
       },
     }),

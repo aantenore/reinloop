@@ -16,3 +16,5 @@
   schema). The stop is persisted with `tool_result`, so resume is consistent.
 - Built-in presets can send extra headers: `presets.<name>.headers` in config, and env-to-header mappings declared
   per preset (`ANTHROPIC_WORKSPACE_ID` becomes `anthropic-workspace-id` for `anthropic/...`).
+- `MemoryStore` accepts an optional `search(namespace, query, limit)`; `recall` uses it when present (keeping its
+  order) and falls back to keyword-overlap ranking of `all()` otherwise.
