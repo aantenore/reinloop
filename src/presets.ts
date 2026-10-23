@@ -14,13 +14,24 @@ export interface ProviderPreset {
   baseUrlEnv?: string;
   /** Env var holding the API key. */
   apiKeyEnv?: string;
+  /** Request headers taken from env vars when set: header name -> env var name. */
+  headerEnv?: Record<string, string>;
   options?: Record<string, unknown>;
+}
+
+/** Per-preset settings from config (`presets.<name>`). */
+export interface PresetOverrides {
+  /** Extra request headers, applied over those from `headerEnv`. */
+  headers?: Record<string, string>;
 }
 
 /** Well-known providers usable as `"<preset>/<model>"` with zero configuration. */
 export const PRESETS: Record<string, ProviderPreset> = {
   openai: { kind: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', baseUrlEnv: 'OPENAI_BASE_URL', apiKeyEnv: 'OPENAI_API_KEY', options: { maxTokensParam: 'max_completion_tokens' } },
-  anthropic: { kind: 'anthropic', baseUrlEnv: 'ANTHROPIC_BASE_URL', apiKeyEnv: 'ANTHROPIC_API_KEY', options: { cache: true } },
+  anthropic: {
+    kind: 'anthropic', baseUrlEnv: 'ANTHROPIC_BASE_URL', apiKeyEnv: 'ANTHROPIC_API_KEY',
+    headerEnv: { 'anthropic-workspace-id': 'ANTHROPIC_WORKSPACE_ID' }, options: { cache: true },
+  },
   gemini: { kind: 'openai-compatible', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKeyEnv: 'GEMINI_API_KEY' },
   openrouter: { kind: 'openai-compatible', baseUrl: 'https://openrouter.ai/api/v1', apiKeyEnv: 'OPENROUTER_API_KEY' },
   groq: { kind: 'openai-compatible', baseUrl: 'https://api.groq.com/openai/v1', apiKeyEnv: 'GROQ_API_KEY' },
@@ -55,13 +66,16 @@ export function defaultModel(env: Env = process.env): string {
   return 'ollama/qwen3:8b';
 }
 
-export function presetProvider(name: string, env: Env = process.env): Provider {
+export function presetProvider(name: string, env: Env = process.env, overrides: PresetOverrides = {}): Provider {
   const preset = PRESETS[name];
   if (!preset) throw new Error(`unknown provider "${name}" (built-in: ${Object.keys(PRESETS).join(', ')}; or define it under "providers")`);
   if (preset.kind === 'mock') return mockProvider();
   const baseUrl = (preset.baseUrlEnv && env[preset.baseUrlEnv]) || preset.baseUrl;
   const apiKey = preset.apiKeyEnv ? env[preset.apiKeyEnv] : undefined;
-  const common = { name, baseUrl, apiKey, stream: true, ...preset.options };
+  const headers: Record<string, string> = { ...(preset.options?.headers as Record<string, string> | undefined) };
+  for (const [header, envVar] of Object.entries(preset.headerEnv ?? {})) if (env[envVar]) headers[header] = env[envVar];
+  Object.assign(headers, overrides.headers);
+  const common = { name, baseUrl, apiKey, stream: true, ...preset.options, ...(Object.keys(headers).length && { headers }) };
   return withRetry(preset.kind === 'anthropic' ? anthropic(common) : openaiCompatible(common));
 }
 
@@ -73,14 +87,15 @@ export function splitModel(spec: string): { provider: string; model: string } | 
 
 const cache = new Map<string, Provider>();
 
-/** Resolves `"openai/gpt-5-mini"`, an alias like `"sonnet"`, or passes a ModelRef through. */
-export function resolveModel(spec: string | ModelRef | undefined, env: Env = process.env): ModelRef {
+/** Resolves `"openai/gpt-5-mini"`, an alias like `"sonnet"`, or passes a ModelRef through. `presets` adds per-preset settings. */
+export function resolveModel(spec: string | ModelRef | undefined, env: Env = process.env, presets: Record<string, PresetOverrides> = {}): ModelRef {
   if (spec && typeof spec === 'object') return spec;
   const name = !spec || spec === 'inherit' ? defaultModel(env) : (MODEL_ALIASES[spec] ?? spec);
   const parts = splitModel(name);
   if (!parts) throw new Error(`model "${name}" must look like "provider/model" (e.g. "openai/gpt-5-mini", "ollama/qwen3:8b")`);
-  const key = `${parts.provider}|${env === process.env ? '' : JSON.stringify(env)}`;
-  if (!cache.has(key)) cache.set(key, presetProvider(parts.provider, env));
+  const overrides = presets[parts.provider];
+  const key = `${parts.provider}|${env === process.env ? '' : JSON.stringify(env)}|${overrides ? JSON.stringify(overrides) : ''}`;
+  if (!cache.has(key)) cache.set(key, presetProvider(parts.provider, env, overrides));
   return { provider: cache.get(key)!, model: parts.model, pricing: pricingFor(parts.model) };
 }
 

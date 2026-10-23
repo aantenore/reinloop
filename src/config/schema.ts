@@ -86,6 +86,7 @@ export const CONFIG_SCHEMA: JsonSchema = {
     plugins: { type: 'array', items: str },
     defaultAgent: str,
     providers: { type: 'object', additionalProperties: component },
+    presets: { type: 'object', additionalProperties: { type: 'object', additionalProperties: false, properties: { headers: strMap } } },
     models: {
       type: 'object',
       additionalProperties: {

@@ -14,3 +14,5 @@
 - Tools can end the run: returning `{ content, stop: true, data? }` completes the run after the current batch without
   another model turn (first stop in call order wins, error results never stop, `data` validated against the output
   schema). The stop is persisted with `tool_result`, so resume is consistent.
+- Built-in presets can send extra headers: `presets.<name>.headers` in config, and env-to-header mappings declared
+  per preset (`ANTHROPIC_WORKSPACE_ID` becomes `anthropic-workspace-id` for `anthropic/...`).

@@ -117,7 +117,9 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     if (!parts) throw new ConfigError(`unknown model "${chosen}"`);
     const pricing = pricingFor(parts.model, config.pricing);
     if (config.providers?.[parts.provider]) return { provider: await provider(parts.provider), model: parts.model, pricing };
-    return { ...resolveModel(full, env), pricing };
+    const preset = config.presets?.[parts.provider];
+    const presets = preset ? { [parts.provider]: interpolate(preset, env, `$.presets.${parts.provider}`) } : {};
+    return { ...resolveModel(full, env, presets), pricing };
   };
 
   const mcp = new Map<string, Promise<{ client: McpClient; tools: Tool[] }>>();

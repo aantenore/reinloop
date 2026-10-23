@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { anthropic, mockProvider, openaiCompatible, ProviderError, withFallback, withRetry } from '../src/index.ts';
+import { anthropic, createRuntime, mockProvider, openaiCompatible, presetProvider, ProviderError, withFallback, withRetry, type Agent } from '../src/index.ts';
 import type { ModelRequest } from '../src/index.ts';
 import { fakeFetch, json, sse } from './helpers.ts';
 
@@ -177,5 +177,41 @@ describe('resilience', () => {
     const res = await p.generate({ ...request, model: 'a' }, { signal });
     assert.equal(backup.requests[0]!.model, 'b');
     assert.equal(res.message.parts[0]!.type === 'text' && res.message.parts[0]!.text, 'from backup');
+  });
+});
+
+describe('preset headers', () => {
+  const stopped = () => sse([
+    { data: { type: 'message_start', message: { model: 'claude-x', usage: { input_tokens: 1 } } } },
+    { data: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'ok' } } },
+    { data: { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } } },
+    { data: { type: 'message_stop' } },
+  ])();
+  const withFetch = async (fn: (f: ReturnType<typeof fakeFetch>) => Promise<void>) => {
+    const f = fakeFetch([stopped, stopped]);
+    const original = globalThis.fetch;
+    globalThis.fetch = f.impl as typeof fetch;
+    try {
+      await fn(f);
+    } finally {
+      globalThis.fetch = original;
+    }
+  };
+
+  it('maps ANTHROPIC_WORKSPACE_ID to the anthropic-workspace-id header, and config headers on top', async () => {
+    await withFetch(async (f) => {
+      await presetProvider('anthropic', { ANTHROPIC_API_KEY: 'k', ANTHROPIC_WORKSPACE_ID: 'ws_1' }).generate(request, { signal });
+      assert.equal(f.requests[0]!.headers['anthropic-workspace-id'], 'ws_1');
+      assert.equal(f.requests[0]!.headers['x-api-key'], 'k');
+
+      const runtime = await createRuntime(
+        { presets: { anthropic: { headers: { 'x-team': '${env:TEAM}' } } }, agents: { a: { model: 'anthropic/claude-x' } } },
+        { env: { ANTHROPIC_API_KEY: 'k', TEAM: 'blue' } },
+      );
+      await ((await runtime.agent('a')) as Agent).model.provider.generate(request, { signal });
+      assert.equal(f.requests[1]!.headers['x-team'], 'blue');
+      assert.equal(f.requests[1]!.headers['anthropic-workspace-id'], undefined);
+    });
+    await assert.rejects(createRuntime({ presets: { nope: {} } }), /\$\.presets\.nope: unknown preset/);
   });
 });

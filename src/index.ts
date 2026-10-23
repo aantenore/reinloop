@@ -34,7 +34,7 @@ export { agent, team, tool, paramsSchema, type AgentOptions, type EasyAgent, typ
 export { isTeam, runMember, streamMember, streamTeam, type Member, type Team, type TeamContext, type TeamOutcome } from './team.ts';
 export { BUILTIN_PATTERNS, TEMPLATES, createTeam, definePattern, fill, memberFailures, type PatternDefinition, type RoleSpec } from './patterns.ts';
 export { PRICING, pricingFor } from './pricing.ts';
-export { PRESETS, MODEL_ALIASES, defaultModel, missingCredentials, presetProvider, resolveModel, splitModel, type ProviderPreset } from './presets.ts';
+export { PRESETS, MODEL_ALIASES, defaultModel, missingCredentials, presetProvider, resolveModel, splitModel, type PresetOverrides, type ProviderPreset } from './presets.ts';
 export { parseAgentFile, loadAgentDir, withAgentFiles, TOOL_ALIASES, DEFAULT_AGENT_DIRS, type ParsedFile } from './agentfile.ts';
 export { parseFrontmatter, parseYaml } from './frontmatter.ts';
 export { loadProject, DEFAULT_AGENT, CONFIG_FILE, type ProjectOptions } from './project.ts';

@@ -17,6 +17,7 @@ registry, so plugins can add their own. Editors get completion from `schema/rein
   "providers": {
     "corp": { "type": "openai-compatible", "baseUrl": "https://llm.internal/v1", "apiKey": "${env:CORP_KEY}", "stream": true, "retry": { "maxAttempts": 4 } }
   },
+  "presets": { "anthropic": { "headers": { "x-client-team": "platform" } } },
   "pricing": { "claude-sonnet-5-5": { "inputPerMTok": 1.8 } },
   "models": {
     "fast": { "provider": "corp", "model": "llama-4-70b", "fallback": ["smart"] },
@@ -58,6 +59,7 @@ needs it is built, so an unused provider never blocks a run.
 | Section | Notes |
 |---|---|
 | `providers.<name>` | `type`: `openai-compatible` (`baseUrl`, `apiKey`, `headers`, `stream`, `maxTokensParam`, `structuredOutput: true \| false \| "without-tools"`), `anthropic` (`baseUrl`, `apiKey`, `version`, `headers`, `stream`, `cache`, `defaultMaxTokens`, `structuredOutput`), `mock` (`responses`, `loop`), or a plugin type. `retry: false \| { maxAttempts, baseDelayMs, maxDelayMs, retryOn }` (retries are on by default). A provider named `x` makes `x/<model>` strings work. |
+| `presets.<name>` | Settings for a built-in preset used as `"<name>/<model>"`: `headers` (extra request headers, `${env:...}` allowed). Ignored when `providers.<name>` defines a provider with the same name. Presets also read headers from env vars: `ANTHROPIC_WORKSPACE_ID` becomes `anthropic-workspace-id` for `anthropic/...`; config headers win over env ones. |
 | `models.<alias>` | `provider`, `model`, `params`, `pricing` (USD per million tokens, used for cost budgets), `fallback` (aliases tried in order). |
 | `pricing.<model id>` | Price overrides (`inputPerMTok`, `outputPerMTok`, `cacheReadPerMTok`, USD per million tokens) keyed by the model id without the provider prefix, merged field by field over the built-in table (`PRICING`: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`). `models.<alias>.pricing` takes precedence. Models without a price cost 0, so `maxCostUsd` does not limit them. |
 | `mcpServers.<name>` | stdio (`command`, `args`, `env`, `cwd`) or HTTP (`url`, `headers`); `prefix`, `include`/`exclude` globs, `risk` (otherwise derived from tool annotations), `timeoutMs`. Tools appear as `<prefix>__<tool>`. |

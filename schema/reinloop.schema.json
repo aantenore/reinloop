@@ -72,6 +72,21 @@
         }
       }
     },
+    "presets": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
     "models": {
       "type": "object",
       "additionalProperties": {

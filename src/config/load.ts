@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import type { McpServerConfig } from '../mcp/client.ts';
 import { withAgentFiles } from '../agentfile.ts';
-import { MODEL_ALIASES, PRESETS, splitModel } from '../presets.ts';
+import { MODEL_ALIASES, PRESETS, type PresetOverrides, splitModel } from '../presets.ts';
 import { validate } from '../schema.ts';
 import type { Budget, JsonSchema, ModelParams, PolicyConfig, Pricing } from '../types.ts';
 import { ReinloopError } from '../util.ts';
@@ -51,6 +51,8 @@ export interface HarnessConfig {
   /** Directories with Agent Skills (folders containing SKILL.md); default skills/ and .reinloop/skills/. */
   skillsDir?: string | string[];
   providers?: Record<string, ComponentConfig>;
+  /** Settings for built-in presets used as `"<preset>/<model>"`, e.g. extra request headers. */
+  presets?: Record<string, PresetOverrides>;
   models?: Record<string, { provider: string; model: string; params?: ModelParams; pricing?: Pricing; fallback?: string[] }>;
   /** Per-model price overrides (USD per million tokens), keyed by model id and merged over the built-in table. */
   pricing?: Record<string, Partial<Pricing>>;
@@ -141,6 +143,9 @@ export function checkConfig(config: HarnessConfig): string[] {
   if (errors.length) return errors;
   const providers = config.providers ?? {};
   const models = config.models ?? {};
+  for (const name of Object.keys(config.presets ?? {})) {
+    if (!PRESETS[name]) errors.push(`$.presets.${name}: unknown preset (built-in: ${Object.keys(PRESETS).join(', ')})`);
+  }
   for (const [name, m] of Object.entries(models)) {
     if (!providers[m.provider]) errors.push(`$.models.${name}.provider: unknown provider "${m.provider}"`);
     for (const fb of m.fallback ?? []) if (!models[fb]) errors.push(`$.models.${name}.fallback: unknown model "${fb}"`);
