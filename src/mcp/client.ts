@@ -4,6 +4,7 @@ import { readSse } from '../providers/http.ts';
 import { defineTool, safeToolName } from '../tools/define.ts';
 import type { JsonSchema, Risk, Tool } from '../types.ts';
 import { globToRegExp } from '../util.ts';
+import { VERSION } from '../version.ts';
 
 export const MCP_PROTOCOL_VERSION = '2025-06-18';
 
@@ -201,7 +202,7 @@ export class McpClient {
       const init = await transport.request('initialize', {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: 'reinloop', version: '0.1.0' },
+        clientInfo: { name: 'reinloop', version: VERSION },
       });
       if (transport instanceof HttpTransport) transport.setProtocol(init?.protocolVersion ?? MCP_PROTOCOL_VERSION);
       await transport.notify('notifications/initialized');

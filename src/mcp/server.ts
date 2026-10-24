@@ -5,6 +5,7 @@ import { describeMembers } from '../describe.ts';
 import { safeToolName } from '../tools/define.ts';
 import type { Approver } from '../types.ts';
 import { errorMessage } from '../util.ts';
+import { VERSION } from '../version.ts';
 import { MCP_PROTOCOL_VERSION } from './client.ts';
 
 export interface McpServeOptions {
@@ -31,7 +32,7 @@ export function serveMcp(runtime: Runtime, opts: McpServeOptions = {}): Promise<
         return {
           protocolVersion: msg.params?.protocolVersion ?? MCP_PROTOCOL_VERSION,
           capabilities: { tools: {} },
-          serverInfo: { name: 'reinloop', version: opts.version ?? '0.1.0' },
+          serverInfo: { name: 'reinloop', version: opts.version ?? VERSION },
         };
       case 'ping':
         return {};

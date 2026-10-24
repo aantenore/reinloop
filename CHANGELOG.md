@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-10-24
 
+- The MCP client and server report the package version instead of a fixed `0.1.0`.
 - `McpToolInfo` (returned by `McpClient.listTools()`) is exported from the package entry.
 - `sonnet` and `haiku` aliases and the default model for `ANTHROPIC_API_KEY` now point to `claude-sonnet-5-5` and
   `claude-haiku-5-5`.
