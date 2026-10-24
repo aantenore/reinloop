@@ -133,7 +133,7 @@ too. See [docs/architecture.md](docs/architecture.md).
 | Caching | Provider prompt caching (Anthropic breakpoints, stable prefixes); optional response cache (memory/file, TTL) for dev, tests and evals |
 | Memory | `remember` / `recall` tools with durable notes, shared or per agent; richer memory via MCP |
 | Skills | Open Agent Skills (`SKILL.md` folders), progressively disclosed |
-| Structured output | JSON Schema validated with retries; native `response_format` when the provider supports it; tolerant parsing |
+| Structured output | JSON Schema validated with retries; sent natively (`response_format`, Anthropic `output_config.format`, also with tools) when the provider supports it; tolerant parsing |
 | Tools | Built-ins (files, search, edit, shell), MCP servers (stdio/HTTP), your functions, other agents and teams |
 | Observability | Typed events, console, JSONL traces, OTLP export with OpenTelemetry GenAI spans. Nothing leaves your machine unless you add a sink. |
 | Extension | Plugins register providers, tools, patterns, stores, sinks, caches, compaction and middleware by name |
@@ -149,7 +149,7 @@ commoditised ([research](docs/research.md)). reinloop's bet is the opposite of a
 
 1. **The unit is a file, not a class.** Agents are portable, diffable, reviewable and editable by people and by agents.
 2. **The harness is policy, not code.** Safety, budgets, durability and tracing are configured, not re-implemented.
-3. **The loop stays yours.** About 200 lines, every step an event and a hook, no hidden prompts. Copy it if you outgrow it.
+3. **The loop stays yours.** About 350 lines, every step an event and a hook, no hidden prompts. Copy it if you outgrow it.
 
 An honest comparison with OpenAI Agents SDK, PydanticAI, LangGraph, CrewAI, Vercel AI SDK and Mastra, including where
 they are better, is in [docs/why-simple.md](docs/why-simple.md).
@@ -164,7 +164,7 @@ orders of magnitude, so the harness is never the bottleneck.
 
 Version 0.x. The agent file format, config schema and event protocol are the contract, and breaking changes bump the
 minor version.
-Current limits: text-only messages, no passthrough of provider "thinking" blocks, and teams do not resume mid-pattern
+Current limits: text-only messages (no images or files), and teams do not resume mid-pattern
 (member runs do). Token estimates before the first response are heuristic. The `shell` tool is confined to a
 directory but is not a sandbox, so use a container for untrusted work.
 

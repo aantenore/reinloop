@@ -47,7 +47,7 @@ Resolution order: a `models` alias in `reinloop.json`, then a short alias (`sonn
 | `anthropic` | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` |
 | `gemini` | `GEMINI_API_KEY` | |
 | `openrouter`, `groq`, `mistral`, `deepseek`, `xai`, `together` | `<NAME>_API_KEY` | |
-| `ollama`, `lmstudio`, `vllm` | | `OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`, `VLLM_BASE_URL` |
+| `ollama`, `lmstudio`, `vllm` | `VLLM_API_KEY` (vllm only, optional) | `OLLAMA_BASE_URL`, `LMSTUDIO_BASE_URL`, `VLLM_BASE_URL` |
 | `mock` | | Offline echo, handy for tests |
 
 With no model anywhere, reinloop uses `REINLOOP_MODEL`. If that is unset, it picks the first provider whose key is set,

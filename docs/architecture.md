@@ -40,7 +40,7 @@ The state of a run is a fold over its events (`state.ts: reduce`):
 | `tool_result` | yes | appends a tool result; records a `stop` request |
 | `compaction` | yes | replaces the history |
 | `run_end` | yes | final status; clears stop requests |
-| `turn_start`, `model_request`, `text_delta`, `tool_start` | no | streaming and tracing only |
+| `turn_start`, `model_request`, `text_delta`, `thinking_delta`, `tool_start` | no | streaming and tracing only |
 
 Persistence is awaited at checkpoints: after each model response and after each tool batch. Crash semantics:
 

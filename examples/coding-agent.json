@@ -1,6 +1,6 @@
 {
   "$schema": "../schema/reinloop.schema.json",
-  "plugins": ["./plugins/redact-secrets.mjs"],
+  "plugins": ["./dev-team/plugins/redact-secrets.mjs"],
   "providers": {
     "local": {
       "type": "openai-compatible",
@@ -46,8 +46,8 @@
   "profiles": {
     "cloud": {
       "models": {
-        "worker": { "provider": "anthropic", "model": "claude-sonnet-5", "pricing": { "inputPerMTok": 3, "outputPerMTok": 15, "cacheReadPerMTok": 0.3 } },
-        "reviewer": { "provider": "anthropic", "model": "claude-haiku-4-5", "pricing": { "inputPerMTok": 1, "outputPerMTok": 5, "cacheReadPerMTok": 0.1 } }
+        "worker": { "provider": "anthropic", "model": "claude-sonnet-5-5" },
+        "reviewer": { "provider": "anthropic", "model": "claude-haiku-5-5" }
       },
       "agents": { "coder": { "budget": { "maxCostUsd": 2 } } }
     }
