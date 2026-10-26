@@ -1,7 +1,9 @@
 import { resolve } from 'node:path';
 import { type CacheStore, fileCache, memoryCache } from './cache.ts';
 import { summarizeCompaction, windowCompaction } from './compaction.ts';
-import type { Env, HarnessConfig } from './config/load.ts';
+import { type Env, type HarnessConfig, interpolate } from './config/load.ts';
+import { resolveModel } from './presets.ts';
+import { webTools } from './tools/web.ts';
 import { BUILTIN_PATTERNS, type PatternDefinition } from './patterns.ts';
 import { fileNotes, memoryNotes, memoryTools } from './tools/memory.ts';
 import { otlpSink } from './observe/otlp.ts';
@@ -82,5 +84,36 @@ export function createRegistry(): Registry {
     });
   r.tools.set('remember', (_o, ctx) => notes(ctx).remember);
   r.tools.set('recall', (_o, ctx) => notes(ctx).recall);
+  const web = (ctx: FactoryContext) =>
+    ctx.once('web', () => {
+      const w = interpolate(ctx.config.web ?? {}, ctx.env, '$.web');
+      const native = w.provider === 'anthropic-native';
+      return webTools({
+        provider: w.provider ?? 'tavily',
+        ...(!native && {
+          tavily: { apiKey: w.apiKey, env: ctx.env, searchDepth: w.searchDepth, topic: w.topic, includeDomains: w.includeDomains, excludeDomains: w.excludeDomains },
+        }),
+        ...(native && {
+          anthropic: {
+            model: resolveModel(w.model ?? 'anthropic/claude-haiku-5-5', ctx.env),
+            maxUses: w.maxUses,
+            ...((w.includeDomains || w.excludeDomains) && {
+              params: { ...(w.includeDomains && { allowed_domains: w.includeDomains }), ...(w.excludeDomains && { blocked_domains: w.excludeDomains }) },
+            }),
+          },
+        }),
+        maxResults: w.maxResults,
+        maxResultsCap: w.maxResultsCap,
+        maxChars: w.maxChars,
+        maxFetchChars: w.maxFetchChars,
+        cacheTtlMs: w.cacheTtlMs,
+      });
+    });
+  r.tools.set('web_search', (_o, ctx) => web(ctx).web_search);
+  r.tools.set('web_fetch', (_o, ctx) => {
+    const tool = web(ctx).web_fetch;
+    if (!tool) throw new Error(`web_fetch is not available with web provider "${ctx.config.web?.provider}"`);
+    return tool;
+  });
   return r;
 }

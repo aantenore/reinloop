@@ -1,10 +1,10 @@
-import { DEFAULT_BUDGET, exceededBudget } from './policy.ts';
+import { decide, DEFAULT_BUDGET, exceededBudget } from './policy.ts';
 import { validate } from './schema.ts';
 import { Channel, EPHEMERAL, pendingToolCalls, reduce, replay } from './state.ts';
 import { memoryStore } from './store/memory.ts';
 import { executeToolCalls } from './tools/executor.ts';
 import type {
-  Agent, EventMap, EventType, HookContext, Message, ModelRequest, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
+  Agent, Approver, Budget, EventMap, EventType, HookContext, Message, ModelRequest, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
   RunStore, ToolSpec, Usage,
 } from './types.ts';
 import { addUsage, errorMessage, estimateTokens, hasVisibleParts, newId, textOf, toolCallsOf, userMessage } from './util.ts';
@@ -77,7 +77,8 @@ async function drive(
   const state = replay(runId, agent.name, prior);
   const base = { turns: state.turns, toolCalls: state.toolCalls, usage: state.usage, costUsd: state.costUsd };
   const started = Date.now();
-  const specs: ToolSpec[] = agent.tools.map((t) => ({ name: t.name, description: t.description, schema: t.schema }));
+  const specs: ToolSpec[] = agent.tools.map((t) => ({ name: t.name, description: t.description, schema: t.schema, ...(t.hosted && { hosted: t.hosted }) }));
+  let offered: ToolSpec[] | undefined; // tool specs after the hosted-tool policy check, done once per run
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
   const hookCtx: HookContext = { runId, agent: agent.name, state };
 
@@ -130,7 +131,8 @@ async function drive(
         end = { status: 'failed', reason: 'no input' };
         break;
       }
-      if (last.role === 'assistant') {
+      // A paused hosted-tool turn is sent back as-is so the provider resumes it.
+      if (last.role === 'assistant' && lastStop !== 'pause_turn') {
         const checked = checkOutput(agent, textOf(last));
         if (checked.ok) {
           data = checked.data;
@@ -178,10 +180,12 @@ async function drive(
         }
       }
 
+      offered ??= await allowedHostedTools(agent, specs, runId, opts.approve, emit);
       const turn = state.turns + 1;
       emit('turn_start', { turn });
       const params = raisedMaxTokens ? { ...agent.model.params, maxTokens: raisedMaxTokens } : agent.model.params;
-      let req: ModelRequest = { model: agent.model.model, instructions: agent.instructions, messages: [...state.messages], tools: specs, params };
+      const turnTools = capHostedUses(offered, agent.budget ?? DEFAULT_BUDGET, counters.toolCalls);
+      let req: ModelRequest = { model: agent.model.model, instructions: agent.instructions, messages: [...state.messages], tools: turnTools, params };
       // Always offered: providers map it to native structured output that coexists with tool calls, or skip it.
       if (agent.output) req.responseSchema = agent.output.schema;
       for (const mw of agent.middleware ?? []) req = (await mw.beforeModel?.(req, hookCtx)) ?? req;
@@ -210,6 +214,14 @@ async function drive(
         costUsd: res.cached ? 0 : costOf(agent.model.pricing, res.usage),
         ...(discarded && { discarded: true }),
       });
+      for (const part of res.message.parts) {
+        if (part.type === 'hosted_call') emit('hosted_tool_start', { callId: part.id, name: part.name, input: part.input });
+        else if (part.type === 'hosted_result') {
+          emit('hosted_tool_result', {
+            callId: part.callId, name: part.name, summary: part.summary ?? part.blockType, isError: part.isError ?? false, ...(part.sources && { sources: part.sources }),
+          });
+        }
+      }
       await flush();
       if (discarded) continue;
       // No text and no tool calls: a max_tokens stop (e.g. spent on reasoning) or a refusal ends the run with that
@@ -287,12 +299,56 @@ export function contextTokens(state: RunState, agent: Agent, specs: ToolSpec[]):
 export function costOf(pricing: Pricing | undefined, usage: Usage): number {
   if (!pricing) return 0;
   const cached = usage.cacheReadTokens ?? 0;
+  let hosted = 0;
+  for (const [kind, count] of Object.entries(usage.serverToolUse ?? {})) hosted += count * (pricing.serverToolUsd?.[kind] ?? 0);
   return (
     ((usage.inputTokens - cached) * pricing.inputPerMTok +
       cached * (pricing.cacheReadPerMTok ?? pricing.inputPerMTok) +
       usage.outputTokens * pricing.outputPerMTok) /
-    1_000_000
+      1_000_000 +
+    hosted
   );
+}
+
+/**
+ * Hosted tools run inside the provider, so the policy is applied once per run, before they are offered: `deny` (or
+ * `ask` without approval) removes the tool from the request. Each decision is emitted as `tool_decision`.
+ */
+async function allowedHostedTools(
+  agent: Agent,
+  specs: ToolSpec[],
+  runId: string,
+  approve: Approver | undefined,
+  emit: <T extends EventType>(type: T, data: EventMap[T]) => void,
+): Promise<ToolSpec[]> {
+  const denied = new Set<string>();
+  for (const tool of agent.tools) {
+    if (!tool.hosted) continue;
+    const call = { type: 'tool_call' as const, id: `hosted:${tool.name}`, name: tool.name, args: {} };
+    const verdict = decide(agent.policy, call, tool);
+    let allowed = verdict.decision === 'allow';
+    let reason = verdict.reason;
+    if (verdict.decision === 'ask') {
+      allowed = approve ? await approve({ runId, agent: agent.name, call, tool, reason }) : false;
+      reason = `${reason}: ${allowed ? 'approved' : approve ? 'rejected by approver' : 'no approver configured'}`;
+    }
+    emit('tool_decision', { callId: call.id, name: tool.name, allowed, reason: `hosted tool, ${reason}` });
+    if (!allowed) denied.add(tool.name);
+  }
+  return denied.size ? specs.filter((s) => !denied.has(s.name)) : specs;
+}
+
+/** Caps each hosted tool's use limit (e.g. `max_uses`) to what is left of `maxToolCalls`. */
+function capHostedUses(specs: ToolSpec[], budget: Budget, used: number): ToolSpec[] {
+  if (budget.maxToolCalls === undefined) return specs;
+  const left = Math.max(0, budget.maxToolCalls - used);
+  return specs.map((s) => {
+    const key = s.hosted?.limitParam;
+    if (!key) return s;
+    const current = s.hosted!.params?.[key];
+    const capped = typeof current === 'number' ? Math.min(current, left) : left;
+    return { ...s, hosted: { ...s.hosted!, params: { ...s.hosted!.params, [key]: capped } } };
+  });
 }
 
 type OutputCheck = { ok: true; data?: unknown } | { ok: false; error: string };

@@ -1,6 +1,6 @@
 import { closedSchema } from '../schema.ts';
-import type { Effort, GenerateContext, Message, ModelParams, ModelResponse, Part, Provider, StopReason, ThinkingType, Usage } from '../types.ts';
-import { ProviderError } from '../util.ts';
+import type { Effort, GenerateContext, HostedResultPart, Message, ModelParams, ModelResponse, Part, Provider, StopReason, ThinkingType, ToolSpec, Usage } from '../types.ts';
+import { ProviderError, truncate } from '../util.ts';
 import { type FetchLike, postJson, readSse } from './http.ts';
 
 export interface AnthropicOptions {
@@ -57,7 +57,8 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
       checkThinking(req.model, p);
       const messages = toAnthropicMessages(req.messages);
       if (cache) markLastBlock(messages);
-      const tools = req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.schema }));
+      const tools: Block[] = req.tools.map((t) => (t.hosted ? hostedToolBlock(t) : { name: t.name, description: t.description, input_schema: t.schema }));
+      const betas = [...new Set(req.tools.flatMap((t) => (t.hosted?.beta ? [t.hosted.beta] : [])))];
       if (cache && tools.length) Object.assign(tools.at(-1)!, { cache_control: { type: 'ephemeral' } });
       const body: Record<string, unknown> = {
         model: req.model,
@@ -90,6 +91,12 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
         ...(opts.apiKey && { 'x-api-key': opts.apiKey }),
         ...opts.headers,
       };
+      if (betas.length) {
+        const current = Object.entries(headers).find(([k]) => k.toLowerCase() === 'anthropic-beta');
+        const merged = [...new Set([...(current ? String(current[1]).split(',').map((b) => b.trim()).filter(Boolean) : []), ...betas])];
+        if (current) delete (headers as Record<string, string>)[current[0]];
+        (headers as Record<string, string>)['anthropic-beta'] = merged.join(',');
+      }
       const res = await postJson(fetchImpl, `${baseUrl}/v1/messages`, headers, body, ctx.signal);
       if (stream) return readStream(res, ctx);
       const out = fromMessage(await res.json());
@@ -102,6 +109,13 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
 type Block = Record<string, unknown>;
 interface AMessage { role: 'user' | 'assistant'; content: Block[] }
 
+/** Hosted tools are sent as `{ type, name, ...params }`; tools meant for another provider fail before the request. */
+export function hostedToolBlock(t: ToolSpec): Block {
+  const h = t.hosted!;
+  if (h.provider !== 'anthropic') throw new ProviderError(400, `hosted tool "${t.name}" targets provider "${h.provider}", not anthropic`);
+  return { type: h.type, name: t.name, ...h.params };
+}
+
 /** Maps neutral messages; tool results become user turns and consecutive same-role turns are merged. */
 export function toAnthropicMessages(messages: Message[]): AMessage[] {
   const out: AMessage[] = [];
@@ -109,7 +123,9 @@ export function toAnthropicMessages(messages: Message[]): AMessage[] {
     const role = m.role === 'assistant' ? 'assistant' : 'user';
     const content: Block[] = [];
     for (const p of m.parts) {
-      if (p.type === 'text' && p.text) content.push({ type: 'text', text: p.text });
+      if (p.type === 'text' && p.text) content.push({ type: 'text', text: p.text, ...(p.citations?.length && role === 'assistant' && { citations: p.citations }) });
+      else if (p.type === 'hosted_call' && role === 'assistant') content.push({ type: 'server_tool_use', id: p.id, name: p.name, input: p.input ?? {} });
+      else if (p.type === 'hosted_result' && role === 'assistant') content.push({ type: p.blockType, tool_use_id: p.callId, content: p.content });
       else if (p.type === 'thinking' && role === 'assistant') {
         // Echoed back unchanged (signature included) so multi-turn tool use with thinking stays valid.
         if (p.redacted !== undefined) content.push({ type: 'redacted_thinking', data: p.redacted });
@@ -134,7 +150,11 @@ function markLastBlock(messages: AMessage[]): void {
   if (block) block.cache_control = { type: 'ephemeral' };
 }
 
-const STOP: Record<string, StopReason> = { end_turn: 'end', stop_sequence: 'end', tool_use: 'tool_calls', max_tokens: 'max_tokens', refusal: 'refusal' };
+const STOP: Record<string, StopReason> = {
+  end_turn: 'end', stop_sequence: 'end', tool_use: 'tool_calls', max_tokens: 'max_tokens', refusal: 'refusal', pause_turn: 'pause_turn',
+};
+
+const camel = (k: string) => k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 
 function toUsage(u: any): Usage {
   const read = u?.cache_read_input_tokens ?? 0;
@@ -144,13 +164,52 @@ function toUsage(u: any): Usage {
     outputTokens: u?.output_tokens ?? 0,
     ...(read && { cacheReadTokens: read }),
     ...(write && { cacheWriteTokens: write }),
+    ...serverToolUse(u?.server_tool_use),
   };
+}
+
+/** `server_tool_use: { web_search_requests: 2 }` -> `{ serverToolUse: { webSearchRequests: 2 } }` (non-zero counts only). */
+function serverToolUse(raw: unknown): Pick<Usage, 'serverToolUse'> {
+  if (!raw || typeof raw !== 'object') return {};
+  const counts: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw)) if (typeof v === 'number' && v > 0) counts[camel(k)] = v;
+  return Object.keys(counts).length ? { serverToolUse: counts } : {};
+}
+
+/** Provider-neutral digest of a hosted tool result block: error flag, short summary, cited sources. */
+export function digestHostedResult(blockType: string, content: any): Pick<HostedResultPart, 'isError' | 'summary' | 'sources'> {
+  if (Array.isArray(content)) {
+    const sources = content.filter((r) => typeof r?.url === 'string').map((r) => ({ url: r.url as string, ...(r.title && { title: String(r.title) }) }));
+    const list = sources.slice(0, 5).map((s) => (s.title ? `${s.title} <${s.url}>` : s.url)).join('; ');
+    return { isError: false, summary: truncate(`${sources.length} result(s)${list ? `: ${list}` : ''}`, 500), ...(sources.length && { sources }) };
+  }
+  if (content && typeof content === 'object') {
+    if (content.error_code || /_error$/.test(String(content.type ?? ''))) return { isError: true, summary: `error: ${content.error_code ?? content.type}` };
+    if (typeof content.url === 'string') {
+      const title = content.content?.title ?? content.title;
+      return { isError: false, summary: truncate(`fetched ${content.url}${title ? ` (${title})` : ''}`, 500), sources: [{ url: content.url, ...(title && { title: String(title) }) }] };
+    }
+    if ('return_code' in content || 'stdout' in content) {
+      const out = String(content.stdout || content.stderr || '').trim();
+      return { isError: false, summary: truncate(`exit ${content.return_code ?? '?'}${out ? `: ${out}` : ''}`, 500) };
+    }
+    return { isError: false, summary: String(content.type ?? blockType) };
+  }
+  return { isError: false, summary: blockType };
 }
 
 function toParts(blocks: any[]): Part[] {
   const parts: Part[] = [];
+  const hostedNames = new Map<string, string>();
   for (const b of blocks ?? []) {
-    if (b.type === 'text' && b.text) parts.push({ type: 'text', text: b.text });
+    if (b.type === 'text' && b.text) parts.push({ type: 'text', text: b.text, ...(Array.isArray(b.citations) && b.citations.length && { citations: b.citations }) });
+    else if (b.type === 'server_tool_use') {
+      hostedNames.set(b.id, b.name);
+      parts.push({ type: 'hosted_call', id: b.id, name: b.name, input: b.input ?? {} });
+    } else if (typeof b.type === 'string' && b.type.endsWith('_tool_result') && b.tool_use_id) {
+      const name = hostedNames.get(b.tool_use_id) ?? b.type.replace(/_tool_result$/, '');
+      parts.push({ type: 'hosted_result', callId: b.tool_use_id, name, blockType: b.type, content: b.content, ...digestHostedResult(b.type, b.content) });
+    }
     else if (b.type === 'thinking') parts.push({ type: 'thinking', text: b.thinking ?? '', ...(b.signature && { signature: b.signature }) });
     else if (b.type === 'redacted_thinking') parts.push({ type: 'thinking', text: '', redacted: b.data ?? '' });
     else if (b.type === 'tool_use') parts.push({ type: 'tool_call', id: b.id, name: b.name, args: b.input ?? {} });
@@ -182,7 +241,7 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
         break;
       case 'content_block_start':
         blocks[data.index] = { ...data.content_block };
-        if (data.content_block?.type === 'tool_use') json[data.index] = '';
+        if (data.content_block?.type === 'tool_use' || data.content_block?.type === 'server_tool_use') json[data.index] = '';
         break;
       case 'content_block_delta':
         if (data.delta?.type === 'text_delta') {
@@ -193,6 +252,8 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
           if (data.delta.thinking) ctx.onThinking?.(data.delta.thinking);
         } else if (data.delta?.type === 'signature_delta') {
           blocks[data.index].signature = (blocks[data.index].signature ?? '') + data.delta.signature;
+        } else if (data.delta?.type === 'citations_delta') {
+          blocks[data.index].citations = [...(blocks[data.index].citations ?? []), data.delta.citation];
         } else if (data.delta?.type === 'input_json_delta') json[data.index] += data.delta.partial_json;
         break;
       case 'message_delta':
@@ -204,6 +265,6 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
     }
   }
   if (!complete) throw new ProviderError(502, 'stream ended before completion');
-  for (const [i, raw] of Object.entries(json)) blocks[Number(i)].input = raw ? JSON.parse(raw) : {};
+  for (const [i, raw] of Object.entries(json)) blocks[Number(i)].input = raw ? JSON.parse(raw) : (blocks[Number(i)].input ?? {});
   return { message: { role: 'assistant', parts: toParts(blocks.filter(Boolean)) }, usage: toUsage(usage), stopReason: STOP[stop ?? ''] ?? 'other', model };
 }

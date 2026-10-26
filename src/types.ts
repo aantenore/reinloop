@@ -1,6 +1,7 @@
 export type JsonSchema = { [key: string]: unknown };
 
-export interface TextPart { type: 'text'; text: string }
+/** `citations`: provider citation objects kept verbatim (e.g. Anthropic `web_search_result_location`) so they can be echoed back. */
+export interface TextPart { type: 'text'; text: string; citations?: Array<Record<string, unknown>> }
 export interface ToolCallPart { type: 'tool_call'; id: string; name: string; args: unknown }
 export interface ToolResultPart { type: 'tool_result'; callId: string; name: string; content: string; isError?: boolean }
 /**
@@ -8,7 +9,23 @@ export interface ToolResultPart { type: 'tool_result'; callId: string; name: str
  * Never part of the output text; providers that do not know it ignore it.
  */
 export interface ThinkingPart { type: 'thinking'; text: string; signature?: string; redacted?: string }
-export type Part = TextPart | ToolCallPart | ToolResultPart | ThinkingPart;
+/** A call to a provider-hosted tool (e.g. Anthropic `server_tool_use`): run by the provider, never by the loop. */
+export interface HostedCallPart { type: 'hosted_call'; id: string; name: string; input: unknown }
+/**
+ * The provider's result for a hosted call, kept verbatim (`blockType` + `content`) so multi-turn requests can echo it.
+ * `summary`/`sources` are a provider-neutral digest for events and logs.
+ */
+export interface HostedResultPart {
+  type: 'hosted_result';
+  callId: string;
+  name: string;
+  blockType: string;
+  content: unknown;
+  isError?: boolean;
+  summary?: string;
+  sources?: Array<{ url: string; title?: string }>;
+}
+export type Part = TextPart | ToolCallPart | ToolResultPart | ThinkingPart | HostedCallPart | HostedResultPart;
 
 export type Role = 'user' | 'assistant' | 'tool';
 export interface Message { role: Role; parts: Part[] }
@@ -18,11 +35,27 @@ export interface Usage {
   outputTokens: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  /** Provider-hosted tool requests billed per use, e.g. `{ webSearchRequests: 2 }`. */
+  serverToolUse?: Record<string, number>;
 }
 
 // ---- Model -----------------------------------------------------------------
 
-export interface ToolSpec { name: string; description: string; schema: JsonSchema }
+/** A tool executed by the model provider (Anthropic server tools such as web search, web fetch, code execution). */
+export interface HostedToolDef {
+  /** Provider kind that understands `type` (e.g. `anthropic`); other providers reject the request. */
+  provider: string;
+  /** Provider tool type, e.g. `web_search_20250305`. */
+  type: string;
+  /** Provider fields sent verbatim with the tool (e.g. `max_uses`, `allowed_domains`). */
+  params?: Record<string, unknown>;
+  /** Numeric param capped by the remaining `maxToolCalls` budget (e.g. `max_uses`). */
+  limitParam?: string;
+  /** Beta flag sent in the `anthropic-beta` header when this tool is offered. */
+  beta?: string;
+}
+
+export interface ToolSpec { name: string; description: string; schema: JsonSchema; hosted?: HostedToolDef }
 
 export type ThinkingType = 'adaptive' | 'enabled' | 'disabled' | 'between_tools';
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -63,7 +96,8 @@ export interface ModelRequest {
   responseSchema?: JsonSchema;
 }
 
-export type StopReason = 'end' | 'tool_calls' | 'max_tokens' | 'refusal' | 'other';
+/** `pause_turn`: the provider paused a long hosted-tool turn; the loop sends the history back so it resumes. */
+export type StopReason = 'end' | 'tool_calls' | 'max_tokens' | 'refusal' | 'pause_turn' | 'other';
 
 export interface ModelResponse {
   message: Message;
@@ -86,7 +120,13 @@ export interface Provider {
   generate(req: ModelRequest, ctx: GenerateContext): Promise<ModelResponse>;
 }
 
-export interface Pricing { inputPerMTok: number; outputPerMTok: number; cacheReadPerMTok?: number }
+export interface Pricing {
+  inputPerMTok: number;
+  outputPerMTok: number;
+  cacheReadPerMTok?: number;
+  /** USD per hosted-tool request, keyed like `Usage.serverToolUse` (e.g. `{ webSearchRequests: 0.01 }`). */
+  serverToolUsd?: Record<string, number>;
+}
 
 export interface ModelRef {
   provider: Provider;
@@ -129,6 +169,8 @@ export interface Tool<A = any> {
   timeoutMs?: number;
   /** Run alone instead of in a parallel batch. */
   exclusive?: boolean;
+  /** Set for provider-hosted tools (see `hostedTool`): offered to the provider, never run by the loop. */
+  hosted?: HostedToolDef;
   run(args: A, ctx: ToolContext): Promise<string | ToolOutput> | string | ToolOutput;
 }
 
@@ -228,6 +270,9 @@ export interface EventMap {
   tool_start: { callId: string; name: string; args: unknown };
   tool_decision: { callId: string; name: string; allowed: boolean; reason: string };
   tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string; stop?: boolean; data?: unknown };
+  /** A provider-hosted tool ran inside the model turn (derived from the response; not persisted). */
+  hosted_tool_start: { callId: string; name: string; input: unknown };
+  hosted_tool_result: { callId: string; name: string; summary: string; isError: boolean; sources?: Array<{ url: string; title?: string }> };
   compaction: { strategy: string; beforeTokens: number; afterTokens: number; messages: Message[]; usage?: Usage; costUsd?: number };
   run_end: { status: RunStatus; reason?: string; output?: string; usage: Usage; turns: number; costUsd: number; failures?: MemberFailure[] };
 }

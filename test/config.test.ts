@@ -123,7 +123,7 @@ describe('config', () => {
     };
     const runtime = await createRuntime(config, { env: {} });
     const priceOf = async (name: string) => ((await runtime.agent(name)) as Agent).model.pricing;
-    assert.deepEqual(await priceOf('opus'), { inputPerMTok: 1, outputPerMTok: 20, cacheReadPerMTok: 0.2 });
+    assert.deepEqual(await priceOf('opus'), { inputPerMTok: 1, outputPerMTok: 20, cacheReadPerMTok: 0.2, serverToolUsd: { webSearchRequests: 0.01 } });
     assert.deepEqual(await priceOf('house'), { inputPerMTok: 1, outputPerMTok: 2 });
     assert.deepEqual(await priceOf('pinned'), { inputPerMTok: 9, outputPerMTok: 9 }, 'models.<alias>.pricing wins');
   });

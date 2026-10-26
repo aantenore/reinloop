@@ -33,7 +33,14 @@ export function addUsage(a: Usage, b: Usage): Usage {
     outputTokens: a.outputTokens + b.outputTokens,
     cacheReadTokens: (a.cacheReadTokens ?? 0) + (b.cacheReadTokens ?? 0) || undefined,
     cacheWriteTokens: (a.cacheWriteTokens ?? 0) + (b.cacheWriteTokens ?? 0) || undefined,
+    ...((a.serverToolUse || b.serverToolUse) && { serverToolUse: addCounts(a.serverToolUse, b.serverToolUse) }),
   };
+}
+
+function addCounts(a: Record<string, number> = {}, b: Record<string, number> = {}): Record<string, number> {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = (out[k] ?? 0) + v;
+  return out;
 }
 
 export const userMessage = (text: string): Message => ({ role: 'user', parts: [{ type: 'text', text }] });
@@ -43,8 +50,12 @@ export function textOf(message: Message | undefined): string {
   return message.parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
 }
 
-/** True when a message has something to act on: text or tool calls (reasoning alone does not count). */
-export const hasVisibleParts = (message: Message): boolean => message.parts.some((p) => p.type === 'text' || p.type === 'tool_call');
+/** True when a message has something to act on: text, tool calls or hosted tool use (reasoning alone does not count). */
+export const hasVisibleParts = (message: Message): boolean =>
+  message.parts.some((p) => p.type === 'text' || p.type === 'tool_call' || p.type === 'hosted_call' || p.type === 'hosted_result');
+
+/** Number of provider-hosted tool calls in a message. */
+export const hostedCallsOf = (message: Message): number => message.parts.filter((p) => p.type === 'hosted_call').length;
 
 export function toolCallsOf(message: Message | undefined): ToolCallPart[] {
   return message ? message.parts.filter((p): p is ToolCallPart => p.type === 'tool_call') : [];

@@ -1,8 +1,10 @@
 import type { EventType, Message, RunEvent, RunState, ToolCallPart } from './types.ts';
-import { addUsage, emptyUsage, hasVisibleParts, toolCallsOf } from './util.ts';
+import { addUsage, emptyUsage, hasVisibleParts, hostedCallsOf, toolCallsOf } from './util.ts';
 
 /** Events that are streamed to sinks but never persisted. */
-export const EPHEMERAL: ReadonlySet<EventType> = new Set(['text_delta', 'thinking_delta', 'tool_start', 'turn_start', 'model_request']);
+export const EPHEMERAL: ReadonlySet<EventType> = new Set([
+  'text_delta', 'thinking_delta', 'tool_start', 'turn_start', 'model_request', 'hosted_tool_start', 'hosted_tool_result',
+]);
 
 export function initialState(runId: string, agent: string): RunState {
   return { runId, agent, messages: [], usage: emptyUsage(), costUsd: 0, turns: 0, toolCalls: 0, status: 'running', seq: 0 };
@@ -20,6 +22,8 @@ export function reduce(state: RunState, ev: RunEvent): RunState {
       if (hasVisibleParts(ev.data.message) && !ev.data.discarded) state.messages.push(ev.data.message);
       state.usage = addUsage(state.usage, ev.data.usage);
       state.costUsd += ev.data.costUsd;
+      // Provider-hosted calls already ran (and were billed), also in a discarded answer: they count as tool calls.
+      state.toolCalls += hostedCallsOf(ev.data.message);
       state.turns = Math.max(state.turns, ev.data.turn);
       state.lastUsage = ev.data.usage;
       state.lastUsageAt = state.messages.length;

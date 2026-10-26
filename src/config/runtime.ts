@@ -15,6 +15,7 @@ import { agentTool } from '../subagent.ts';
 import { DEFAULT_SKILL_DIRS, discoverSkills, selectSkills, skillTool, type Skill } from '../skills.ts';
 import { type Member, streamMember } from '../team.ts';
 import { memoryArtifacts, readArtifactTool } from '../tools/define.ts';
+import { hostedTool } from '../tools/hosted.ts';
 import type { Agent, ArtifactStore, Message, ModelRef, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
 import { globToRegExp } from '../util.ts';
 import { type AgentConfig, ConfigError, type Env, type HarnessConfig, checkConfig, interpolate, loadConfig } from './load.ts';
@@ -159,7 +160,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       const re = globToRegExp(pattern);
       let matched = false;
       for (const name of registry.tools.keys()) {
-        if (!re.test(name)) continue;
+        if (!re.test(name) || config.hostedTools?.[name]) continue; // shadowed by a declared hosted tool
         matched = true;
         byName.set(name, await registry.tools.get(name)!({}, ctx));
       }
@@ -172,6 +173,12 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
         const member = await build(name, stack);
         const description = def.asTool?.description ?? member.description ?? `Delegate a task to ${name}`;
         byName.set(toolName, agentTool(member, { name: toolName, description, context: def.asTool?.context, forwardEvents: def.asTool?.forwardEvents }));
+      }
+      // Declared hosted tools replace built-in tools with the same name (e.g. web_search).
+      for (const [toolName, def] of Object.entries(config.hostedTools ?? {})) {
+        if (!re.test(toolName)) continue;
+        matched = true;
+        byName.set(toolName, hostedTool({ ...interpolate(def, env, `$.hostedTools.${toolName}`), name: toolName }));
       }
       if (pattern === 'read_artifact' && artifacts) {
         matched = true;

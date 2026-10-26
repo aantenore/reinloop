@@ -9,7 +9,11 @@ const jsonSchema = {
   type: 'object',
   properties: { properties: { type: 'object', additionalProperties: { type: 'object' } }, required: { type: 'array', items: { type: 'string' } } },
 };
-const pricing = { type: 'object', additionalProperties: false, properties: { inputPerMTok: num, outputPerMTok: num, cacheReadPerMTok: num } };
+const pricing = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { inputPerMTok: num, outputPerMTok: num, cacheReadPerMTok: num, serverToolUsd: { type: 'object', additionalProperties: num } },
+};
 const decision = { enum: ['allow', 'deny', 'ask'] };
 const risk = { enum: ['read', 'write', 'exec'] };
 
@@ -160,6 +164,34 @@ export const CONFIG_SCHEMA: JsonSchema = {
       type: 'object',
       additionalProperties: false,
       properties: { type: { enum: ['file', 'memory'] }, dir: str, scope: { enum: ['shared', 'agent'] }, namespace: str },
+    },
+    hostedTools: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['provider', 'type'],
+        properties: { provider: str, type: str, params: { type: 'object' }, risk, description: str, limitParam: str, beta: str },
+      },
+    },
+    web: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        provider: { enum: ['tavily', 'anthropic-native'] },
+        apiKey: str,
+        model: str,
+        maxUses: { type: 'integer', minimum: 1 },
+        maxResults: { type: 'integer', minimum: 1 },
+        maxResultsCap: { type: 'integer', minimum: 1 },
+        maxChars: { type: 'integer', minimum: 50 },
+        maxFetchChars: { type: 'integer', minimum: 100 },
+        cacheTtlMs: int,
+        searchDepth: { enum: ['basic', 'advanced'] },
+        topic: { enum: ['general', 'news'] },
+        includeDomains: { type: 'array', items: str },
+        excludeDomains: { type: 'array', items: str },
+      },
     },
     profiles: { type: 'object', additionalProperties: { type: 'object' } },
   },

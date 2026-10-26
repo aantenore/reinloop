@@ -27,6 +27,8 @@ export function openaiCompatible(opts: OpenAICompatibleOptions = {}): Provider {
     async generate(req, ctx) {
       const stream = opts.stream ?? false;
       const p = req.params ?? {};
+      const hosted = req.tools.find((t) => t.hosted);
+      if (hosted) throw new ProviderError(400, `hosted tool "${hosted.name}" (${hosted.hosted!.provider}) is not supported by Chat Completions providers`);
       const body: Record<string, unknown> = {
         model: req.model,
         messages: toOpenAIMessages(req),

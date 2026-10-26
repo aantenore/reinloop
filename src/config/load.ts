@@ -4,7 +4,7 @@ import type { McpServerConfig } from '../mcp/client.ts';
 import { withAgentFiles } from '../agentfile.ts';
 import { MODEL_ALIASES, PRESETS, type PresetOverrides, splitModel } from '../presets.ts';
 import { validate } from '../schema.ts';
-import type { Budget, JsonSchema, ModelParams, PolicyConfig, Pricing } from '../types.ts';
+import type { Budget, JsonSchema, ModelParams, PolicyConfig, Pricing, Risk } from '../types.ts';
 import { ReinloopError } from '../util.ts';
 import { CONFIG_SCHEMA } from './schema.ts';
 
@@ -72,7 +72,39 @@ export interface HarnessConfig {
   teams?: Record<string, TeamConfig>;
   responseCache?: ComponentConfig & { ttlMs?: number; namespace?: string };
   memory?: { type?: 'file' | 'memory'; dir?: string; scope?: 'shared' | 'agent'; namespace?: string };
+  /** Provider-hosted tools by tool name (e.g. Anthropic `web_search_20250305`), usable in agents' `tools`. */
+  hostedTools?: Record<string, HostedToolConfig>;
+  /** Settings of the built-in `web_search` / `web_fetch` tools. */
+  web?: WebConfig;
   profiles?: Record<string, Partial<HarnessConfig>>;
+}
+
+export interface HostedToolConfig {
+  provider: string;
+  type: string;
+  params?: Record<string, unknown>;
+  risk?: Risk;
+  description?: string;
+  limitParam?: string;
+  beta?: string;
+}
+
+export interface WebConfig {
+  provider?: 'tavily' | 'anthropic-native';
+  /** Tavily API key (default env TAVILY_API_KEY). */
+  apiKey?: string;
+  /** `anthropic-native`: model running the hosted search (default `anthropic/claude-haiku-5-5`). */
+  model?: string;
+  maxUses?: number;
+  maxResults?: number;
+  maxResultsCap?: number;
+  maxChars?: number;
+  maxFetchChars?: number;
+  cacheTtlMs?: number;
+  searchDepth?: 'basic' | 'advanced';
+  topic?: 'general' | 'news';
+  includeDomains?: string[];
+  excludeDomains?: string[];
 }
 
 export class ConfigError extends ReinloopError {

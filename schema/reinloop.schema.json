@@ -190,6 +190,13 @@
               "cacheReadPerMTok": {
                 "type": "number",
                 "minimum": 0
+              },
+              "serverToolUsd": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number",
+                  "minimum": 0
+                }
               }
             }
           },
@@ -219,6 +226,13 @@
           "cacheReadPerMTok": {
             "type": "number",
             "minimum": 0
+          },
+          "serverToolUsd": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "minimum": 0
+            }
           }
         }
       }
@@ -1351,6 +1365,110 @@
         },
         "namespace": {
           "type": "string"
+        }
+      }
+    },
+    "hostedTools": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "type"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object"
+          },
+          "risk": {
+            "enum": [
+              "read",
+              "write",
+              "exec"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
+          "limitParam": {
+            "type": "string"
+          },
+          "beta": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "web": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "enum": [
+            "tavily",
+            "anthropic-native"
+          ]
+        },
+        "apiKey": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "maxUses": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxResults": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxResultsCap": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxChars": {
+          "type": "integer",
+          "minimum": 50
+        },
+        "maxFetchChars": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "cacheTtlMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "searchDepth": {
+          "enum": [
+            "basic",
+            "advanced"
+          ]
+        },
+        "topic": {
+          "enum": [
+            "general",
+            "news"
+          ]
+        },
+        "includeDomains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "excludeDomains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
