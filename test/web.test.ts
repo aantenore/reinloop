@@ -134,7 +134,7 @@ describe('webTools', () => {
       ['http://192.168.1.1/', /private or loopback/],
       ['http://169.254.169.254/latest/meta-data', /link-local/],
       ['http://0x7f.1/', /private or loopback/],
-      ['http://2130706433/', /IP-literal/],
+      ['http://2130706433/', /private or loopback/],
       ['http://8.8.8.8/', /IP-literal/],
       ['http://[::1]/', /IP-literal/],
       ['http://[fe80::1]/', /IP-literal/],
