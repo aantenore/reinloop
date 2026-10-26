@@ -19,6 +19,13 @@
   truncated (`maxChars`, `maxFetchChars`), optionally cached in memory (`cacheTtlMs`).
 - Config: `hostedTools.<name>` and `web` sections; `web_search` / `web_fetch` are built-in tool names for agents and
   agent files. `mockProvider` turns accept `parts` and `stopReason`.
+- Anthropic prompt caching is on by default for `anthropic(...)` (it already was for `anthropic/...` presets):
+  breakpoints on the tool catalog, the system prompt and the latest message (rolling, never on thinking blocks),
+  each skipped when its prefix is below `cacheMinTokens` (default 1024). `params.cache` and
+  `params.cacheTtl: '5m' | '1h'` set it per agent; provider options `cache`, `cacheTtl`, `cacheMinTokens`.
+- Cache cost: `Usage.cacheWrite1hTokens` (from `cache_creation.ephemeral_1h_input_tokens`) and
+  `Pricing.cacheWriteMultiplier` / `cacheWrite1hMultiplier`; built-in Claude prices charge writes at 1.25x (5m) and
+  2x (1h) the input price, reads at `cacheReadPerMTok`. Previously writes were charged at the plain input price.
 
 ## 0.2.0 - 2026-10-24
 

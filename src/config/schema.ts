@@ -12,7 +12,10 @@ const jsonSchema = {
 const pricing = {
   type: 'object',
   additionalProperties: false,
-  properties: { inputPerMTok: num, outputPerMTok: num, cacheReadPerMTok: num, serverToolUsd: { type: 'object', additionalProperties: num } },
+  properties: {
+    inputPerMTok: num, outputPerMTok: num, cacheReadPerMTok: num, cacheWriteMultiplier: num, cacheWrite1hMultiplier: num,
+    serverToolUsd: { type: 'object', additionalProperties: num },
+  },
 };
 const decision = { enum: ['allow', 'deny', 'ask'] };
 const risk = { enum: ['read', 'write', 'exec'] };
@@ -54,6 +57,8 @@ const params = {
     },
     effort: { enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
     retryMaxTokens: int,
+    cache: { type: 'boolean' },
+    cacheTtl: { enum: ['5m', '1h'] },
   },
 };
 

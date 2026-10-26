@@ -299,11 +299,16 @@ export function contextTokens(state: RunState, agent: Agent, specs: ToolSpec[]):
 export function costOf(pricing: Pricing | undefined, usage: Usage): number {
   if (!pricing) return 0;
   const cached = usage.cacheReadTokens ?? 0;
+  const written = usage.cacheWriteTokens ?? 0;
+  const written1h = Math.min(usage.cacheWrite1hTokens ?? 0, written);
+  const write5m = pricing.cacheWriteMultiplier ?? 1;
+  const write1h = pricing.cacheWrite1hMultiplier ?? write5m;
   let hosted = 0;
   for (const [kind, count] of Object.entries(usage.serverToolUse ?? {})) hosted += count * (pricing.serverToolUsd?.[kind] ?? 0);
   return (
-    ((usage.inputTokens - cached) * pricing.inputPerMTok +
+    ((usage.inputTokens - cached - written) * pricing.inputPerMTok +
       cached * (pricing.cacheReadPerMTok ?? pricing.inputPerMTok) +
+      ((written - written1h) * write5m + written1h * write1h) * pricing.inputPerMTok +
       usage.outputTokens * pricing.outputPerMTok) /
       1_000_000 +
     hosted

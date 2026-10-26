@@ -93,7 +93,7 @@ describe('anthropic', () => {
         usage: { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 100, cache_creation_input_tokens: 10 },
       }),
     ]);
-    const res = await anthropic({ apiKey: 'k', cache: true, fetch: f.impl }).generate(request, { signal });
+    const res = await anthropic({ apiKey: 'k', cache: true, cacheMinTokens: 0, fetch: f.impl }).generate(request, { signal });
     const { url, body, headers } = f.requests[0]!;
     assert.equal(url, 'https://api.anthropic.com/v1/messages');
     assert.equal(headers['x-api-key'], 'k');

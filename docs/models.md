@@ -36,7 +36,7 @@ output, the 9-12B models work except lfm2.5 (tool calling). `create` only succee
 | deterministic mock | `mock/echo`, scripted `mockProvider` | the whole test suite on every CI run | passing on Node 22 and 24 |
 | qwen3.5:9b through LiteLLM | `litellm/ollama_chat/qwen3.5:9b` | tool-using agent through the LiteLLM proxy | works |
 | OpenAI (GPT-5 family) | `openai/...` | contract tests only (Chat Completions, streaming, tool calls, `max_completion_tokens`, `response_format`) | not run live |
-| Anthropic (Claude family) | `anthropic/...` | contract tests only (Messages API, streaming, tool use, cache breakpoints, `output_config.format`) | not run live |
+| Anthropic (Claude family) | `anthropic/...` | contract tests only (Messages API, streaming, tool use, cache breakpoints, hosted tools, `output_config.format`) | not run live |
 | Gemini, OpenRouter, Groq, Mistral, DeepSeek, xAI, Together, LM Studio, vLLM | presets over the OpenAI-compatible adapter | none beyond the shared adapter's tests | not run live |
 
 ## Findings from real runs

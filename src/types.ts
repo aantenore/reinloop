@@ -35,6 +35,8 @@ export interface Usage {
   outputTokens: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  /** Part of `cacheWriteTokens` written with the 1-hour lifetime (priced higher). */
+  cacheWrite1hTokens?: number;
   /** Provider-hosted tool requests billed per use, e.g. `{ webSearchRequests: 2 }`. */
   serverToolUse?: Record<string, number>;
 }
@@ -82,6 +84,10 @@ export interface ModelParams {
    * this `maxTokens` (kept for the rest of the run) instead of ending with `max_tokens`.
    */
   retryMaxTokens?: number;
+  /** Prompt caching on providers that support breakpoints (Anthropic: on by default). */
+  cache?: boolean;
+  /** Prompt-cache lifetime (Anthropic: `5m` default, `1h`). */
+  cacheTtl?: '5m' | '1h';
   /** Provider-specific fields merged verbatim into the request body. */
   extra?: Record<string, unknown>;
 }
@@ -124,6 +130,9 @@ export interface Pricing {
   inputPerMTok: number;
   outputPerMTok: number;
   cacheReadPerMTok?: number;
+  /** Cache-write price as a multiple of the input price: 5-minute writes (default 1) and 1-hour writes (default: the 5m one). */
+  cacheWriteMultiplier?: number;
+  cacheWrite1hMultiplier?: number;
   /** USD per hosted-tool request, keyed like `Usage.serverToolUse` (e.g. `{ webSearchRequests: 0.01 }`). */
   serverToolUsd?: Record<string, number>;
 }

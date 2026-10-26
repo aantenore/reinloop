@@ -168,6 +168,15 @@
               "retryMaxTokens": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "cache": {
+                "type": "boolean"
+              },
+              "cacheTtl": {
+                "enum": [
+                  "5m",
+                  "1h"
+                ]
               }
             }
           },
@@ -188,6 +197,14 @@
                 "minimum": 0
               },
               "cacheReadPerMTok": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheWriteMultiplier": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheWrite1hMultiplier": {
                 "type": "number",
                 "minimum": 0
               },
@@ -224,6 +241,14 @@
             "minimum": 0
           },
           "cacheReadPerMTok": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cacheWriteMultiplier": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cacheWrite1hMultiplier": {
             "type": "number",
             "minimum": 0
           },
@@ -527,6 +552,15 @@
               "retryMaxTokens": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "cache": {
+                "type": "boolean"
+              },
+              "cacheTtl": {
+                "enum": [
+                  "5m",
+                  "1h"
+                ]
               }
             }
           },
@@ -831,6 +865,15 @@
                         "retryMaxTokens": {
                           "type": "integer",
                           "minimum": 0
+                        },
+                        "cache": {
+                          "type": "boolean"
+                        },
+                        "cacheTtl": {
+                          "enum": [
+                            "5m",
+                            "1h"
+                          ]
                         }
                       }
                     },
@@ -1118,6 +1161,15 @@
                               "retryMaxTokens": {
                                 "type": "integer",
                                 "minimum": 0
+                              },
+                              "cache": {
+                                "type": "boolean"
+                              },
+                              "cacheTtl": {
+                                "enum": [
+                                  "5m",
+                                  "1h"
+                                ]
                               }
                             }
                           },

@@ -33,6 +33,7 @@ export function addUsage(a: Usage, b: Usage): Usage {
     outputTokens: a.outputTokens + b.outputTokens,
     cacheReadTokens: (a.cacheReadTokens ?? 0) + (b.cacheReadTokens ?? 0) || undefined,
     cacheWriteTokens: (a.cacheWriteTokens ?? 0) + (b.cacheWriteTokens ?? 0) || undefined,
+    ...((a.cacheWrite1hTokens || b.cacheWrite1hTokens) && { cacheWrite1hTokens: (a.cacheWrite1hTokens ?? 0) + (b.cacheWrite1hTokens ?? 0) }),
     ...((a.serverToolUse || b.serverToolUse) && { serverToolUse: addCounts(a.serverToolUse, b.serverToolUse) }),
   };
 }

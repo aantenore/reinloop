@@ -130,7 +130,7 @@ too. See [docs/architecture.md](docs/architecture.md).
 | Durability | Every run is an append-only event log. A crashed run resumes without re-running finished tools, and the same log keeps chat sessions. |
 | Long tasks | Compaction (`window` or `summarize`); large tool outputs offloaded to artifacts with a paging tool |
 | Speed | Parallel tool calls, streaming, ~30 ms cold import, ~20 µs kernel overhead per turn |
-| Caching | Provider prompt caching (Anthropic breakpoints, stable prefixes); optional response cache (memory/file, TTL) for dev, tests and evals |
+| Caching | Provider prompt caching (Anthropic breakpoints on by default, 5m/1h TTL, cache reads and writes priced in `costUsd`); optional response cache (memory/file, TTL) for dev, tests and evals |
 | Memory | `remember` / `recall` tools with durable notes, shared or per agent; richer memory via MCP |
 | Web | `web_search` / `web_fetch` tools (Tavily, Anthropic native search, or your own backend) with results marked untrusted; provider-hosted tools (Anthropic web search, web fetch, code execution) with policy, budgets and per-search cost. See [docs/web-tools.md](docs/web-tools.md) |
 | Skills | Open Agent Skills (`SKILL.md` folders), progressively disclosed |

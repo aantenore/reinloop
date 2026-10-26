@@ -1,6 +1,6 @@
 import { closedSchema } from '../schema.ts';
 import type { Effort, GenerateContext, HostedResultPart, Message, ModelParams, ModelResponse, Part, Provider, StopReason, ThinkingType, ToolSpec, Usage } from '../types.ts';
-import { ProviderError, truncate } from '../util.ts';
+import { estimateTokens, ProviderError, truncate } from '../util.ts';
 import { type FetchLike, postJson, readSse } from './http.ts';
 
 export interface AnthropicOptions {
@@ -10,8 +10,15 @@ export interface AnthropicOptions {
   version?: string;
   headers?: Record<string, string>;
   stream?: boolean;
-  /** Adds prompt-cache breakpoints on system prompt, tool catalog and the latest message. */
+  /**
+   * Prompt-cache breakpoints on tool catalog, system prompt and the latest message (rolling), default on.
+   * `params.cache` overrides it per agent.
+   */
   cache?: boolean;
+  /** Breakpoint lifetime (default `5m`); `params.cacheTtl` overrides it. */
+  cacheTtl?: '5m' | '1h';
+  /** Breakpoints whose estimated prefix is shorter than this are left out (default 1024 tokens: below the API minimum). */
+  cacheMinTokens?: number;
   defaultMaxTokens?: number;
   /** Send `output_config.format: json_schema` when a schema is requested (default true; disable for gateways that reject it). */
   structuredOutput?: boolean;
@@ -52,20 +59,27 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
     name: opts.name ?? 'anthropic',
     async generate(req, ctx) {
       const stream = opts.stream ?? false;
-      const cache = opts.cache ?? false;
       const p = req.params ?? {};
+      const cache = p.cache ?? opts.cache ?? true;
+      const ttl = p.cacheTtl ?? opts.cacheTtl;
+      const mark = { type: 'ephemeral', ...(ttl === '1h' && { ttl: '1h' }) };
+      const minTokens = opts.cacheMinTokens ?? DEFAULT_CACHE_MIN_TOKENS;
       checkThinking(req.model, p);
       const messages = toAnthropicMessages(req.messages);
-      if (cache) markLastBlock(messages);
+      // Cumulative prefix sizes (render order: tools, system, messages) decide which breakpoints are worth sending.
+      const toolsTokens = estimateTokens(req.tools);
+      const systemTokens = toolsTokens + estimateTokens(req.instructions ?? '');
+      const allTokens = systemTokens + estimateTokens(messages);
+      if (cache && allTokens >= minTokens) markLastBlock(messages, mark);
       const tools: Block[] = req.tools.map((t) => (t.hosted ? hostedToolBlock(t) : { name: t.name, description: t.description, input_schema: t.schema }));
       const betas = [...new Set(req.tools.flatMap((t) => (t.hosted?.beta ? [t.hosted.beta] : [])))];
-      if (cache && tools.length) Object.assign(tools.at(-1)!, { cache_control: { type: 'ephemeral' } });
+      if (cache && tools.length && toolsTokens >= minTokens) Object.assign(tools.at(-1)!, { cache_control: mark });
       const body: Record<string, unknown> = {
         model: req.model,
         max_tokens: p.maxTokens ?? opts.defaultMaxTokens ?? 4096,
         messages,
         ...(req.instructions && {
-          system: cache ? [{ type: 'text', text: req.instructions, cache_control: { type: 'ephemeral' } }] : req.instructions,
+          system: cache && systemTokens >= minTokens ? [{ type: 'text', text: req.instructions, cache_control: mark }] : req.instructions,
         }),
         ...(tools.length && { tools }),
         ...(p.temperature !== undefined && { temperature: p.temperature }),
@@ -145,9 +159,13 @@ export function toAnthropicMessages(messages: Message[]): AMessage[] {
   return out;
 }
 
-function markLastBlock(messages: AMessage[]): void {
-  const block = messages.at(-1)?.content.at(-1);
-  if (block) block.cache_control = { type: 'ephemeral' };
+export const DEFAULT_CACHE_MIN_TOKENS = 1024;
+
+/** Thinking blocks cannot carry `cache_control`: the rolling breakpoint goes on the last block that can. */
+function markLastBlock(messages: AMessage[], mark: Block): void {
+  const blocks = messages.at(-1)?.content ?? [];
+  const block = [...blocks].reverse().find((b) => b.type !== 'thinking' && b.type !== 'redacted_thinking');
+  if (block) block.cache_control = mark;
 }
 
 const STOP: Record<string, StopReason> = {
@@ -159,11 +177,13 @@ const camel = (k: string) => k.replace(/_([a-z])/g, (_, c: string) => c.toUpperC
 function toUsage(u: any): Usage {
   const read = u?.cache_read_input_tokens ?? 0;
   const write = u?.cache_creation_input_tokens ?? 0;
+  const write1h = u?.cache_creation?.ephemeral_1h_input_tokens ?? 0;
   return {
     inputTokens: (u?.input_tokens ?? 0) + read + write,
     outputTokens: u?.output_tokens ?? 0,
     ...(read && { cacheReadTokens: read }),
     ...(write && { cacheWriteTokens: write }),
+    ...(write1h && { cacheWrite1hTokens: write1h }),
     ...serverToolUse(u?.server_tool_use),
   };
 }
