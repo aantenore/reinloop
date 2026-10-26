@@ -76,6 +76,8 @@ export interface HarnessConfig {
   hostedTools?: Record<string, HostedToolConfig>;
   /** Settings of the built-in `web_search` / `web_fetch` tools. */
   web?: WebConfig;
+  /** Settings of the public-signal tools (`search_discussions`, `search_projects`, `search_questions`, `search_papers`). */
+  signals?: SignalsConfig;
   profiles?: Record<string, Partial<HarnessConfig>>;
 }
 
@@ -107,6 +109,21 @@ export interface WebConfig {
   topic?: 'general' | 'news';
   includeDomains?: string[];
   excludeDomains?: string[];
+}
+
+export interface SignalsConfig {
+  /** Enabled sources (default all): `hackernews`, `github`, `stackoverflow`, `arxiv`. */
+  sources?: Array<'hackernews' | 'github' | 'stackoverflow' | 'arxiv'>;
+  maxResults?: number;
+  maxResultsCap?: number;
+  maxChars?: number;
+  cacheTtlMs?: number;
+  timeoutMs?: number;
+  /** GitHub token (default env GITHUB_TOKEN); use `${env:NAME}` rather than a literal. */
+  githubToken?: string;
+  githubIssues?: boolean;
+  stackExchangeSite?: string;
+  userAgent?: string;
 }
 
 export class ConfigError extends ReinloopError {

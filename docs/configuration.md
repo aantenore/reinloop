@@ -70,6 +70,7 @@ needs it is built, so an unused provider never blocks a run.
 | `memory` | Backing store for `remember` / `recall`; `scope: shared \| agent`. |
 | `hostedTools.<name>` | Provider-hosted tools (`provider`, `type`, `params`, `risk`, `beta`) that agents list in `tools` by name; they replace a built-in tool with the same name. See [web-tools.md](web-tools.md). |
 | `web` | Settings of the built-in `web_search` / `web_fetch` tools: `provider: tavily \| anthropic-native`, `apiKey`, `model`, `maxResults`, `maxChars`, `maxFetchChars`, `cacheTtlMs`, `fetchPolicy: search-results \| any \| off`, `maxUrlLength`, `searchDepth`, `includeDomains`/`excludeDomains`. See [web-tools.md](web-tools.md). |
+| `signals` | Settings of the public-signal tools `search_discussions` / `search_projects` / `search_questions` / `search_papers`: `sources` (default all of `hackernews`, `github`, `stackoverflow`, `arxiv`), `maxResults`, `maxResultsCap`, `maxChars`, `cacheTtlMs`, `timeoutMs`, `githubToken` (default env `GITHUB_TOKEN`), `githubIssues`, `stackExchangeSite`, `userAgent`. See [signal-tools.md](signal-tools.md). |
 | `sinks` | `console`, `jsonl`, `otlp` (`endpoint`, `headers`, `serviceName`, `captureContent`), or plugin sinks. |
 | `skillsDir` | Folders with Agent Skills (default `skills/`, `.reinloop/skills/`). |
 | `agents`, `teams` | Same fields as agent files ([agent-files.md](agent-files.md), [patterns.md](patterns.md)). |

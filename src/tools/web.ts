@@ -210,7 +210,8 @@ function providerFrom(opts: WebToolsOptions): WebProvider {
   throw new Error(`unknown web provider "${opts.provider}" (built-in: tavily, anthropic-native; or pass a WebProvider)`);
 }
 
-function ttlCache(ttlMs: number, maxEntries = 200) {
+/** Small in-memory TTL cache of tool outputs (ttlMs <= 0: off). */
+export function ttlCache(ttlMs: number, maxEntries = 200) {
   const items = new Map<string, { expires: number; value: string }>();
   return {
     async get(key: string, compute: () => Promise<string>): Promise<string> {

@@ -133,6 +133,7 @@ too. See [docs/architecture.md](docs/architecture.md).
 | Caching | Provider prompt caching (Anthropic breakpoints on by default, 5m/1h TTL, cache reads and writes priced in `costUsd`); optional response cache (memory/file, TTL) for dev, tests and evals |
 | Memory | `remember` / `recall` tools with durable notes, shared or per agent; richer memory via MCP |
 | Web | `web_search` / `web_fetch` tools (Tavily, Anthropic native search, or your own backend) with results marked untrusted; provider-hosted tools (Anthropic web search, web fetch, code execution) with policy, budgets and per-search cost. See [docs/web-tools.md](docs/web-tools.md) |
+| Public signals | Keyless research tools over public APIs: `search_discussions` (Hacker News), `search_projects` (GitHub), `search_questions` (Stack Overflow), `search_papers` (arXiv), or your own source; compact, untrusted-marked, cached. See [docs/signal-tools.md](docs/signal-tools.md) |
 | Skills | Open Agent Skills (`SKILL.md` folders), progressively disclosed |
 | Structured output | JSON Schema validated with retries; sent natively (`response_format`, Anthropic `output_config.format`, also with tools) when the provider supports it; tolerant parsing |
 | Tools | Built-ins (files, search, edit, shell), MCP servers (stdio/HTTP), your functions, other agents and teams |

@@ -200,6 +200,22 @@ export const CONFIG_SCHEMA: JsonSchema = {
         excludeDomains: { type: 'array', items: str },
       },
     },
+    signals: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        sources: { type: 'array', items: { enum: ['hackernews', 'github', 'stackoverflow', 'arxiv'] } },
+        maxResults: { type: 'integer', minimum: 1 },
+        maxResultsCap: { type: 'integer', minimum: 1 },
+        maxChars: { type: 'integer', minimum: 20 },
+        cacheTtlMs: int,
+        timeoutMs: { type: 'integer', minimum: 100 },
+        githubToken: str,
+        githubIssues: { type: 'boolean' },
+        stackExchangeSite: str,
+        userAgent: str,
+      },
+    },
     profiles: { type: 'object', additionalProperties: { type: 'object' } },
   },
 };

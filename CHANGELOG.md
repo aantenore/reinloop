@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Public signal tools: `signalTools({ sources?, maxResults?, cacheTtlMs?, timeoutMs?, githubToken?, fetchImpl? })`
+  returns `search_discussions` (Hacker News via Algolia), `search_projects` (GitHub repositories, optional issues),
+  `search_questions` (Stack Overflow) and `search_papers` (arXiv, Atom parsed without dependencies), all risk `read`.
+  Results are compact JSON with `untrusted: true`, `source` and `retrieved_at`; optional TTL cache, per-request
+  timeout, a descriptive User-Agent, and rate limits returned as clear tool errors. Custom backends implement
+  `SignalSource`. Config section `signals`. See docs/signal-tools.md.
 - **Breaking (behaviour):** `web_fetch` now only accepts URLs returned by `web_search` earlier in the same run
   (new option `fetchPolicy: 'search-results' | 'any' | 'off'`, default `search-results`; config `web.fetchPolicy`).
   This blocks prompt-injection exfiltration through attacker URLs. Set `fetchPolicy: 'any'` to restore the old

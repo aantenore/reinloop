@@ -1498,6 +1498,17 @@
           "type": "integer",
           "minimum": 0
         },
+        "fetchPolicy": {
+          "enum": [
+            "search-results",
+            "any",
+            "off"
+          ]
+        },
+        "maxUrlLength": {
+          "type": "integer",
+          "minimum": 16
+        },
         "searchDepth": {
           "enum": [
             "basic",
@@ -1521,6 +1532,55 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "hackernews",
+              "github",
+              "stackoverflow",
+              "arxiv"
+            ]
+          }
+        },
+        "maxResults": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxResultsCap": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxChars": {
+          "type": "integer",
+          "minimum": 20
+        },
+        "cacheTtlMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "githubToken": {
+          "type": "string"
+        },
+        "githubIssues": {
+          "type": "boolean"
+        },
+        "stackExchangeSite": {
+          "type": "string"
+        },
+        "userAgent": {
+          "type": "string"
         }
       }
     },

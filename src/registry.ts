@@ -3,6 +3,7 @@ import { type CacheStore, fileCache, memoryCache } from './cache.ts';
 import { summarizeCompaction, windowCompaction } from './compaction.ts';
 import { type Env, type HarnessConfig, interpolate } from './config/load.ts';
 import { resolveModel } from './presets.ts';
+import { signalTools } from './tools/signals.ts';
 import { webTools } from './tools/web.ts';
 import { BUILTIN_PATTERNS, type PatternDefinition } from './patterns.ts';
 import { fileNotes, memoryNotes, memoryTools } from './tools/memory.ts';
@@ -117,5 +118,17 @@ export function createRegistry(): Registry {
     if (!tool) throw new Error(`web_fetch is not available (web provider "${ctx.config.web?.provider}", fetchPolicy "${ctx.config.web?.fetchPolicy ?? 'search-results'}")`);
     return tool;
   });
+  const signals = (ctx: FactoryContext) =>
+    ctx.once('signals', () => {
+      const { sources, ...s } = interpolate(ctx.config.signals ?? {}, ctx.env, '$.signals');
+      return signalTools({ ...s, ...(sources && { sources }), env: ctx.env });
+    });
+  for (const name of ['search_discussions', 'search_projects', 'search_questions', 'search_papers']) {
+    r.tools.set(name, (_o, ctx) => {
+      const tool = signals(ctx)[name];
+      if (!tool) throw new Error(`${name} is not available (not in signals.sources)`);
+      return tool;
+    });
+  }
   return r;
 }
