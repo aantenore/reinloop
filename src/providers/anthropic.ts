@@ -1,7 +1,7 @@
 import { closedSchema } from '../schema.ts';
 import type { Effort, GenerateContext, HostedResultPart, Message, ModelParams, ModelResponse, Part, Provider, StopReason, ThinkingType, ToolSpec, Usage } from '../types.ts';
 import { estimateTokens, ProviderError, truncate } from '../util.ts';
-import { type FetchLike, postJson, readSse } from './http.ts';
+import { type FetchLike, parseToolJson, postJson, readSse } from './http.ts';
 
 export interface AnthropicOptions {
   name?: string;
@@ -232,7 +232,7 @@ function toParts(blocks: any[]): Part[] {
     }
     else if (b.type === 'thinking') parts.push({ type: 'thinking', text: b.thinking ?? '', ...(b.signature && { signature: b.signature }) });
     else if (b.type === 'redacted_thinking') parts.push({ type: 'thinking', text: '', redacted: b.data ?? '' });
-    else if (b.type === 'tool_use') parts.push({ type: 'tool_call', id: b.id, name: b.name, args: b.input ?? {} });
+    else if (b.type === 'tool_use') parts.push({ type: 'tool_call', id: b.id, name: b.name, args: b.input ?? {}, ...(b.argsIssue && { argsIssue: b.argsIssue }) });
   }
   return parts;
 }
@@ -285,6 +285,34 @@ async function readStream(res: Response, ctx: GenerateContext): Promise<ModelRes
     }
   }
   if (!complete) throw new ProviderError(502, 'stream ended before completion');
-  for (const [i, raw] of Object.entries(json)) blocks[Number(i)].input = raw ? JSON.parse(raw) : (blocks[Number(i)].input ?? {});
-  return { message: { role: 'assistant', parts: toParts(blocks.filter(Boolean)) }, usage: toUsage(usage), stopReason: STOP[stop ?? ''] ?? 'other', model };
+  let invalidArgs = 0;
+  for (const [i, raw] of Object.entries(json)) {
+    const block = blocks[Number(i)];
+    if (!raw) {
+      block.input ??= {};
+      continue;
+    }
+    const parsed = parseToolJson(raw);
+    const objectValue = 'value' in parsed && parsed.value !== null && typeof parsed.value === 'object' && !Array.isArray(parsed.value);
+    if ('value' in parsed && objectValue && !parsed.repaired) {
+      block.input = parsed.value;
+      continue;
+    }
+    if (block.type === 'server_tool_use') {
+      // Hosted calls already ran on the provider side; keep what can be kept.
+      block.input = objectValue ? (parsed as { value: unknown }).value : {};
+      continue;
+    }
+    invalidArgs++;
+    if (objectValue) {
+      block.input = (parsed as { value: unknown }).value;
+      block.argsIssue = { error: (parsed as { repaired: string }).repaired, repaired: true };
+    } else {
+      block.input = {};
+      block.argsIssue = { error: 'error' in parsed ? parsed.error : 'arguments must be a JSON object', repaired: false };
+    }
+  }
+  const u = toUsage(usage);
+  if (invalidArgs) u.toolArgsInvalid = invalidArgs;
+  return { message: { role: 'assistant', parts: toParts(blocks.filter(Boolean)) }, usage: u, stopReason: STOP[stop ?? ''] ?? 'other', model };
 }

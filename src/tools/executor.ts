@@ -1,7 +1,7 @@
 import { decide } from '../policy.ts';
 import { validate } from '../schema.ts';
 import type { Agent, Approver, HookContext, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
-import { errorMessage } from '../util.ts';
+import { errorMessage, truncate } from '../util.ts';
 import { normalizeOutput } from './define.ts';
 
 export interface ExecEnv {
@@ -77,6 +77,13 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
 
   const tool = env.tools.get(call.name);
   if (!tool) return finish(`Unknown tool "${call.name}". Available: ${[...env.tools.keys()].join(', ') || 'none'}`, true);
+
+  if (call.argsIssue) {
+    env.emit('tool_args_invalid', { callId: call.id, name: call.name, error: call.argsIssue.error, repaired: call.argsIssue.repaired });
+    if (!call.argsIssue.repaired) {
+      return finish(`Invalid JSON arguments for tool ${call.name}: ${truncate(call.argsIssue.error, 200)}. Please retry the call with valid JSON arguments.`, true);
+    }
+  }
 
   const verdict = decide(env.agent.policy, call, tool);
   let allowed = verdict.decision === 'allow';

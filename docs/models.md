@@ -96,6 +96,18 @@ Reasoning text is streamed as `thinking_delta` events, separate from `text_delta
 non-streaming path (non-empty text only), so a UI can show or hide it. `jsonlSink` skips both kinds of delta unless
 `includeDeltas` is set.
 
+Language of thinking summaries: the Messages API has no setting for it. With `display: "summarized"` (or
+`"updates"`) the summaries are written by the model and usually follow the language of the conversation, not an
+instruction in the system prompt, so they may not match the answer language. To keep reasoning text out of a UI or
+log, use `thinking: { display: "omitted" }` (blocks keep their signature, text stays empty; the 5.5 default) or turn
+thinking off with `type: "disabled"` where the model allows it (see the rules above).
+
+Malformed tool arguments: a streamed `tool_use` input that is not valid JSON (seen occasionally on small models)
+does not fail the run. Syntax damage (trailing commas, unclosed objects/arrays, a dangling key) is repaired and the
+call runs; a value cut off mid-way (a string, number or literal, typically at `max_tokens`) is not completed, and the
+call is answered with a tool error asking the model to retry with valid JSON. Both cases emit `tool_args_invalid`
+(`repaired: true | false`) and count in `usage.toolArgsInvalid`.
+
 Thinking counts against `maxTokens`. With a low limit (a few hundred tokens) a turn can end with `max_tokens` before
 any text; the run then stops with reason `max_tokens` (see above). Raise `maxTokens`, lower `effort`, or set
 `params.retryMaxTokens`: after a `max_tokens` stop without tool calls the answer is discarded (`model_response` with

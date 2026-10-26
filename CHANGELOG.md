@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Anthropic streaming: malformed `tool_use` input JSON no longer fails the run. Syntax damage (trailing commas,
+  unclosed objects/arrays, dangling key) is repaired and the call runs; values cut off mid-way are not completed and
+  the call gets a tool error asking for valid JSON, so the model retries next turn. New event `tool_args_invalid`
+  (`repaired`), `usage.toolArgsInvalid` and `ToolCallPart.argsIssue`.
+- Docs: thinking summaries have no language setting in the API; `thinking.display: "omitted"` or `type: "disabled"`
+  keeps them out of UIs and logs.
 - Public signal tools: `signalTools({ sources?, maxResults?, cacheTtlMs?, timeoutMs?, githubToken?, fetchImpl? })`
   returns `search_discussions` (Hacker News via Algolia), `search_projects` (GitHub repositories, optional issues),
   `search_questions` (Stack Overflow) and `search_papers` (arXiv, Atom parsed without dependencies), all risk `read`.

@@ -2,7 +2,17 @@ export type JsonSchema = { [key: string]: unknown };
 
 /** `citations`: provider citation objects kept verbatim (e.g. Anthropic `web_search_result_location`) so they can be echoed back. */
 export interface TextPart { type: 'text'; text: string; citations?: Array<Record<string, unknown>> }
-export interface ToolCallPart { type: 'tool_call'; id: string; name: string; args: unknown }
+export interface ToolCallPart {
+  type: 'tool_call';
+  id: string;
+  name: string;
+  args: unknown;
+  /**
+   * The provider sent arguments that were not valid JSON. `repaired: true`: `args` holds the repaired value and the
+   * call runs; `repaired: false`: `args` is `{}` and the call is answered with a tool error asking for valid JSON.
+   */
+  argsIssue?: { error: string; repaired: boolean };
+}
 export interface ToolResultPart { type: 'tool_result'; callId: string; name: string; content: string; isError?: boolean }
 /**
  * Model reasoning kept for replay (e.g. Anthropic `thinking` / `redacted_thinking` blocks with their signature).
@@ -39,6 +49,8 @@ export interface Usage {
   cacheWrite1hTokens?: number;
   /** Provider-hosted tool requests billed per use, e.g. `{ webSearchRequests: 2 }`. */
   serverToolUse?: Record<string, number>;
+  /** Tool calls whose streamed argument JSON was malformed (repaired or answered with a tool error). */
+  toolArgsInvalid?: number;
 }
 
 // ---- Model -----------------------------------------------------------------
@@ -277,6 +289,8 @@ export interface EventMap {
   /** `discarded`: accounted for but kept out of the history (the request is repeated, e.g. with `retryMaxTokens`). */
   model_response: { turn: number; model: string; message: Message; usage: Usage; stopReason: StopReason; latencyMs: number; costUsd: number; discarded?: boolean };
   tool_start: { callId: string; name: string; args: unknown };
+  /** The model's arguments for a call were malformed JSON: repaired and run, or answered with a tool error. */
+  tool_args_invalid: { callId: string; name: string; error: string; repaired: boolean };
   tool_decision: { callId: string; name: string; allowed: boolean; reason: string };
   tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string; stop?: boolean; data?: unknown };
   /** A provider-hosted tool ran inside the model turn (derived from the response; not persisted). */
