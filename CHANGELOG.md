@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Docs: `docs/architecture.md` gains a public API reference covering every export of `src/index.ts` and a complete event
+  table (`tool_args_invalid`, `hosted_tool_*`); `docs/configuration.md` lists the remaining schema keys (`readOnly`,
+  `limitParam`, `web.maxUses`, `web.topic`, agent `budget` / `params` / `asTool` fields, `$schema`).
 - Anthropic streaming: malformed `tool_use` input JSON no longer fails the run. Syntax damage (trailing commas,
   unclosed objects/arrays, dangling key) is repaired and the call runs; values cut off mid-way are not completed and
   the call gets a tool error asking for valid JSON, so the model retries next turn. New event `tool_args_invalid`

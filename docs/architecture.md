@@ -33,13 +33,15 @@ The state of a run is a fold over its events (`state.ts: reduce`):
 
 | Event | Persisted | Effect on state |
 |---|---|---|
-| `run_start` | yes | status = running |
+| `run_start` | yes | status = running (`parentRunId` set for delegated runs) |
 | `message` | yes | appends an input or harness message |
-| `model_response` | yes | appends the assistant message; adds usage and cost; sets the turn |
+| `model_response` | yes | appends the assistant message; adds usage and cost; sets the turn (`discarded: true`: accounted, kept out of the history, e.g. `retryMaxTokens`) |
 | `tool_decision` | yes | (audit) |
+| `tool_args_invalid` | no | malformed streamed tool arguments (`repaired` or answered with a tool error); counted in `usage.toolArgsInvalid` |
+| `hosted_tool_start`, `hosted_tool_result` | no | provider-hosted tool ran inside the model turn; derived from the response, the `hosted_call` / `hosted_result` parts are what persists |
 | `tool_result` | yes | appends a tool result; records a `stop` request |
 | `compaction` | yes | replaces the history |
-| `run_end` | yes | final status; clears stop requests |
+| `run_end` | yes | final status; clears stop requests; team runs carry `failures` |
 | `turn_start`, `model_request`, `text_delta`, `thinking_delta`, `tool_start` | no | streaming and tracing only |
 
 Persistence is awaited at checkpoints: after each model response and after each tool batch. Crash semantics:
@@ -64,6 +66,28 @@ With an `output` schema, `data` (or `content` parsed as JSON when there is no `d
 the run (`invalid structured output from tool <name>: ...`) with no retry, because the model is no longer asked.
 
 A session is the same mechanism: `run(agent, input, { runId })` appends new input to the stored log and continues.
+
+## Public API
+
+Everything below is exported from `reinloop` (`src/index.ts`). The easy layer (`agent`, `team`, `tool`) is enough for
+most code; the rest is the lower layers.
+
+| Area | Exports |
+|---|---|
+| Types | all of `types.ts` (`Agent`, `Tool`, `Provider`, `RunEvent`, `EventMap`, `Usage`, `Pricing`, ...) via `export type *` |
+| Loop and state | `run`, `stream`, `createHandle`, `RunHandle`, `createEmitter`, `contextTokens`, `costOf`, `OUTPUT_FEEDBACK`; `reduce`, `replay`, `pendingToolCalls`, `initialState`, `EPHEMERAL` |
+| Policy and budgets | `decide`, `mergePolicies`, `exceededBudget`, `DEFAULT_RISK_DECISIONS`, `DEFAULT_BUDGET` |
+| Compaction | `windowCompaction`, `summarizeCompaction`, `DEFAULT_SUMMARY_PROMPT` |
+| Tools | `defineTool`, `objectSchema`, `safeToolName`, `memoryArtifacts`, `readArtifactTool`, `workspaceTools`, `resolveInside`, `pathGlob`, `WorkspaceOptions`; `memoryTools`, `memoryNotes`, `fileNotes`, `MemoryStore`, `Note`; `hostedTool`, `hostedRisk`, `HostedToolOptions`; `skillTool`, `discoverSkills`, `selectSkills`, `DEFAULT_SKILL_DIRS`, `Skill` |
+| Web and signals | `webTools`, `checkFetchUrl`, `tavilyProvider`, `anthropicWebProvider`, `UNTRUSTED_NOTE` and the `Web*` option types ([web-tools.md](web-tools.md)); `signalTools`, `hackerNewsSource`, `githubSource`, `stackExchangeSource`, `arxivSource`, `parseArxivAtom`, `SignalRateLimitError`, `BUILTIN_SIGNAL_SOURCES` and the `Signal*` types ([signal-tools.md](signal-tools.md)) |
+| Providers | `openaiCompatible`, `anthropic`, `checkThinking`, `THINKING_RULES`, `mockProvider`, `withRetry`, `withFallback`, `DEFAULT_RETRY_ON`, `withResponseCache`, `memoryCache`, `fileCache` and their option types |
+| Models and prices | `PRESETS`, `MODEL_ALIASES`, `defaultModel`, `resolveModel`, `splitModel`, `presetProvider`, `missingCredentials`; `PRICING`, `pricingFor`, `ANTHROPIC_SERVER_TOOL_USD` |
+| Stores and sinks | `memoryStore`, `fileStore`, `fileArtifacts`; `consoleSink`, `jsonlSink`, `collectSink`, `otelSink`, `otlpSink` |
+| MCP | `McpClient`, `mcpTools`, `MCP_PROTOCOL_VERSION`, `McpServerConfig`, `McpToolInfo` (client); `serveMcp`, `McpServeOptions` (server) |
+| Composition | `agentTool`, `AgentToolOptions`; `isTeam`, `runMember`, `streamMember`, `streamTeam`, `memberFailures`; `BUILTIN_PATTERNS`, `TEMPLATES`, `createTeam`, `definePattern`, `fill`, `describeMembers` |
+| Declarative | `loadConfig`, `checkConfig`, `interpolate`, `deepMerge`, `applyProfile`, `ConfigError`, `CONFIG_SCHEMA`; `createRuntime`, `loadRuntime`, `loadPlugins`; `Registry`, `createRegistry`; `parseAgentFile`, `loadAgentDir`, `withAgentFiles`, `TOOL_ALIASES`, `DEFAULT_AGENT_DIRS`; `parseFrontmatter`, `parseYaml`; `loadProject`, `DEFAULT_AGENT`, `CONFIG_FILE` |
+| Interfaces | `agent`, `team`, `tool`, `paramsSchema`; `serve`; `architect`, `architectInstructions`, `design`, `validateProject`; `INTEGRATIONS`, `addIntegration`; `validate` (JSON Schema subset); `ReinloopError`, `ProviderError`, `userMessage`, `textOf`, `toolCallsOf` |
+| Type names | Option and result types of the exports above: `OpenAICompatibleOptions`, `AnthropicOptions`, `MockTurn`, `MockStep`, `MockProvider`, `RetryOptions`, `ResponseCacheOptions`, `OtelSinkOptions`, `OtelTracer`, `OtelSpan`, `OtlpOptions`, `Factory`, `FactoryContext`, `HarnessConfig`, `AgentConfig`, `TeamConfig`, `RoleBinding`, `HostedToolConfig`, `WebConfig`, `SignalsConfig`, `Runtime`, `RuntimeOptions`, `AgentOptions`, `EasyAgent`, `EasyTeam`, `Runnable`, `Session`, `ToolExtras`, `TeamContext`, `TeamOutcome`, `RoleSpec`, `MemberInfo`, `PresetOverrides`, `ProviderPreset`, `ParsedFile`, `ProjectOptions`, `ServeOptions`, `Served`, `Integration` |
 
 ## Extension points
 
