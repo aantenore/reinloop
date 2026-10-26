@@ -35,7 +35,7 @@ describe('tavily provider', () => {
 
     const page = await call(tools.web_fetch, { url: 'https://a.example' });
     assert.equal(f.requests[1]!.url, 'https://api.tavily.com/extract');
-    assert.deepEqual(f.requests[1]!.body, { urls: ['https://a.example'], extract_depth: 'basic', format: 'markdown' });
+    assert.deepEqual(f.requests[1]!.body, { urls: ['https://a.example/'], extract_depth: 'basic', format: 'markdown' });
     assert.deepEqual(page, { untrusted: true, note: page.note, url: 'https://a.example', content: 'page body' });
   });
 
@@ -88,6 +88,69 @@ describe('webTools', () => {
     assert.equal(bad.isError, true);
     assert.equal(tools.web_search.risk, 'read');
     assert.equal(tools.web_fetch!.risk, 'read');
+  });
+
+  it('does not fetch a URL that was not returned by a search of the same run', async () => {
+    const { provider, calls } = stub();
+    const tools = webTools({ provider });
+    const run1 = { ...ctx, runId: 'r1' } as ToolContext;
+    const run2 = { ...ctx, runId: 'r2' } as ToolContext;
+    const fetchIn = (c: ToolContext, url: string) => (tools.web_fetch as any).run({ url }, c);
+
+    const before = await fetchIn(run1, 'https://s.example/1');
+    assert.equal(before.isError, true);
+    assert.match(before.content, /only URLs returned by web_search/);
+
+    await (tools.web_search as any).run({ query: 'q', max_results: 3 }, run1);
+    assert.equal(JSON.parse(await fetchIn(run1, 'https://s.example/1')).url, 'https://s.example/1');
+    // normalization: fragment stripped, host case folded, same canonical URL
+    assert.equal(JSON.parse(await fetchIn(run1, 'HTTPS://S.Example/1#frag')).url, 'https://s.example/1');
+    // not returned (query string added / other path / other run)
+    for (const [c, u] of [[run1, 'https://s.example/1?secret=abc'], [run1, 'https://s.example/9'], [run2, 'https://s.example/1']] as const) {
+      assert.equal((await fetchIn(c, u)).isError, true, u);
+    }
+    assert.equal(calls.fetch, 2);
+  });
+
+  it("fetchPolicy 'any' skips the allowlist and 'off' removes web_fetch", async () => {
+    const { provider } = stub();
+    const any = webTools({ provider, fetchPolicy: 'any' });
+    assert.equal(JSON.parse(await (any.web_fetch as any).run({ url: 'https://other.example/x#y' }, ctx)).url, 'https://other.example/x');
+    assert.equal(webTools({ provider, fetchPolicy: 'off' }).web_fetch, undefined);
+  });
+
+  it('refuses unsafe URLs in every policy', async () => {
+    const { provider, calls } = stub();
+    const tools = webTools({ provider, fetchPolicy: 'any', maxUrlLength: 60 });
+    const refused: Array<[string, RegExp]> = [
+      ['file:///etc/passwd', /http\(s\)/],
+      ['ftp://a.example/x', /http\(s\)/],
+      ['not a url', /invalid/],
+      ['https://user:pw@a.example/', /credentials/],
+      ['https://user@a.example/', /credentials/],
+      ['http://127.0.0.1/', /private or loopback/],
+      ['http://10.1.2.3/', /private or loopback/],
+      ['http://172.16.0.1/', /private or loopback/],
+      ['http://192.168.1.1/', /private or loopback/],
+      ['http://169.254.169.254/latest/meta-data', /link-local/],
+      ['http://0x7f.1/', /private or loopback/],
+      ['http://2130706433/', /IP-literal/],
+      ['http://8.8.8.8/', /IP-literal/],
+      ['http://[::1]/', /IP-literal/],
+      ['http://[fe80::1]/', /IP-literal/],
+      ['http://localhost:8080/', /localhost/],
+      ['http://app.localhost/', /localhost/],
+      ['http://printer.local/', /internal/],
+      ['http://db.internal/', /internal/],
+      ['http://intranet/', /single-label/],
+      [`https://a.example/?q=${'x'.repeat(80)}`, /too long/],
+    ];
+    for (const [url, re] of refused) {
+      const out = await (tools.web_fetch as any).run({ url }, ctx);
+      assert.equal(out.isError, true, url);
+      assert.match(out.content, re, url);
+    }
+    assert.equal(calls.fetch, 0);
   });
 
   it('omits web_fetch when the provider cannot fetch', () => {

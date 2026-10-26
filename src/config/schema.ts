@@ -192,6 +192,8 @@ export const CONFIG_SCHEMA: JsonSchema = {
         maxChars: { type: 'integer', minimum: 50 },
         maxFetchChars: { type: 'integer', minimum: 100 },
         cacheTtlMs: int,
+        fetchPolicy: { enum: ['search-results', 'any', 'off'] },
+        maxUrlLength: { type: 'integer', minimum: 16 },
         searchDepth: { enum: ['basic', 'advanced'] },
         topic: { enum: ['general', 'news'] },
         includeDomains: { type: 'array', items: str },

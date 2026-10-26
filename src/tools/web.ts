@@ -127,6 +127,74 @@ export interface WebToolsOptions {
   maxFetchChars?: number;
   /** In-memory cache of results for this many ms (default 0: off). */
   cacheTtlMs?: number;
+  /**
+   * Which URLs `web_fetch` accepts. `search-results` (default): only URLs returned by `web_search` earlier in the same
+   * run (exact match after normalization). `any`: any public http(s) URL. `off`: no `web_fetch` tool.
+   * In every mode private/internal hosts, IP literals, credentials in the URL and over-long URLs are refused.
+   */
+  fetchPolicy?: 'search-results' | 'any' | 'off';
+  /** Longest URL `web_fetch` accepts, in characters (default 512). Long URLs can carry exfiltrated data. */
+  maxUrlLength?: number;
+}
+
+export type FetchPolicy = NonNullable<WebToolsOptions['fetchPolicy']>;
+
+const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal', '.localdomain', '.lan', '.home.arpa'];
+
+/** Why a hostname must not be fetched, or undefined when it looks like a public DNS name. */
+function blockedHost(rawHost: string): string | undefined {
+  const host = rawHost.toLowerCase().replace(/\.$/, '');
+  if (host.startsWith('[')) return 'IP-literal hosts are not allowed (private and link-local addresses included)';
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4 || /^(0x[0-9a-f]*|\d+)$/.test(host.split('.').pop() ?? '')) {
+    if (!v4) return 'IP-literal hosts are not allowed';
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 127 || a === 0 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return 'private or loopback addresses are not allowed';
+    if (a === 169 && b === 254) return 'link-local addresses are not allowed';
+    return 'IP-literal hosts are not allowed';
+  }
+  if (host === 'localhost' || host.endsWith('.localhost')) return 'localhost is not allowed';
+  if (BLOCKED_SUFFIXES.some((x) => host.endsWith(x))) return 'internal host names (.local, .internal) are not allowed';
+  if (!host.includes('.')) return 'single-label host names are not allowed';
+  return undefined;
+}
+
+/**
+ * Normalizes a URL for `web_fetch` (fragment stripped, canonical form) and applies the checks that hold in every
+ * policy. Returns the normalized URL or the refusal reason.
+ */
+export function checkFetchUrl(input: string, maxUrlLength = 512): { url: string } | { error: string } {
+  if (input.length > maxUrlLength) return { error: `URL too long (${input.length} > ${maxUrlLength} characters)` };
+  let u: URL;
+  try {
+    u = new URL(input.trim());
+  } catch {
+    return { error: 'invalid URL' };
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return { error: 'only http(s) URLs can be fetched' };
+  if (u.username || u.password) return { error: 'URLs with credentials (user:password@) are not allowed' };
+  const blocked = blockedHost(u.hostname);
+  if (blocked) return { error: blocked };
+  u.hash = '';
+  if (u.href.length > maxUrlLength) return { error: `URL too long (${u.href.length} > ${maxUrlLength} characters)` };
+  return { url: u.href };
+}
+
+/** Per-run record of the URLs `web_search` returned (bounded: oldest runs are forgotten). */
+function runAllowlist(maxRuns = 200) {
+  const runs = new Map<string, Set<string>>();
+  return {
+    add(runId: string, url: string) {
+      let set = runs.get(runId);
+      if (!set) {
+        if (runs.size >= maxRuns) runs.delete(runs.keys().next().value!);
+        set = new Set();
+        runs.set(runId, set);
+      }
+      set.add(url);
+    },
+    has: (runId: string, url: string) => runs.get(runId)?.has(url) ?? false,
+  };
 }
 
 /** Marker added to every result: web content may contain prompt injection. */
@@ -168,6 +236,21 @@ export function webTools(opts: WebToolsOptions): { web_search: Tool; web_fetch?:
   const maxChars = opts.maxChars ?? 1000;
   const maxFetchChars = opts.maxFetchChars ?? 8000;
   const cache = ttlCache(opts.cacheTtlMs ?? 0);
+  const fetchPolicy = opts.fetchPolicy ?? 'search-results';
+  const maxUrlLength = opts.maxUrlLength ?? 512;
+  const allowed = runAllowlist();
+
+  /** Records the URLs of a search result (also a cached one) as fetchable in this run. */
+  const remember = async (runId: string, out: Promise<string>): Promise<string> => {
+    const text = await out;
+    if (fetchPolicy === 'search-results') {
+      for (const r of JSON.parse(text).results ?? []) {
+        const checked = checkFetchUrl(String(r.url), maxUrlLength);
+        if ('url' in checked) allowed.add(runId, checked.url);
+      }
+    }
+    return text;
+  };
 
   const web_search = defineTool<{ query: string; max_results?: number }>({
     name: 'web_search',
@@ -181,7 +264,7 @@ export function webTools(opts: WebToolsOptions): { web_search: Tool; web_fetch?:
     },
     run: ({ query, max_results }, ctx) => {
       const n = Math.min(max_results ?? opts.maxResults ?? 5, cap);
-      return cache.get(`search\u0000${n}\u0000${query}`, async () => {
+      return remember(ctx.runId, cache.get(`search\u0000${n}\u0000${query}`, async () => {
         const results = (await provider.search(query, { maxResults: n, signal: ctx.signal })).slice(0, n);
         return JSON.stringify({
           untrusted: true,
@@ -189,27 +272,26 @@ export function webTools(opts: WebToolsOptions): { web_search: Tool; web_fetch?:
           query,
           results: results.map((r) => ({ title: r.title, url: r.url, snippet: truncate(r.content, maxChars), ...(r.publishedDate && { published: r.publishedDate }) })),
         });
-      });
+      }));
     },
   });
 
-  if (!provider.fetch) return { web_search };
+  if (!provider.fetch || fetchPolicy === 'off') return { web_search };
   const fetchPage = provider.fetch.bind(provider);
   const web_fetch = defineTool<{ url: string }>({
     name: 'web_fetch',
-    description: 'Fetch the readable content of a web page by URL (untrusted external content).',
+    description: 'Fetch the readable content of a web page by URL (untrusted external content). The URL must come from a web_search result of this run.',
     risk: 'read',
     schema: { type: 'object', properties: { url: { type: 'string', minLength: 1 } }, required: ['url'], additionalProperties: false },
     run: async ({ url }, ctx) => {
-      let parsed: URL;
-      try {
-        parsed = new URL(url);
-      } catch {
-        return { content: `invalid URL: ${url}`, isError: true };
+      const checked = checkFetchUrl(url, maxUrlLength);
+      if ('error' in checked) return { content: `web_fetch refused: ${checked.error}`, isError: true };
+      const target = checked.url;
+      if (fetchPolicy === 'search-results' && !allowed.has(ctx.runId, target)) {
+        return { content: 'web_fetch refused: only URLs returned by web_search in this run can be fetched. Search first, then fetch one of the returned URLs exactly.', isError: true };
       }
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return { content: `only http(s) URLs can be fetched: ${url}`, isError: true };
-      return cache.get(`fetch\u0000${parsed.href}`, async () => {
-        const page = await fetchPage(url, { signal: ctx.signal });
+      return cache.get(`fetch\u0000${target}`, async () => {
+        const page = await fetchPage(target, { signal: ctx.signal });
         return JSON.stringify({
           untrusted: true,
           note: UNTRUSTED_NOTE,

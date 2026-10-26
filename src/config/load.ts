@@ -101,6 +101,8 @@ export interface WebConfig {
   maxChars?: number;
   maxFetchChars?: number;
   cacheTtlMs?: number;
+  fetchPolicy?: 'search-results' | 'any' | 'off';
+  maxUrlLength?: number;
   searchDepth?: 'basic' | 'advanced';
   topic?: 'general' | 'news';
   includeDomains?: string[];

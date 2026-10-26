@@ -107,12 +107,14 @@ export function createRegistry(): Registry {
         maxChars: w.maxChars,
         maxFetchChars: w.maxFetchChars,
         cacheTtlMs: w.cacheTtlMs,
+        fetchPolicy: w.fetchPolicy,
+        maxUrlLength: w.maxUrlLength,
       });
     });
   r.tools.set('web_search', (_o, ctx) => web(ctx).web_search);
   r.tools.set('web_fetch', (_o, ctx) => {
     const tool = web(ctx).web_fetch;
-    if (!tool) throw new Error(`web_fetch is not available with web provider "${ctx.config.web?.provider}"`);
+    if (!tool) throw new Error(`web_fetch is not available (web provider "${ctx.config.web?.provider}", fetchPolicy "${ctx.config.web?.fetchPolicy ?? 'search-results'}")`);
     return tool;
   });
   return r;

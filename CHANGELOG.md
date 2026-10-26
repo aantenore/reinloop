@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Breaking (behaviour):** `web_fetch` now only accepts URLs returned by `web_search` earlier in the same run
+  (new option `fetchPolicy: 'search-results' | 'any' | 'off'`, default `search-results`; config `web.fetchPolicy`).
+  This blocks prompt-injection exfiltration through attacker URLs. Set `fetchPolicy: 'any'` to restore the old
+  behaviour, or `'off'` to drop the tool. Search-only flows are unaffected.
+- In every `fetchPolicy`, `web_fetch` refuses non-http(s) URLs, credentials in the URL, IP-literal hosts,
+  localhost / private / link-local targets, `*.local` / `*.internal` names and URLs longer than `maxUrlLength`
+  (default 512); fragments are stripped. Refusals are returned as tool errors. New export `checkFetchUrl`.
 - Provider-hosted tools: `hostedTool({ provider, type, name?, params?, risk?, beta? })` declares a tool the provider
   runs inside the model turn (Anthropic `web_search_*`, `web_fetch_*`, `code_execution_*`). It is sent verbatim in the
   request and never executed by the loop. `server_tool_use` and `*_tool_result` blocks become `hosted_call` /

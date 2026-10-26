@@ -42,7 +42,7 @@ export { withResponseCache, memoryCache, fileCache, type CacheStore, type Respon
 export { memoryTools, memoryNotes, fileNotes, type MemoryStore, type Note } from './tools/memory.ts';
 export { hostedTool, hostedRisk, type HostedToolOptions } from './tools/hosted.ts';
 export {
-  webTools, tavilyProvider, anthropicWebProvider, UNTRUSTED_NOTE,
+  webTools, checkFetchUrl, tavilyProvider, anthropicWebProvider, UNTRUSTED_NOTE,
   type WebToolsOptions, type WebProvider, type WebSearchResult, type WebPage, type WebSearchOptions, type TavilyOptions, type AnthropicWebOptions,
 } from './tools/web.ts';
 export { pathGlob } from './tools/node.ts';
