@@ -132,6 +132,7 @@ too. See [docs/architecture.md](docs/architecture.md).
 | Speed | Parallel tool calls, streaming, ~30 ms cold import, ~20 µs kernel overhead per turn |
 | Caching | Provider prompt caching (Anthropic breakpoints, stable prefixes); optional response cache (memory/file, TTL) for dev, tests and evals |
 | Memory | `remember` / `recall` tools with durable notes, shared or per agent; richer memory via MCP |
+| Web | `web_search` / `web_fetch` tools (Tavily, Anthropic native search, or your own backend) with results marked untrusted; provider-hosted tools (Anthropic web search, web fetch, code execution) with policy, budgets and per-search cost. See [docs/web-tools.md](docs/web-tools.md) |
 | Skills | Open Agent Skills (`SKILL.md` folders), progressively disclosed |
 | Structured output | JSON Schema validated with retries; sent natively (`response_format`, Anthropic `output_config.format`, also with tools) when the provider supports it; tolerant parsing |
 | Tools | Built-ins (files, search, edit, shell), MCP servers (stdio/HTTP), your functions, other agents and teams |

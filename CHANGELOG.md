@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Provider-hosted tools: `hostedTool({ provider, type, name?, params?, risk?, beta? })` declares a tool the provider
+  runs inside the model turn (Anthropic `web_search_*`, `web_fetch_*`, `code_execution_*`). It is sent verbatim in the
+  request and never executed by the loop. `server_tool_use` and `*_tool_result` blocks become `hosted_call` /
+  `hosted_result` parts kept in the history (echoed unchanged, so multi-turn and thinking replay keep working, also
+  when streaming); text citations are kept on text parts. New ephemeral events `hosted_tool_start` and
+  `hosted_tool_result` (summary, error flag, sources). `pause_turn` is a new stop reason: the loop sends the paused
+  turn back so the provider resumes it. Chat Completions providers reject hosted tools (Anthropic only for now).
+- Hosted calls count against `maxToolCalls`, and `max_uses` of web search/fetch is capped to the remaining budget.
+  The policy applies once per run before the tool is offered: web search/fetch default to risk `read`, other hosted
+  tools (e.g. code execution) to `exec`, so they are dropped without an approver unless a rule allows them.
+- `Usage.serverToolUse` (e.g. `{ webSearchRequests: 2 }`) and `Pricing.serverToolUsd` (USD per request): built-in
+  Claude prices include web search at $0.01 per request; override per model in the `pricing` config section.
+- `webTools({ provider, ... })`: `web_search {query, max_results?}` and `web_fetch {url}` (risk `read`) with the
+  `tavily`, `anthropic-native` or a custom `WebProvider` backend. Results are compact JSON marked `untrusted: true`,
+  truncated (`maxChars`, `maxFetchChars`), optionally cached in memory (`cacheTtlMs`).
+- Config: `hostedTools.<name>` and `web` sections; `web_search` / `web_fetch` are built-in tool names for agents and
+  agent files. `mockProvider` turns accept `parts` and `stopReason`.
+
 ## 0.2.0 - 2026-10-24
 
 - The MCP client and server report the package version instead of a fixed `0.1.0`.
