@@ -1,7 +1,7 @@
 import { decide, type PolicyVerdict } from '../policy.ts';
 import type { AccessDecision, Identity, PolicyConfig, Tool, ToolCallPart } from '../types.ts';
 import { errorMessage, truncate } from '../util.ts';
-import { accessRequest } from './authorizers.ts';
+import { accessQuestion } from './authorizers.ts';
 import { IDENTITY_LIMITS, IdentityError } from './http.ts';
 
 /**
@@ -22,7 +22,7 @@ export async function authorizeCall(
   let decision: AccessDecision;
   try {
     if (!pdp.authorizer || typeof pdp.authorizer.evaluate !== 'function') throw new IdentityError('identity_config', `authorizer "${pdp.type ?? '?'}" was not resolved`);
-    decision = await pdp.authorizer.evaluate(accessRequest(call, tool, ctx.agent, ctx.identity, pdp.includeArgs === true), { signal: ctx.signal });
+    decision = await pdp.authorizer.evaluate(accessQuestion(call, tool, ctx.agent, ctx.identity, pdp.includeArgs === true), { signal: ctx.signal });
     if (typeof decision?.decision !== 'boolean') throw new IdentityError('pdp_response', 'authorizer returned no boolean decision');
   } catch (err) {
     if (ctx.signal?.aborted) throw err;

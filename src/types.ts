@@ -225,7 +225,7 @@ export interface PdpSettings {
   authorizer?: Authorizer;
   /** What a PDP failure (network, timeout, malformed answer) means. Default `deny`. */
   onError?: Decision;
-  /** Send the tool arguments as `context.args` (default false: arguments may hold personal data). */
+  /** Send the tool arguments (`args`; AuthZEN `context.args`) (default false: arguments may hold personal data). */
   includeArgs?: boolean;
   /** Characters of a PDP reason or error kept in the decision (default 200). */
   maxReasonChars?: number;
@@ -486,15 +486,19 @@ export interface Identity {
 export interface IdentityVerifier { verify(token: string, opts?: { signal?: AbortSignal }): Promise<Identity> }
 /** Access token for a downstream audience (token exchange on behalf of the user, or client credentials). */
 export interface CredentialProvider { token(audience: string, opts?: { scopes?: string[]; signal?: AbortSignal }): Promise<string> }
-/** Shaped after the OpenID AuthZEN evaluation request. */
-export interface AccessRequest {
-  subject: { type: 'user' | 'agent'; id: string; properties?: Record<string, unknown> };
-  action: { name: string };
-  resource: { type: string; id: string; properties?: Record<string, unknown> };
-  context?: Record<string, unknown>;
+/** Who asks, as a PDP sees it: never a token. A run without identity is the explicit `anonymous` caller, never the agent. */
+export interface AccessCaller { id: string; kind: 'user' | 'agent' | 'anonymous'; roles: string[]; scopes: string[]; name?: string }
+/** What a tool call asks a PDP, in the agent-layers `AccessQuestion` names. */
+export interface AccessQuestion {
+  caller: AccessCaller;
+  /** `call` for tool calls. */
+  action: string;
+  target: { kind: string; id: string; layer: Layer; risk: Risk | null; agent: string; attrs?: Record<string, unknown> };
+  /** The call's arguments, only with `policy.pdp.includeArgs`. */
+  args?: unknown;
 }
 export interface AccessDecision { decision: boolean; reason?: string }
-export interface Authorizer { evaluate(req: AccessRequest, opts?: { signal?: AbortSignal }): Promise<AccessDecision> }
+export interface Authorizer { evaluate(q: AccessQuestion, opts?: { signal?: AbortSignal }): Promise<AccessDecision> }
 
 export interface Passage { id: string; text: string; source?: string; score?: number; metadata?: Record<string, unknown> }
 export interface KnowledgeQuery { query: string; k?: number; filter?: Record<string, unknown>; identity?: Identity; signal?: AbortSignal }

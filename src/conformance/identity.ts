@@ -1,4 +1,4 @@
-import type { AccessRequest, Authorizer, CredentialProvider, Identity, IdentityVerifier } from '../types.ts';
+import type { AccessQuestion, Authorizer, CredentialProvider, Identity, IdentityVerifier } from '../types.ts';
 
 /**
  * Conformance checks for identity and access adapters. Each returns the list of failures (empty = conformant) and
@@ -80,7 +80,7 @@ export async function checkIdentityVerifier(verifier: IdentityVerifier, cases: V
   return out;
 }
 
-export interface AuthorizerCases { allowCase: AccessRequest; denyCase: AccessRequest }
+export interface AuthorizerCases { allowCase: AccessQuestion; denyCase: AccessQuestion }
 
 /** `Authorizer`: boolean decisions, allow for `allowCase`, deny for `denyCase`, string reasons, stable answers. */
 export async function checkAuthorizer(authz: Authorizer, cases: AuthorizerCases): Promise<string[]> {

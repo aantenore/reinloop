@@ -4,9 +4,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 import {
-  accessRequest, authorizeCall, authzenAuthorizer, checkAuthorizer, checkCredentialProvider, checkIdentityVerifier, collectSink, createRegistry,
+  accessQuestion, authorizeCall, authzenAuthorizer, checkAuthorizer, checkCredentialProvider, checkIdentityVerifier, collectSink, createRegistry,
   createRuntime, decide, defineTool, mcpTools, memoryStore, oidcCredentials, oidcVerifier, opaAuthorizer, run, serve,
-  type AccessRequest, type Authorizer, type HarnessConfig, type Identity, type RunEvent, type Tool, type ToolCallPart,
+  type AccessQuestion, type Authorizer, type HarnessConfig, type Identity, type RunEvent, type Tool, type ToolCallPart,
 } from '../src/index.ts';
 import { makeAgent } from './helpers.ts';
 
@@ -348,15 +348,15 @@ describe('policy when', () => {
   });
 });
 
-function recordingAuthorizer(answer: (req: AccessRequest) => boolean | Error): Authorizer & { requests: AccessRequest[] } {
-  const requests: AccessRequest[] = [];
+function recordingAuthorizer(answer: (q: AccessQuestion) => boolean | Error): Authorizer & { requests: AccessQuestion[] } {
+  const requests: AccessQuestion[] = [];
   return {
     requests,
     async evaluate(req) {
       requests.push(req);
       const out = answer(req);
       if (out instanceof Error) throw out;
-      return { decision: out, ...(!out && { reason: `${req.subject.id} may not ${req.resource.id}` }) };
+      return { decision: out, ...(!out && { reason: `${req.caller.id} may not ${req.target.id}` }) };
     },
   };
 }
@@ -364,7 +364,7 @@ function recordingAuthorizer(answer: (req: AccessRequest) => boolean | Error): A
 describe('pdp', () => {
   const agent = 'helper';
   it('local deny wins without asking the PDP; PDP deny and errors deny; allow keeps ask', async () => {
-    const pdp = recordingAuthorizer((r) => r.subject.id === 'alice');
+    const pdp = recordingAuthorizer((r) => r.caller.id === 'alice');
     const policy = { rules: [{ match: 'rm', action: 'deny' as const }], risk: { write: 'allow' as const }, pdp: { authorizer: pdp } };
     const denied = await authorizeCall(policy, call('rm'), tool('rm', 'write'), { agent, identity: analyst });
     assert.equal(denied.decision, 'deny');
@@ -384,20 +384,20 @@ describe('pdp', () => {
     assert.equal(unresolved.decision, 'deny');
   });
 
-  it('builds AuthZEN-shaped requests, with args only on opt-in', () => {
-    const req = accessRequest(call('edit', { path: '/etc/x' }), { ...tool('edit', 'write'), layer: 'tool' }, agent, analyst);
-    assert.deepEqual(req, {
-      subject: { type: 'user', id: 'alice', properties: { roles: ['analyst'], scopes: ['tools.write'], authenticated: true } },
-      action: { name: 'call' },
-      resource: { type: 'tool', id: 'edit', properties: { risk: 'write', agent, layer: 'tool' } },
+  it('builds access questions in SDK names, anonymous without identity, with args only on opt-in', () => {
+    const q = accessQuestion(call('edit', { path: '/etc/x' }), { ...tool('edit', 'write'), layer: 'tool' }, agent, analyst);
+    assert.deepEqual(q, {
+      caller: { id: 'alice', kind: 'user', roles: ['analyst'], scopes: ['tools.write'] },
+      action: 'call',
+      target: { kind: 'tool', id: 'edit', layer: 'tool', risk: 'write', agent },
     });
-    assert.deepEqual(accessRequest(call('edit', { a: 1 }), tool('edit', 'write'), agent, analyst, true).context, { args: { a: 1 } });
-    assert.deepEqual(accessRequest(call('x'), tool('x', 'read'), agent, undefined).subject, { type: 'agent', id: 'agent:helper', properties: { roles: [], scopes: [], authenticated: false } });
-    assert.ok(!JSON.stringify(req).includes('SECRET'));
+    assert.deepEqual(accessQuestion(call('edit', { a: 1 }), tool('edit', 'write'), agent, analyst, true).args, { a: 1 });
+    assert.deepEqual(accessQuestion(call('x'), tool('x', 'read'), agent, undefined).caller, { kind: 'anonymous', id: 'anonymous', roles: [], scopes: [] });
+    assert.ok(!JSON.stringify(q).includes('SECRET'));
   });
 
   it('denies through a run, puts the reason on tool_decision and never a token in events or the store', async () => {
-    const pdp = recordingAuthorizer((r) => r.subject.properties?.roles instanceof Array && (r.subject.properties.roles as string[]).includes('analyst'));
+    const pdp = recordingAuthorizer((r) => r.caller.roles.includes('analyst'));
     const write = tool('save', 'write');
     const store = memoryStore();
     const sink = collectSink();
@@ -414,7 +414,7 @@ describe('pdp', () => {
     const decisions = sink.events.filter((e) => e.type === 'tool_decision') as RunEvent<'tool_decision'>[];
     assert.deepEqual(decisions.map((d) => [d.data.name, d.data.allowed]), [['save', false], ['probe', false]]);
     assert.equal(decisions[0]!.data.reason, 'pdp: bob may not save');
-    assert.equal(pdp.requests[0]!.context, undefined);
+    assert.equal(pdp.requests[0]!.args, undefined);
     const all = JSON.stringify(sink.events) + JSON.stringify(await store.load(res.runId));
     for (const secret of [viewer.token!, exchanged]) assert.ok(!all.includes(secret), 'no token in events');
     assert.deepEqual(seen, []);
@@ -431,20 +431,26 @@ describe('opa and authzen adapters', () => {
       if (req.url === '/v1/data/agents/allow') return sendJson(res, opaResult === undefined ? {} : { result: opaResult });
       if (req.url === '/access/v1/evaluation') {
         const allow = JSON.parse(body).subject.id === 'alice';
-        return sendJson(res, { decision: allow, ...(!allow && { context: { reason_admin: { en: 'viewer role' } } }) });
+        return sendJson(res, { decision: allow, ...(!allow && { context: { reason_admin: 'internal', reason_user: { en: 'viewer role' } } }) });
       }
       if (req.url === '/broken/access/v1/evaluation') return sendJson(res, { decision: 'yes' });
       sendJson(res, { error: 'nope' }, 500);
     });
   });
   after(() => srv.close());
-  const req = (id: string): AccessRequest => accessRequest(call('save'), tool('save', 'write'), 'a', { subject: id, kind: 'user', roles: [] });
+  const req = (id: string, args?: unknown): AccessQuestion => accessQuestion(call('save', args), tool('save', 'write'), 'a', { subject: id, kind: 'user', roles: ['analyst'], token: 'tok-SECRET' }, args !== undefined);
 
   it('opa posts {input} to /v1/data/<path> and reads boolean or {allow, reason}', async () => {
     const opa = opaAuthorizer({ url: srv.url, headers: { authorization: 'Bearer pdp-key' } });
     opaResult = true;
     assert.deepEqual(await opa.evaluate(req('alice')), { decision: true });
-    assert.deepEqual(hits.at(-1)!.body, { input: req('alice') });
+    assert.deepEqual(hits.at(-1)!.body, {
+      input: { caller: { id: 'alice', kind: 'user', roles: ['analyst'], scopes: [] }, action: 'call', target: { kind: 'tool', id: 'save', layer: 'tool', risk: 'write', agent: 'a' } },
+    });
+    await opa.evaluate({ ...req('alice'), caller: { kind: 'agent', id: '', roles: ['x'], scopes: [], token: 't' } as never });
+    assert.deepEqual(hits.at(-1)!.body.input.caller, { kind: 'anonymous', id: 'anonymous', roles: [], scopes: [] });
+    await opa.evaluate(req('alice', { v: 1 }));
+    assert.deepEqual(hits.at(-1)!.body.input.args, { v: 1 });
     assert.equal(hits.at(-1)!.headers.authorization, 'Bearer pdp-key');
     opaResult = { allow: false, reason: 'viewers read only' };
     assert.deepEqual(await opa.evaluate(req('bob')), { decision: false, reason: 'viewers read only' });
@@ -458,7 +464,17 @@ describe('opa and authzen adapters', () => {
   it('authzen posts to /access/v1/evaluation and reads decision and context reason', async () => {
     const az = authzenAuthorizer({ url: `${srv.url}/` });
     assert.deepEqual(await az.evaluate(req('alice')), { decision: true });
-    assert.deepEqual(await az.evaluate(req('bob')), { decision: false, reason: '{"en":"viewer role"}' });
+    assert.deepEqual(hits.at(-1)!.body, {
+      subject: { type: 'user', id: 'alice', properties: { roles: ['analyst'], scopes: [], authenticated: true } },
+      action: { name: 'call' },
+      resource: { type: 'tool', id: 'save', properties: { risk: 'write', layer: 'tool', agent: 'a' } },
+    });
+    assert.deepEqual(await az.evaluate(req('bob')), { decision: false, reason: 'viewer role' });
+    await az.evaluate({ ...req('bob', { v: 1 }), caller: undefined as never, target: { ...req('bob').target, attrs: { risk: 'read', team: 'x' } } });
+    assert.deepEqual(hits.at(-1)!.body.subject, { type: 'anonymous', id: 'anonymous', properties: { roles: [], scopes: [], authenticated: false } });
+    assert.deepEqual(hits.at(-1)!.body.resource.properties, { team: 'x', risk: 'write', layer: 'tool', agent: 'a' });
+    assert.deepEqual(hits.at(-1)!.body.context, { args: { v: 1 } });
+    assert.ok(!JSON.stringify(hits).includes('SECRET'));
     await assert.rejects(authzenAuthorizer({ url: `${srv.url}/broken` }).evaluate(req('x')), /boolean "decision"/);
     assert.deepEqual(await checkAuthorizer(az, { allowCase: req('alice'), denyCase: req('bob') }), []);
     const wrong = await checkAuthorizer(az, { allowCase: req('bob'), denyCase: req('alice') });
@@ -632,7 +648,7 @@ describe('mcp auth and config wiring', () => {
 
   it('builds the PDP from config through the registry and binds credentials per run', async () => {
     const registry = createRegistry();
-    const pdp = recordingAuthorizer((r) => r.subject.id === 'alice');
+    const pdp = recordingAuthorizer((r) => r.caller.id === 'alice');
     let factoryOptions: Record<string, unknown> | undefined;
     registry.authorizers.set('test', (o) => ((factoryOptions = o), pdp));
     const bound: Array<Identity | undefined> = [];
@@ -653,7 +669,7 @@ describe('mcp auth and config wiring', () => {
       assert.deepEqual(factoryOptions, { url: 'http://pdp' });
       assert.equal(r1.status, 'completed');
       assert.equal(pdp.requests.length, 1);
-      assert.deepEqual(pdp.requests[0]!.context, { args: {} });
+      assert.deepEqual(pdp.requests[0]!.args, {});
       assert.equal(bound[0], analyst);
       const sink = collectSink();
       await rt.run('a', 'go', { identity: viewer, sinks: [sink] });

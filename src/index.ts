@@ -6,7 +6,7 @@ export { decide, matchesCondition, mergePolicies, exceededBudget, DEFAULT_RISK_D
 export { oidcVerifier, defaultKind, rolesOf, scopesOf, DEFAULT_ALGORITHMS, type OidcVerifierOptions } from './identity/verifier.ts';
 export { oidcCredentials, TOKEN_EXCHANGE_GRANT, ACCESS_TOKEN_TYPE, type CredentialFactory, type OidcCredentialsOptions } from './identity/credentials.ts';
 export { authorizeCall } from './identity/authorize.ts';
-export { accessRequest, authzenAuthorizer, opaAuthorizer, type HttpAuthorizerOptions } from './identity/authorizers.ts';
+export { accessQuestion, authzenAuthorizer, authzenRequest, opaAuthorizer, publicQuestion, type HttpAuthorizerOptions } from './identity/authorizers.ts';
 export { IdentityError } from './identity/http.ts';
 export { JWS_ALGORITHMS, decodeJwt } from './identity/jwt.ts';
 export { checkAuthorizer, checkIdentityVerifier, checkCredentialProvider, type AuthorizerCases, type VerifierCases, type CredentialCases } from './conformance/identity.ts';

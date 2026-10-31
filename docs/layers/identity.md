@@ -101,30 +101,38 @@ with `when` never matches a run without identity. `decide(policy, call, tool, id
 Order (`authorizeCall`):
 
 1. Local rules. `deny` is final; the PDP is not asked.
-2. For `allow` or `ask`, the PDP evaluates an AccessRequest. `false` → denied, reason `pdp: <reason>`. `true` keeps the
+2. For `allow` or `ask`, the PDP evaluates an AccessQuestion. `false` → denied, reason `pdp: <reason>`. `true` keeps the
    local decision, so `ask` still goes to the approver.
 3. PDP failure (network, timeout, malformed answer) → `onError`: `deny` (default), `ask` or `allow`.
 
 The same path applies to hosted tools before they are offered. The reason is on `tool_decision`; tokens never are.
 
-AccessRequest (AuthZEN shape):
+AccessQuestion (the [agent-layers](https://github.com/aantenore/agent-layers) SDK names):
 
 ```json
 {
-  "subject":  { "type": "user", "id": "<sub>", "properties": { "roles": [], "scopes": [], "authenticated": true } },
-  "action":   { "name": "call" },
-  "resource": { "type": "tool", "id": "<tool>", "properties": { "risk": "write", "agent": "<agent>", "layer": "tool" } },
-  "context":  { "args": {} }
+  "caller": { "id": "<sub>", "kind": "user", "roles": [], "scopes": [] },
+  "action": "call",
+  "target": { "kind": "tool", "id": "<tool>", "layer": "tool", "risk": "write", "agent": "<agent>" },
+  "args":   {}
 }
 ```
 
-`context.args` is sent only with `includeArgs: true` (arguments may hold personal data). A run without identity is
-sent as `{ "type": "agent", "id": "agent:<name>", "properties": { "authenticated": false } }`.
+`args` is sent only with `includeArgs: true` (arguments may hold personal data); the token never is. A run without
+identity, or a caller that is not a `user` or `agent` with an id, is sent as the anonymous caller
+`{ "kind": "anonymous", "id": "anonymous", "roles": [], "scopes": [] }`, never as the agent.
 
 | Adapter | Request | Answer |
 |---|---|---|
-| `authzen` | `POST {url}/access/v1/evaluation` | `{ decision, context?: { reason \| reason_admin \| reason_user } }` |
-| `opa` | `POST {url}/v1/data/{path}` with `{ input }` | `{ result: boolean }` or `{ result: { allow, reason? } }`; an undefined result is an error |
+| `opa` | `POST {url}/v1/data/{path}` with `{ input: AccessQuestion }` (`input.caller.roles`, `input.target.risk`) | `{ result: boolean }` or `{ result: { allow, reason? } }`; an undefined result is an error |
+| `authzen` | `POST {url}/access/v1/evaluation` with `subject {type: caller.kind, id, properties: {roles, scopes, authenticated}}`, `action {name}`, `resource {type: target.kind, id, properties: {...attrs, risk, layer, agent}}`, `context.args` | `{ decision, context?: { reason \| reason_user } }`; `reason_admin` stays with the PDP |
+
+`authenticated` is `true` for `user` and `agent` callers. A reason may be a string or a localised `{ "<lang>": text }`
+object (the first string is kept).
+
+Migration: OPA policies read `input.caller.*` and `input.target.*` instead of `input.subject.*` and
+`input.resource.properties.*`; runs without identity arrive as `anonymous` (was `agent` with `authenticated: false`).
+Custom `Authorizer`s receive the AccessQuestion.
 
 Both take `headers` (e.g. a PDP API key) and `timeoutMs` (default 5 s). More adapters (Cedar, OpenFGA, Cerbos...)
 register from a plugin: `registry.authorizers.set('cedar', (options) => myAuthorizer(options))`. Programmatic agents
@@ -173,7 +181,7 @@ MCP session to the principal that opened it may reject per-user calls on a share
 - `checkIdentityVerifier(verifier, { validToken, expiredToken?, invalidTokens?, expect? })`: accepts the valid token
   with a well-formed Identity; rejects garbage, a tampered signature, `alg: none` and the invalid tokens; errors do not
   echo the token.
-- `checkAuthorizer(authz, { allowCase, denyCase })`: boolean decisions as expected, string reasons, stable answers.
+- `checkAuthorizer(authz, { allowCase, denyCase })` (two AccessQuestions): boolean decisions as expected, string reasons, stable answers.
 - `checkCredentialProvider(provider, { audience, scopes?, inspect? })`: non-empty token, repeatable, empty audience
   refused, optional custom inspection of the issued token.
 
