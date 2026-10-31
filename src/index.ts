@@ -57,5 +57,7 @@ export { architect, architectInstructions, design, validateProject } from './arc
 export { DEFAULT_BUDGET } from './policy.ts';
 export type { TeamConfig, RoleBinding, HostedToolConfig, WebConfig, SignalsConfig } from './config/load.ts';
 export { discoverSkills, selectSkills, skillTool, DEFAULT_SKILL_DIRS, type Skill } from './skills.ts';
+export { checkProvider, type ProviderCheckOptions } from './conformance/provider.ts';
+export { ruleRouter, routedModel, withRouter, type RouteCondition, type RouteRule, type RuleRouterOptions, type RoutedModelOptions } from './router.ts';
 export { otlpSink, type OtlpOptions } from './observe/otlp.ts';
 export { INTEGRATIONS, addIntegration, type Integration } from './integrations.ts';

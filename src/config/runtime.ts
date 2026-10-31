@@ -8,6 +8,7 @@ import { createTeam } from '../patterns.ts';
 import { mergePolicies } from '../policy.ts';
 import { defaultModel, MODEL_ALIASES, resolveModel, splitModel } from '../presets.ts';
 import { pricingFor } from '../pricing.ts';
+import { routedModel } from '../router.ts';
 import { withFallback } from '../providers/resilient.ts';
 import { createRegistry, type FactoryContext, type Registry } from '../registry.ts';
 import { fileArtifacts } from '../store/file.ts';
@@ -16,7 +17,7 @@ import { DEFAULT_SKILL_DIRS, discoverSkills, selectSkills, skillTool, type Skill
 import { type Member, streamMember } from '../team.ts';
 import { memoryArtifacts, readArtifactTool } from '../tools/define.ts';
 import { hostedTool } from '../tools/hosted.ts';
-import type { Agent, ArtifactStore, Message, ModelRef, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
+import type { Agent, ArtifactStore, Message, Middleware, ModelRef, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
 import { globToRegExp } from '../util.ts';
 import { type AgentConfig, ConfigError, type Env, type HarnessConfig, checkConfig, interpolate, loadConfig } from './load.ts';
 
@@ -192,6 +193,16 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
   const buildAgent = async (name: string, a: AgentConfig, stack: string[]): Promise<Agent> => {
     const model = await modelRef(a.model);
     if (a.params) model.params = { ...model.params, ...a.params };
+    const routing: Middleware[] = [];
+    if (a.router) {
+      const spec = config.routers?.[a.router];
+      if (!spec) throw new ConfigError(`$.agents.${name}.router: unknown router "${a.router}"`);
+      const router = await make('router', registry.routers, spec, `$.routers.${a.router}`);
+      await Promise.all(((router as { models?: string[] }).models ?? []).map(modelRef)); // fail at build, not mid-run
+      const routed = routedModel({ ...model }, { router, resolve: modelRef });
+      model.provider = routed.model.provider;
+      routing.push(routed.middleware);
+    }
     if (responseCache && a.responseCache !== false) {
       const { ttlMs, namespace } = config.responseCache as { ttlMs?: number; namespace?: string };
       model.provider = withResponseCache(model.provider, responseCache, { ttlMs, namespace });
@@ -206,9 +217,12 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       }
     }
     const instructions = a.instructions?.startsWith('file:') ? await readFile(resolve(baseDir, a.instructions.slice(5)), 'utf8') : a.instructions;
-    const middleware = await Promise.all(
-      (a.middleware ?? []).map((m, i) => make('middleware', registry.middleware, { type: m }, `$.agents.${name}.middleware[${i}]`)),
-    );
+    const middleware = [
+      ...routing,
+      ...(await Promise.all(
+        (a.middleware ?? []).map((m, i) => make('middleware', registry.middleware, { type: m }, `$.agents.${name}.middleware[${i}]`)),
+      )),
+    ];
     return {
       name,
       description: a.description ?? a.asTool?.description,
