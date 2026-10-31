@@ -1,4 +1,4 @@
-# Evaluation and improvement (L9)
+# Evaluation and improvement
 
 Measure the agent, attribute failures to a layer, verify fixes. There is no open standard for agent evaluation, so this
 layer is an adapter contract with a small reference implementation. reinloop provides the runtime hooks (events, run
@@ -22,7 +22,7 @@ Results: JSONL, one row per case.
  "scores": [{"metric": "expected", "value": 1, "layer": "tool"}, {"metric": "tool_health", "value": 1, "layer": "tool", "reason": "1 calls ok"}]}
 ```
 
-`value` is always 0..1, higher is better. `layer` is one of `infra llm harness knowledge tool identity guardrail cache telemetry eval`.
+`value` is always 0..1, higher is better. `layer` is one of `infra llm harness knowledge tool identity guardrail cache telemetry eval interface` (`LAYERS`).
 
 ```ts
 interface Evaluator {
@@ -69,21 +69,20 @@ reinloop replay <runId...|--all> --agent support-v2 --model anthropic/claude-hai
 
 | Layer | Signal | Value |
 |---|---|---|
-| `tool` | `tool_result` errors (denials excluded), `tool_args_invalid` (also when repaired) | 1 - failed calls / calls |
-| `identity` | `tool_decision` with `allowed: false` | 1 - denied / decisions |
-| `guardrail` | `guardrail` events (`action` other than `allow` is an intervention), denials whose reason starts with `guardrail`, run reason `guardrail:*` | 1 - interventions / checks |
+| `tool` | `tool_result` errors (denials excluded), `tool_args_invalid` (also when repaired); results of tools with another `layer` (e.g. `knowledge`) are scored there | 1 - failed calls / calls |
+| `identity` | `tool_decision` with `allowed: false`, except guardrail denials; PDP denials (`pdp: ...`, `pdp error ...`) are counted in the reason | 1 - denied / decisions |
+| `guardrail` | `guardrail {guard, stage, action, reason}` events (recorded only for interventions and guard errors), denials with reason `guardrail:...`, run reason `guardrail:<guard>:<stage>` | 0 on a block or guard error; 0.5 when guards only redacted |
 | `harness` | failed, interrupted or budget-stopped run (0); completed after `compaction` (0.5); completed (1) | |
 | `llm` | `max_tokens` / `refusal` answers, structured-output retries, run failed with `max_tokens`, `refusal`, invalid structured output or a provider error (HTTP / network) | 1 - bad responses / responses; 0 on a model-side failure |
-| `knowledge` | `knowledge_retrieval` events with an empty `passages` (array or count) | 1 - empty / retrievals |
-| `cache` | `cache*` events (`cache_hit` or `hit: true`) or provider cache token counts | hits / lookups |
+| `knowledge` | `knowledge_retrieval {source, passages, error}` with an `error` or `passages: 0`; errors of `knowledge`-layer tools (`search_knowledge`) | 1 - bad / (retrievals + knowledge tool calls) |
+| `cache` | provider prompt-cache token counts on `model_response.usage` | responses reading the cache / responses |
 
 The scoring reads a minimal event shape, `{ type, data, runId?, parentRunId? }` (`SignalEvent`), and the evaluators depend only on
 the contract types and Node built-ins. `scoreLayers(events, { status })` is the pure form, so events mapped from another
 runtime's traces can be scored the same way. `judgeEvaluator` takes anything with `run(prompt) → { status, output, data? }`
 (a reinloop `agent()` fits as is).
 
-A layer without any signal gets no score. Event types it does not know are ignored, so layers that add events
-(`guardrail`, `knowledge_retrieval`, cache events) are picked up as soon as they emit them. The mapping from stop reasons to
+A layer without any signal gets no score. Event types it does not know are ignored. The mapping from stop reasons to
 layers is a heuristic on `run_end.reason`; a failed run whose reason matches no model-side pattern is attributed to the harness.
 
 ## Replay

@@ -71,7 +71,7 @@ export { ruleRouter, type RouteCondition, type RouteRule, type RuleRouterOptions
 export { routedModel, withRouter, type RoutedModelOptions } from './router.ts';
 export { otlpSink, type OtlpOptions } from './observe/otlp.ts';
 export { otlpMetricsSink, type OtlpMetricsOptions } from './observe/metrics.ts';
-export { EVENT_LAYERS } from './observe/layers.ts';
+export { EVENT_LAYERS, EVENT_ATTR_KEYS, EVENT_CONTENT_KEYS, eventAttributes } from './observe/layers.ts';
 export { INTEGRATIONS, addIntegration, type Integration } from './integrations.ts';
 export { retrieve, mergePassages, fitPassages, formatBlock, toPassage, hashId, KNOWLEDGE_NOTE, type RetrievalOutcome, type RetrieveOptions } from './knowledge/core.ts';
 export {
@@ -91,7 +91,6 @@ export { regexGuard, REGEX_PATTERNS, luhn, ibanValid, type RegexGuardOptions, ty
 export { registerGuardrails } from './guardrails/register.ts';
 export { checkGuard, type GuardCheckOptions } from './conformance/guardrails.ts';
 export type { GuardrailsConfig } from './config/load.ts';
-
 export { evaluate, summarize, type EvaluateOptions } from './eval/evaluate.ts';
 export { expectedEvaluator, judgeEvaluator, layerSignals, scoreLayers, JUDGE_SCHEMA, type ExpectedOptions, type JudgeOptions, type JudgeRunner, type SignalEvent } from './eval/evaluators.ts';
 export { replayRuns, withOverrides, inputSegments, type ReplayOptions, type ReplayOverrides, type ReplayRow } from './eval/replay.ts';

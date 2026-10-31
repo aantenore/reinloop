@@ -17,14 +17,13 @@ Message content, tool arguments and results are recorded only with `captureConte
 
 ## Events of other layers
 
-Event types without a span of their own are recorded as span events on the run span, carrying `agent.layer` and a few scalar fields (`name`, `callId`, `allowed`, `action`, `stage`, `guard`, `tool`, `source`, `count`, `results`, `hit`; `reason` only with `captureContent`). The type-to-layer table is `EVENT_LAYERS`:
+Event types without a span of their own are recorded as span events on the run span, carrying `agent.layer` and the scalar fields `EVENT_ATTR_KEYS` (`name`, `callId`, `allowed`, `action`, `stage`, `guard`, `source`, `passages`, `durationMs`). Free text (`reason`, `query`, `error`: `EVENT_CONTENT_KEYS`) is added only with `captureContent`. The type-to-layer table is `EVENT_LAYERS`:
 
-| Event type | Layer |
-|---|---|
-| `tool_decision` | `identity` |
-| `guardrail` | `guardrail` |
-| `knowledge_retrieval` | `knowledge` |
-| `cache_hit` | `cache` |
+| Event type | Layer | Fields |
+|---|---|---|
+| `tool_decision` | `identity` | `callId`, `name`, `allowed`, `reason` (incl. `pdp: ...`) |
+| `guardrail` | `guardrail` | `guard`, `stage`, `action`, `reason` |
+| `knowledge_retrieval` | `knowledge` | `source`, `query`, `passages` (count), `ids`, `durationMs`, `error` |
 
 Add entries with the `eventLayers` option (`otelSink`, `otlpSink`, or the config entry). Event types in neither table are ignored.
 
@@ -39,7 +38,7 @@ Add entries with the `eventLayers` option (`otelSink`, `otlpSink`, or the config
 | `agent.tool.calls` | counter | `tool`, `error`, `layer` |
 | `agent.cost.usd` | counter | `gen_ai.operation.name`, `gen_ai.request.model` |
 | `agent.policy.decisions` | counter | `allowed` |
-| `agent.guardrail.actions` | counter | `action` (from `guardrail` events) |
+| `agent.guardrail.actions` | counter | `action`, `stage`, `guard` (from `guardrail` events) |
 | `agent.runs` | counter | `status` |
 
 Temporality is cumulative: Prometheus exporters and most backends take it as is, totals only grow, and a lost export is healed by the next one. Metrics are sent every `intervalMs` (default 10 s, only when something changed), on every `run_end`, and on close.

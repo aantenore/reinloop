@@ -95,6 +95,13 @@ reinloop add qdrant     # writes the MCP config; then give an agent  tools: [qdr
 Skills in the open `SKILL.md` format are loaded on demand with `skills: [name]`. See [docs/integrations.md](docs/integrations.md),
 which also explains what is deliberately not built and why (for example, why semantic caching stays out of the agent loop).
 
+## Layer integrations
+
+reinloop is the harness layer of a larger agent platform. The other layers plug in through small contracts with
+reference adapters and conformance checks: model providers and routing, knowledge sources, HTTP and OpenAPI tools,
+identity (OIDC, token exchange, AuthZEN/OPA), guardrails (Presidio, LLM Guard), OpenTelemetry traces and metrics, and
+evaluation with replay. See [docs/layers/README.md](docs/layers/README.md).
+
 ## Use them anywhere
 
 ```bash

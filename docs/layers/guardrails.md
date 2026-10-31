@@ -1,4 +1,4 @@
-# Guardrails (L6)
+# Guardrails
 
 There is no open standard for agent guardrails, so this layer is an adapter SDK: a small `Guard` interface, a middleware that applies guards at the four checkpoints of a run, reference adapters, and a conformance check for your own.
 
@@ -19,15 +19,16 @@ interface GuardVerdict { action: 'allow' | 'block' | 'redact'; text?: string; re
 
 | Stage | Hook | Text | `block` | `redact` |
 | --- | --- | --- | --- | --- |
-| `input` | `beforeModel` | each new user text part | run ends `stopped`, reason `guardrail:<guard>:input` | the model sees the redacted text |
+| `input` | `beforeInput` (`beforeModel` for older history) | each new user text part | run ends `stopped`, reason `guardrail:<guard>:input`, before the model call | the redacted text is what is persisted, returned and sent to the model |
 | `output` | `afterModel` | each assistant text part | run ends `stopped`, reason `guardrail:<guard>:output`, empty output | the redacted text is what is persisted and returned |
 | `tool_args` | `beforeTool` | JSON of the arguments | call denied (`{ deny }`) | the call runs with the redacted arguments (must stay valid JSON, else denied) |
 | `tool_result` | `afterTool` | result content | result replaced by an error for the model | redacted content |
 
 - Guards run in order; the first `block` wins; redactions chain (each guard sees the previous one's output). A guard only runs on the stages it declares.
-- Input is checked once per message. The stored history keeps the original text; the redaction is applied again to every request, so the model never sees the original.
+- Input is checked once per message, before it is recorded: the run log keeps only the redacted text (the model never saw the original). A blocked input is recorded as received, as the audit trail of what was refused. History recorded before the guard was added is checked in `beforeModel`, in the request only.
 - `onError`: a guard that throws (service down, malformed verdict) counts as `block` by default (fail closed); `onError: 'allow'` fails open. Either way a `guardrail` event records it.
-- Blocked responses are not recorded, so their token usage is not counted. Text already streamed through `text_delta` is not redacted: read `model_response` or the run result when output must be clean.
+- A blocked response is recorded as a discarded `model_response` with an empty message: its usage and cost count (and toward budgets), its content is never persisted.
+- Streaming: with an `output` guard the middleware sets `Middleware.holdsText`, so the loop emits the checked text as one `text_delta` after `afterModel` instead of the raw tokens. Nothing unchecked reaches `text_delta` consumers; the cost is latency (no incremental text). Without an output guard, text streams as usual.
 - Stopping tools (`ToolOutput.stop`) carry `data` that is not scanned.
 
 ### Ending a run from middleware

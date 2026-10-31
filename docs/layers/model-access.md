@@ -1,4 +1,4 @@
-# L7 Cache and router
+# Model access: cache and router
 
 Two concerns, each available in process or as a gateway.
 

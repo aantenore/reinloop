@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+Layer integrations: each platform layer has a contract in `src/types.ts`, reference adapters, a conformance check and a
+page under [docs/layers](docs/layers/README.md).
+
+- Contracts: `Layer` (`infra`, `llm`, `harness`, `knowledge`, `tool`, `identity`, `guardrail`, `cache`, `telemetry`,
+  `eval`, `interface`), run `identity` / `credentials` in `RunOptions` and `ToolContext`, `Tool.layer`.
+- llm: `checkProvider` and `checkOpenAIEndpoint` conformance checks.
+- Model access: in-process routing with `ModelRouter`, `ruleRouter`, `routedModel` / `withRouter`; config `routers` and
+  agent `router`. Routed responses are priced with the selected model (`ModelResponse.pricing`, `responseCost`).
+- Knowledge: `KnowledgeSource` adapters (`mcpKnowledge`, `httpKnowledge`, `wikiKnowledge`), the `knowledge` middleware
+  (cache-friendly retrieval appended to the user message) and the `search_knowledge` tool (layer `knowledge`); config
+  `knowledge`; persisted `knowledge_retrieval` event; `checkKnowledgeSource`.
+- Tools: declarative `httpTools` and OpenAPI 3 import (`openapi`, `httpTool`, `openapiTools`), with delegated `auth`.
+- Identity: OIDC/JWT verification (`oidcVerifier`), token exchange and client credentials (`oidcCredentials`), policy
+  rules with `when` (roles, scopes, kind), external PDP (`policy.pdp`: AuthZEN, OPA) via `authorizeCall`, OIDC bearer
+  auth for `reinloop serve`, per-call delegated `auth` for MCP servers; config `identity`; conformance checks.
+- Guardrails: `Guard` adapters (`presidioGuard`, `llmGuardGuard`, `httpGuard`, `regexGuard`) behind the `guard`
+  middleware at four stages; config `guardrails`; persisted `guardrail` event; `RunStop` ends a run `stopped` from
+  middleware; `checkGuard`. Redacted input is what gets persisted (new `Middleware.beforeInput`); with an output guard,
+  streamed text is held until it is checked (`Middleware.holdsText`); blocked answers count toward usage and cost.
+- Telemetry: `agent.layer` on spans, events of other layers as span events (`EVENT_LAYERS`), `layer` on `tool_start` /
+  `tool_result`, OTLP metrics (`otlpMetricsSink`, `"metrics": true`).
+- Evaluation: `evaluate` over JSONL datasets, `expectedEvaluator`, `judgeEvaluator`, per-layer health scores from the
+  event log (`layerSignals`, `scoreLayers`), `replayRuns`; CLI `reinloop eval` and `reinloop replay`; `checkEvaluator`.
+- Middleware: `HookContext.emit` records events; registry factories get `FactoryContext.onClose`.
 - Docs: `docs/architecture.md` gains a public API reference covering every export of `src/index.ts` and a complete event
   table (`tool_args_invalid`, `hosted_tool_*`); `docs/configuration.md` lists the remaining schema keys (`readOnly`,
   `limitParam`, `web.maxUses`, `web.topic`, agent `budget` / `params` / `asTool` fields, `$schema`).

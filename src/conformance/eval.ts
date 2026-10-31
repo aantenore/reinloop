@@ -46,7 +46,7 @@ function defaultFixtures(): EvalFixture[] {
   ];
 }
 
-/** Checks an Evaluator against the L9 contract: named, never throws on failed runs, scores are valid EvalScores (value 0..1). Empty = conformant. */
+/** Checks an Evaluator against the evaluation contract: named, never throws on failed runs, scores are valid EvalScores (value 0..1). Empty = conformant. */
 export async function checkEvaluator(evaluator: Evaluator, opts: EvaluatorCheckOptions = {}): Promise<string[]> {
   const failures: string[] = [];
   if (typeof evaluator?.name !== 'string' || !evaluator.name) failures.push('evaluator.name must be a non-empty string');

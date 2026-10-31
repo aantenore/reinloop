@@ -1,4 +1,4 @@
-# Tools (L4)
+# Tools
 
 Four ways to give an agent a tool, from most standard to most flexible.
 
