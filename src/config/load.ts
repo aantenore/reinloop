@@ -78,7 +78,17 @@ export interface HarnessConfig {
   web?: WebConfig;
   /** Settings of the public-signal tools (`search_discussions`, `search_projects`, `search_questions`, `search_papers`). */
   signals?: SignalsConfig;
+  /** Guards behind the `guard` middleware (agents opt in with `middleware: [guard]`). */
+  guardrails?: GuardrailsConfig;
   profiles?: Record<string, Partial<HarnessConfig>>;
+}
+
+export interface GuardrailsConfig {
+  /** Guards in run order: `{ type: "presidio" | "llm-guard" | "http" | "regex" | <registered>, ...options }`. */
+  guards: ComponentConfig[];
+  /** A guard that throws: `block` (default) or `allow`. */
+  onError?: 'block' | 'allow';
+  name?: string;
 }
 
 export interface HostedToolConfig {

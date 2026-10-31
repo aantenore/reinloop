@@ -16,7 +16,8 @@ import { type RetryOptions, withRetry } from './providers/resilient.ts';
 import { fileStore } from './store/file.ts';
 import { memoryStore } from './store/memory.ts';
 import { workspaceTools } from './tools/node.ts';
-import type { CompactionStrategy, Middleware, Provider, RunStore, Sink, Tool } from './types.ts';
+import { registerGuardrails } from './guardrails/register.ts';
+import type { CompactionStrategy, Guard, Middleware, Provider, RunStore, Sink, Tool } from './types.ts';
 
 export interface FactoryContext {
   baseDir: string;
@@ -40,6 +41,8 @@ export class Registry {
   readonly middleware = new Map<string, Factory<Middleware>>();
   readonly tools = new Map<string, Factory<Tool>>();
   readonly caches = new Map<string, Factory<CacheStore>>();
+  /** Guard types for the `guard` middleware (presidio, llm-guard, http, regex, and your own). */
+  readonly guards = new Map<string, Factory<Guard>>();
   /** Multi-agent patterns (chain, parallel, router, evaluator, orchestrator, and your own). */
   readonly patterns = new Map<string, PatternDefinition>(Object.entries(BUILTIN_PATTERNS));
 
@@ -130,5 +133,6 @@ export function createRegistry(): Registry {
       return tool;
     });
   }
+  registerGuardrails(r);
   return r;
 }

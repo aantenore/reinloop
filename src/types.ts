@@ -245,7 +245,14 @@ export interface OutputSpec { schema: JsonSchema; retries?: number }
 
 // ---- Middleware ------------------------------------------------------------
 
-export interface HookContext { runId: string; agent: string; state: Readonly<RunState>; identity?: Identity }
+export interface HookContext {
+  runId: string;
+  agent: string;
+  state: Readonly<RunState>;
+  identity?: Identity;
+  /** Emits a run event (persisted unless ephemeral), e.g. audit events from guardrails. */
+  emit?: <T extends EventType>(type: T, data: EventMap[T]) => void;
+}
 
 export interface Middleware {
   name?: string;
@@ -301,6 +308,8 @@ export interface EventMap {
   hosted_tool_start: { callId: string; name: string; input: unknown };
   hosted_tool_result: { callId: string; name: string; summary: string; isError: boolean; sources?: Array<{ url: string; title?: string }> };
   compaction: { strategy: string; beforeTokens: number; afterTokens: number; messages: Message[]; usage?: Usage; costUsd?: number };
+  /** Verdict of one guard on one text (audit data; never carries the inspected text). */
+  guardrail: { guard: string; stage: GuardStage; action: 'allow' | 'block' | 'redact'; reason?: string };
   run_end: { status: RunStatus; reason?: string; output?: string; usage: Usage; turns: number; costUsd: number; failures?: MemberFailure[] };
 }
 

@@ -216,6 +216,12 @@ export const CONFIG_SCHEMA: JsonSchema = {
         userAgent: str,
       },
     },
+    guardrails: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['guards'],
+      properties: { guards: { type: 'array', items: component }, onError: { enum: ['block', 'allow'] }, name: str },
+    },
     profiles: { type: 'object', additionalProperties: { type: 'object' } },
   },
 };

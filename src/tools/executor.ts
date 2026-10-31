@@ -51,7 +51,7 @@ async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>
 
 async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   const started = performance.now();
-  const hookCtx: HookContext = { runId: env.runId, agent: env.agent.name, state: env.state, identity: env.identity };
+  const hookCtx: HookContext = { runId: env.runId, agent: env.agent.name, state: env.state, identity: env.identity, emit: env.emit };
   let call = original;
   const finish = async (content: string, isError: boolean, artifact?: string, stop?: Pick<ToolOutput, 'data'>) => {
     let result: ToolResultPart = { type: 'tool_result', callId: original.id, name: original.name, content, isError };
