@@ -1,6 +1,6 @@
 {
   "name": "reinloop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Agents as files, harness included: zero-dependency agent runtime with budgets, permissions, durable resume, multi-agent patterns, MCP and OpenTelemetry.",
   "license": "MIT",
   "author": "Antonio Antenore",

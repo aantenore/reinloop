@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-31
+
+Layer hooks, configurable limits and security hardening. Highlights: run identity and credentials, policy `when` and
+the PDP hook, `guardMiddleware` / `knowledgeMiddleware` hooks, MCP per-call auth, layer-tagged telemetry and OTLP
+metrics, configurable limits and timeouts. Layer implementations live in agent-layers. Breaking: a `0` timeout is
+replaced by `"unbounded"`, and removed config keys fail with a pointer to agent-layers.
+
 Layer hooks. Layer implementations were first added here (OIDC verifier and token exchange, OPA and AuthZEN
 authorizers, Presidio / LLM Guard / HTTP / regex guards, MCP / HTTP / wiki knowledge sources, declarative HTTP tools and
 OpenAPI import, a rule router, evaluation with replay and the `eval` / `replay` CLI, conformance kits for them) and then
