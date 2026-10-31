@@ -80,7 +80,7 @@ async function drive(
   const specs: ToolSpec[] = agent.tools.map((t) => ({ name: t.name, description: t.description, schema: t.schema, ...(t.hosted && { hosted: t.hosted }) }));
   let offered: ToolSpec[] | undefined; // tool specs after the hosted-tool policy check, done once per run
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
-  const hookCtx: HookContext = { runId, agent: agent.name, state };
+  const hookCtx: HookContext = { runId, agent: agent.name, state, identity: opts.identity };
 
   const storeFailure = new AbortController();
   signal = AbortSignal.any([signal, storeFailure.signal]);
@@ -94,7 +94,10 @@ async function drive(
   let emptyStreak = 0;
   let raisedMaxTokens: number | undefined;
 
-  emit('run_start', { agent: agent.name, resumed: prior.length > 0, parentRunId: opts.parentRunId });
+  emit('run_start', {
+    agent: agent.name, resumed: prior.length > 0, parentRunId: opts.parentRunId,
+    ...(opts.identity && { subject: opts.identity.subject, identityKind: opts.identity.kind }),
+  });
   for (const message of normalizeInput(input)) emit('message', { message, source: 'input' });
 
   try {
@@ -108,7 +111,9 @@ async function drive(
           emit: emit as (type: RunEvent['type'], data: any) => void,
           forward: (ev) => channel.push(ev),
           approve: opts.approve,
-          inherit: { store: opts.store, approve: opts.approve, sinks: opts.sinks },
+          identity: opts.identity,
+          credentials: opts.credentials,
+          inherit: { store: opts.store, approve: opts.approve, sinks: opts.sinks, identity: opts.identity, credentials: opts.credentials },
         });
         await flush();
         continue;

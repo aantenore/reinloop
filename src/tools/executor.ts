@@ -1,6 +1,6 @@
 import { decide } from '../policy.ts';
 import { validate } from '../schema.ts';
-import type { Agent, Approver, HookContext, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
+import type { Agent, Approver, CredentialProvider, HookContext, Identity, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
 import { errorMessage, truncate } from '../util.ts';
 import { normalizeOutput } from './define.ts';
 
@@ -13,7 +13,9 @@ export interface ExecEnv {
   emit: (type: RunEvent['type'], data: any) => void;
   forward: (ev: RunEvent) => void;
   approve?: Approver;
-  inherit: Pick<RunOptions, 'store' | 'approve' | 'sinks'>;
+  inherit: Pick<RunOptions, 'store' | 'approve' | 'sinks' | 'identity' | 'credentials'>;
+  identity?: Identity;
+  credentials?: CredentialProvider;
 }
 
 export const DEFAULT_CONCURRENCY = 8;
@@ -49,7 +51,7 @@ async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>
 
 async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   const started = performance.now();
-  const hookCtx: HookContext = { runId: env.runId, agent: env.agent.name, state: env.state };
+  const hookCtx: HookContext = { runId: env.runId, agent: env.agent.name, state: env.state, identity: env.identity };
   let call = original;
   const finish = async (content: string, isError: boolean, artifact?: string, stop?: Pick<ToolOutput, 'data'>) => {
     let result: ToolResultPart = { type: 'tool_result', callId: original.id, name: original.name, content, isError };
@@ -104,7 +106,7 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   try {
     const out = normalizeOutput(
       await raceAbort(
-        Promise.resolve(tool.run(call.args, { runId: env.runId, agent: env.agent.name, signal, state: env.state, emit: env.forward, inherit: env.inherit })),
+        Promise.resolve(tool.run(call.args, { runId: env.runId, agent: env.agent.name, signal, state: env.state, emit: env.forward, inherit: env.inherit, identity: env.identity, credentials: env.credentials })),
         signal,
       ),
     );

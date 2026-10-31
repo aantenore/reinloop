@@ -179,7 +179,10 @@ export interface ToolContext {
   state: Readonly<RunState>;
   emit: (ev: RunEvent) => void;
   /** Options a tool may forward when it starts nested runs (subagents). */
-  inherit: Pick<RunOptions, 'store' | 'approve' | 'sinks'>;
+  inherit: Pick<RunOptions, 'store' | 'approve' | 'sinks' | 'identity' | 'credentials'>;
+  /** Who the run acts as. Never log or persist `identity.token`. */
+  identity?: Identity;
+  credentials?: CredentialProvider;
 }
 
 export interface Tool<A = any> {
@@ -192,6 +195,7 @@ export interface Tool<A = any> {
   exclusive?: boolean;
   /** Set for provider-hosted tools (see `hostedTool`): offered to the provider, never run by the loop. */
   hosted?: HostedToolDef;
+  layer?: Layer;
   run(args: A, ctx: ToolContext): Promise<string | ToolOutput> | string | ToolOutput;
 }
 
@@ -241,7 +245,7 @@ export interface OutputSpec { schema: JsonSchema; retries?: number }
 
 // ---- Middleware ------------------------------------------------------------
 
-export interface HookContext { runId: string; agent: string; state: Readonly<RunState> }
+export interface HookContext { runId: string; agent: string; state: Readonly<RunState>; identity?: Identity }
 
 export interface Middleware {
   name?: string;
@@ -280,7 +284,7 @@ export interface Agent {
 export type RunStatus = 'running' | 'completed' | 'stopped' | 'failed' | 'interrupted';
 
 export interface EventMap {
-  run_start: { agent: string; resumed: boolean; parentRunId?: string };
+  run_start: { agent: string; resumed: boolean; parentRunId?: string; subject?: string; identityKind?: 'user' | 'agent' };
   message: { message: Message; source: 'input' | 'harness' };
   turn_start: { turn: number };
   model_request: { turn: number; model: string; messages: number; estTokens: number };
@@ -374,4 +378,50 @@ export interface RunOptions {
   approve?: Approver;
   sinks?: Sink[];
   parentRunId?: string;
+  identity?: Identity;
+  credentials?: CredentialProvider;
 }
+
+// ---- Layers and adapter contracts ------------------------------------------
+
+/** Platform layer a span, tool or adapter belongs to. */
+export type Layer = 'infra' | 'llm' | 'harness' | 'knowledge' | 'tool' | 'identity' | 'guardrail' | 'cache' | 'telemetry' | 'eval';
+
+/** Who a run acts as: a person (on behalf of) or the agent's own identity. */
+export interface Identity {
+  subject: string;
+  kind: 'user' | 'agent';
+  roles?: string[];
+  scopes?: string[];
+  claims?: Record<string, unknown>;
+  /** Raw bearer token. Never written to events, logs or traces. */
+  token?: string;
+}
+export interface IdentityVerifier { verify(token: string, opts?: { signal?: AbortSignal }): Promise<Identity> }
+/** Access token for a downstream audience (token exchange on behalf of the user, or client credentials). */
+export interface CredentialProvider { token(audience: string, opts?: { scopes?: string[]; signal?: AbortSignal }): Promise<string> }
+/** Shaped after the OpenID AuthZEN evaluation request. */
+export interface AccessRequest {
+  subject: { type: 'user' | 'agent'; id: string; properties?: Record<string, unknown> };
+  action: { name: string };
+  resource: { type: string; id: string; properties?: Record<string, unknown> };
+  context?: Record<string, unknown>;
+}
+export interface AccessDecision { decision: boolean; reason?: string }
+export interface Authorizer { evaluate(req: AccessRequest, opts?: { signal?: AbortSignal }): Promise<AccessDecision> }
+
+export interface Passage { id: string; text: string; source?: string; score?: number; metadata?: Record<string, unknown> }
+export interface KnowledgeQuery { query: string; k?: number; filter?: Record<string, unknown>; identity?: Identity; signal?: AbortSignal }
+export interface KnowledgeSource { name: string; search(q: KnowledgeQuery): Promise<Passage[]> }
+
+export type GuardStage = 'input' | 'output' | 'tool_args' | 'tool_result';
+export interface GuardInput { stage: GuardStage; text: string; agent: string; runId: string; tool?: string; subject?: string }
+export interface GuardVerdict { action: 'allow' | 'block' | 'redact'; text?: string; reason?: string }
+export interface Guard { name: string; stages?: GuardStage[]; check(input: GuardInput, opts?: { signal?: AbortSignal }): Promise<GuardVerdict> }
+
+/** Picks the model for a request (in-process routing; gateways such as LiteLLM route behind an OpenAI-compatible URL instead). */
+export interface ModelRouter { select(req: ModelRequest, ctx: HookContext): string | Promise<string> }
+
+export interface EvalCase { id: string; input: string; expected?: unknown; tags?: string[]; layer?: Layer }
+export interface EvalScore { metric: string; value: number; layer?: Layer; reason?: string }
+export interface Evaluator { name: string; score(c: EvalCase, run: { runId: string; output?: string; status: RunStatus; events: RunEvent[] }): Promise<EvalScore[]> }

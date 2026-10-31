@@ -71,7 +71,7 @@ export function streamTeam(team: Team, input?: string | Message[], opts: RunOpti
         signal.throwIfAborted();
         const previous = o.session && !isTeam(member) ? sessions.get(o.session) : undefined;
         const handle = streamMember(member, memberInput, {
-          store, sinks: opts.sinks, approve: opts.approve, signal, parentRunId: runId, runId: previous?.runId,
+          store, sinks: opts.sinks, approve: opts.approve, identity: opts.identity, credentials: opts.credentials, signal, parentRunId: runId, runId: previous?.runId,
         });
         for await (const ev of handle) channel.push(ev);
         const result = await handle.result;
