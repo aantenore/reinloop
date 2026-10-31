@@ -16,7 +16,8 @@ import { DEFAULT_SKILL_DIRS, discoverSkills, selectSkills, skillTool, type Skill
 import { type Member, streamMember } from '../team.ts';
 import { memoryArtifacts, readArtifactTool } from '../tools/define.ts';
 import { hostedTool } from '../tools/hosted.ts';
-import type { Agent, ArtifactStore, Message, ModelRef, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
+import type { CredentialFactory } from '../identity/credentials.ts';
+import type { Agent, ArtifactStore, CredentialProvider, IdentityVerifier, Message, ModelRef, PolicyConfig, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
 import { globToRegExp } from '../util.ts';
 import { type AgentConfig, ConfigError, type Env, type HarnessConfig, checkConfig, interpolate, loadConfig } from './load.ts';
 
@@ -32,6 +33,8 @@ export interface Runtime {
   readonly registry: Registry;
   readonly store: RunStore;
   readonly sinks: Sink[];
+  /** From `identity`: the inbound verifier (used by `serve`) and the per-run credentials factory. */
+  readonly identity: { verifier?: IdentityVerifier; credentials?: CredentialFactory; required: boolean };
   /** Names of every runnable member (agents and teams). */
   names(): string[];
   /** Builds (once) and returns an agent or team by name; defaults to `defaultAgent` or the only one defined. */
@@ -96,6 +99,28 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     ? await make('cache', registry.caches, config.responseCache, '$.responseCache')
     : undefined;
 
+  const idCfg = config.identity ?? {};
+  const verifier = idCfg.verifier ? await make('identity verifier', registry.verifiers, { type: 'oidc', ...idCfg.verifier }, '$.identity.verifier') : undefined;
+  const credentials = idCfg.credentials ? await make('credentials', registry.credentials, { type: 'oidc', ...idCfg.credentials }, '$.identity.credentials') : undefined;
+  // MCP connection setup happens outside any run: it uses the agent's own identity (client_credentials).
+  let connectCredentials: CredentialProvider | undefined;
+  const mcpConnectCredentials = async () => {
+    if (!idCfg.credentials) return undefined;
+    connectCredentials ??= (await make('credentials', registry.credentials, { type: 'oidc', ...idCfg.credentials, mode: 'self' } as { type: string }, '$.identity.credentials'))();
+    return connectCredentials;
+  };
+  const authorizers = new Map<string, Promise<PolicyConfig['pdp']>>();
+  const withPdp = async (policy: PolicyConfig | undefined, path: string): Promise<PolicyConfig | undefined> => {
+    const spec = policy?.pdp;
+    if (!spec || spec.authorizer || !spec.type) return policy;
+    const key = JSON.stringify(spec);
+    if (!authorizers.has(key)) {
+      const { onError, includeArgs, ...options } = spec;
+      authorizers.set(key, make('authorizer', registry.authorizers, options as { type: string }, `${path}.pdp`).then((authorizer) => ({ type: spec.type, onError, includeArgs, authorizer })));
+    }
+    return { ...policy, pdp: await authorizers.get(key)! };
+  };
+
   const providers = new Map<string, Promise<Provider>>();
   const provider = (name: string) => {
     if (!providers.has(name)) providers.set(name, make('provider', registry.providers, config.providers![name]!, `$.providers.${name}`));
@@ -125,7 +150,10 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
 
   const mcp = new Map<string, Promise<{ client: McpClient; tools: Tool[] }>>();
   const serverTools = (server: string) => {
-    if (!mcp.has(server)) mcp.set(server, mcpTools(server, interpolate(config.mcpServers![server]!, env, `$.mcpServers.${server}`)));
+    if (!mcp.has(server)) {
+      const cfg = interpolate(config.mcpServers![server]!, env, `$.mcpServers.${server}`);
+      mcp.set(server, (async () => mcpTools(server, cfg, { credentials: cfg.auth ? await mcpConnectCredentials() : undefined }))());
+    }
     return mcp.get(server)!.then((s) => s.tools);
   };
   const serverFor = (pattern: string): string | undefined => {
@@ -215,7 +243,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       model,
       instructions,
       tools,
-      policy: mergePolicies(config.policy, a.policy),
+      policy: await withPdp(mergePolicies(config.policy, a.policy), a.policy?.pdp ? `$.agents.${name}.policy` : '$.policy'),
       budget: a.budget,
       compaction: a.compaction && {
         strategy: await make('compaction strategy', registry.compaction, a.compaction, `$.agents.${name}.compaction`),
@@ -279,7 +307,13 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     return build(chosen);
   };
 
-  const withDefaults = (o: RunOptions = {}): RunOptions => ({ ...o, store: o.store ?? store, sinks: o.sinks ?? sinks });
+  // Credentials are bound to the run identity here, so RunOptions keeps a plain CredentialProvider.
+  const withDefaults = (o: RunOptions = {}): RunOptions => ({
+    ...o,
+    store: o.store ?? store,
+    sinks: o.sinks ?? sinks,
+    ...(!o.credentials && credentials && { credentials: credentials(o.identity) }),
+  });
   const start = async (name: string | undefined, input?: string | Message[], o?: RunOptions) => streamMember(await pick(name), input, withDefaults(o));
 
   return {
@@ -287,6 +321,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     registry,
     store,
     sinks,
+    identity: { verifier, credentials, required: idCfg.required ?? true },
     names,
     agent: pick,
     stream: start,

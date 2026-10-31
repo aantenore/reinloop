@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readSse } from '../providers/http.ts';
 import { defineTool, safeToolName } from '../tools/define.ts';
-import type { JsonSchema, Risk, Tool } from '../types.ts';
+import type { CredentialProvider, JsonSchema, Risk, Tool } from '../types.ts';
 import { globToRegExp } from '../util.ts';
 import { VERSION } from '../version.ts';
 
@@ -26,10 +26,29 @@ export interface McpServerConfig {
   include?: string[];
   exclude?: string[];
   timeoutMs?: number;
+  /**
+   * Streamable HTTP only: send `Authorization: Bearer` with a token for `audience` from the run's credentials on every
+   * tool call (overrides a static `headers.authorization`). Connection setup uses the `connect` credentials, if any.
+   */
+  auth?: { audience: string; scopes?: string[] };
+}
+
+export interface McpConnectOptions {
+  /** Credentials for requests outside a run (initialize, tools/list, session close) when `auth` is set. */
+  credentials?: CredentialProvider;
+}
+
+type HeaderMap = Record<string, string>;
+
+/** Static headers plus credentials; a credential header replaces a static one of any letter case. */
+function withAuth(base: HeaderMap | undefined, auth: HeaderMap | undefined): HeaderMap {
+  if (!auth) return { ...base };
+  const names = new Set(Object.keys(auth).map((k) => k.toLowerCase()));
+  return { ...Object.fromEntries(Object.entries(base ?? {}).filter(([k]) => !names.has(k.toLowerCase()))), ...auth };
 }
 
 interface Transport {
-  request(method: string, params: unknown, signal?: AbortSignal): Promise<any>;
+  request(method: string, params: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<any>;
   notify(method: string, params?: unknown): Promise<void>;
   close(): Promise<void>;
 }
@@ -120,17 +139,20 @@ class HttpTransport implements Transport {
   private protocol?: string;
   private cfg: McpServerConfig;
   private timeoutMs: number;
+  private connectHeaders: () => Promise<HeaderMap | undefined>;
 
-  constructor(cfg: McpServerConfig, timeoutMs: number) {
+  constructor(cfg: McpServerConfig, timeoutMs: number, connectHeaders: () => Promise<HeaderMap | undefined> = async () => undefined) {
     this.cfg = cfg;
     this.timeoutMs = timeoutMs;
+    this.connectHeaders = connectHeaders;
   }
 
   setProtocol(version: string): void {
     this.protocol = version;
   }
 
-  private async post(body: unknown, signal?: AbortSignal): Promise<Response> {
+  private async post(body: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<Response> {
+    const auth = headers ?? (await this.connectHeaders());
     const res = await fetch(this.cfg.url!, {
       method: 'POST',
       headers: {
@@ -138,7 +160,7 @@ class HttpTransport implements Transport {
         accept: 'application/json, text/event-stream',
         ...(this.session && { 'mcp-session-id': this.session }),
         ...(this.protocol && { 'mcp-protocol-version': this.protocol }),
-        ...this.cfg.headers,
+        ...withAuth(this.cfg.headers, auth),
       },
       body: JSON.stringify(body),
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
@@ -148,9 +170,9 @@ class HttpTransport implements Transport {
     return res;
   }
 
-  async request(method: string, params: unknown, signal?: AbortSignal): Promise<any> {
+  async request(method: string, params: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<any> {
     const id = this.nextId++;
-    const res = await this.post({ jsonrpc: '2.0', id, method, params }, signal);
+    const res = await this.post({ jsonrpc: '2.0', id, method, params }, signal, headers);
     const pick = (msg: any) => {
       if (msg.error) throw rpcError(msg.error);
       return msg.result;
@@ -172,7 +194,8 @@ class HttpTransport implements Transport {
 
   async close(): Promise<void> {
     if (!this.session) return;
-    await fetch(this.cfg.url!, { method: 'DELETE', headers: { 'mcp-session-id': this.session, ...this.cfg.headers } }).catch(() => {});
+    const auth = await this.connectHeaders().catch(() => undefined);
+    await fetch(this.cfg.url!, { method: 'DELETE', headers: { 'mcp-session-id': this.session, ...withAuth(this.cfg.headers, auth) } }).catch(() => {});
   }
 }
 
@@ -194,10 +217,12 @@ export class McpClient {
     this.serverInfo = serverInfo;
   }
 
-  static async connect(name: string, cfg: McpServerConfig): Promise<McpClient> {
+  static async connect(name: string, cfg: McpServerConfig, opts: McpConnectOptions = {}): Promise<McpClient> {
     const timeoutMs = cfg.timeoutMs ?? 60_000;
     if (!cfg.command === !cfg.url) throw new Error(`MCP server "${name}": set exactly one of "command" or "url"`);
-    const transport = cfg.command ? new StdioTransport(cfg, timeoutMs) : new HttpTransport(cfg, timeoutMs);
+    if (cfg.auth && !cfg.url) throw new Error(`MCP server "${name}": "auth" needs the streamable HTTP transport ("url")`);
+    const connectHeaders = async () => (cfg.auth && opts.credentials ? bearer(await opts.credentials.token(cfg.auth.audience, { scopes: cfg.auth.scopes })) : undefined);
+    const transport = cfg.command ? new StdioTransport(cfg, timeoutMs) : new HttpTransport(cfg, timeoutMs, connectHeaders);
     try {
       const init = await transport.request('initialize', {
         protocolVersion: MCP_PROTOCOL_VERSION,
@@ -224,8 +249,9 @@ export class McpClient {
     return tools;
   }
 
-  async callTool(name: string, args: unknown, signal?: AbortSignal): Promise<{ content: string; isError: boolean }> {
-    const res = await this.transport.request('tools/call', { name, arguments: args ?? {} }, signal);
+  /** `headers` (HTTP transport) replace the connection credentials for this call, e.g. a per-run Authorization. */
+  async callTool(name: string, args: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<{ content: string; isError: boolean }> {
+    const res = await this.transport.request('tools/call', { name, arguments: args ?? {} }, signal, headers);
     const text = (res?.content ?? [])
       .map((c: any) => (c.type === 'text' ? c.text : c.type === 'resource' ? (c.resource?.text ?? `[resource ${c.resource?.uri}]`) : `[${c.type}]`))
       .join('\n');
@@ -238,6 +264,8 @@ export class McpClient {
   }
 }
 
+const bearer = (token: string): HeaderMap => ({ authorization: `Bearer ${token}` });
+
 function riskOf(info: McpToolInfo, forced?: Risk, readOnly?: RegExp[]): Risk {
   if (forced) return forced;
   if (readOnly?.some((r) => r.test(info.name))) return 'read';
@@ -247,8 +275,15 @@ function riskOf(info: McpToolInfo, forced?: Risk, readOnly?: RegExp[]): Risk {
 }
 
 /** Connects to an MCP server and adapts its tools, namespaced as `<prefix>__<tool>` unless `prefix` is `false` or `''`. */
-export async function mcpTools(name: string, cfg: McpServerConfig): Promise<{ client: McpClient; tools: Tool[] }> {
-  const client = await McpClient.connect(name, cfg);
+export async function mcpTools(name: string, cfg: McpServerConfig, opts: McpConnectOptions = {}): Promise<{ client: McpClient; tools: Tool[] }> {
+  const client = await McpClient.connect(name, cfg, opts);
+  const { auth } = cfg;
+  // With `auth`, each call carries a token for the server's audience from the run's credentials; no credentials, no call.
+  const callHeaders = async (credentials: CredentialProvider | undefined, signal: AbortSignal): Promise<HeaderMap | undefined> => {
+    if (!auth) return undefined;
+    if (!credentials) throw new Error(`MCP server "${name}" requires credentials for audience "${auth.audience}", but the run has none`);
+    return bearer(await credentials.token(auth.audience, { scopes: auth.scopes, signal }));
+  };
   const include = cfg.include?.map(globToRegExp);
   const exclude = cfg.exclude?.map(globToRegExp);
   const readOnly = cfg.readOnly?.map(globToRegExp);
@@ -261,7 +296,7 @@ export async function mcpTools(name: string, cfg: McpServerConfig): Promise<{ cl
         description: info.description ?? info.name,
         schema: info.inputSchema ?? { type: 'object', properties: {} },
         risk: riskOf(info, cfg.risk, readOnly),
-        run: (args, ctx) => client.callTool(info.name, args, ctx.signal),
+        run: async (args, ctx) => client.callTool(info.name, args, ctx.signal, await callHeaders(ctx.credentials, ctx.signal)),
       }),
     );
   return { client, tools };

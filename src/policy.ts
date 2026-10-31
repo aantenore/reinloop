@@ -1,4 +1,4 @@
-import type { Budget, Decision, PolicyConfig, Risk, RunState, Tool, ToolCallPart } from './types.ts';
+import type { Budget, Decision, Identity, PolicyCondition, PolicyConfig, Risk, RunState, Tool, ToolCallPart } from './types.ts';
 import { globToRegExp } from './util.ts';
 
 /** Applied when an agent sets no budget, so a confused model cannot loop forever. */
@@ -8,12 +8,22 @@ export const DEFAULT_RISK_DECISIONS: Record<Risk, Decision> = { read: 'allow', w
 
 export interface PolicyVerdict { decision: Decision; reason: string }
 
+/** True when the identity satisfies every set field of `when` (roles and scopes: any-of; kind: equal). */
+export function matchesCondition(when: PolicyCondition | undefined, identity: Identity | undefined): boolean {
+  if (!when) return true;
+  if (!identity) return false;
+  if (when.kind !== undefined && when.kind !== identity.kind) return false;
+  if (when.roles && !when.roles.some((r) => identity.roles?.includes(r))) return false;
+  if (when.scopes && !when.scopes.some((s) => identity.scopes?.includes(s))) return false;
+  return true;
+}
+
 /** First matching rule wins; then per-risk defaults; then the policy default. */
-export function decide(policy: PolicyConfig | undefined, call: ToolCallPart, tool: Tool): PolicyVerdict {
+export function decide(policy: PolicyConfig | undefined, call: ToolCallPart, tool: Tool, identity?: Identity): PolicyVerdict {
   for (const rule of policy?.rules ?? []) {
     const nameOk = rule.match === undefined || globToRegExp(rule.match).test(call.name);
     const riskOk = rule.risk === undefined || rule.risk === tool.risk;
-    if (nameOk && riskOk) {
+    if (nameOk && riskOk && matchesCondition(rule.when, identity)) {
       return { decision: rule.action, reason: rule.reason ?? `rule ${rule.match ?? '*'}${rule.risk ? `/${rule.risk}` : ''}` };
     }
   }
@@ -33,6 +43,7 @@ export function mergePolicies(base: PolicyConfig | undefined, override: PolicyCo
     default: override.default ?? base.default,
     risk: { ...base.risk, ...override.risk },
     rules: [...(override.rules ?? []), ...(base.rules ?? [])],
+    ...((override.pdp ?? base.pdp) && { pdp: override.pdp ?? base.pdp }),
   };
 }
 

@@ -1,4 +1,4 @@
-import { decide } from '../policy.ts';
+import { authorizeCall } from '../identity/authorize.ts';
 import { validate } from '../schema.ts';
 import type { Agent, Approver, CredentialProvider, HookContext, Identity, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
 import { errorMessage, truncate } from '../util.ts';
@@ -87,7 +87,7 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
     }
   }
 
-  const verdict = decide(env.agent.policy, call, tool);
+  const verdict = await authorizeCall(env.agent.policy, call, tool, { agent: env.agent.name, identity: env.identity, signal: env.signal });
   let allowed = verdict.decision === 'allow';
   let reason = verdict.reason;
   if (verdict.decision === 'ask') {

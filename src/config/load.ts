@@ -66,6 +66,8 @@ export interface HarnessConfig {
     artifacts?: 'none' | 'memory' | 'file';
   };
   policy?: PolicyConfig;
+  /** Inbound token verification and outbound credentials (`type` defaults to `oidc`). */
+  identity?: IdentityConfig;
   store?: ComponentConfig;
   sinks?: ComponentConfig[];
   agents?: Record<string, AgentConfig>;
@@ -79,6 +81,13 @@ export interface HarnessConfig {
   /** Settings of the public-signal tools (`search_discussions`, `search_projects`, `search_questions`, `search_papers`). */
   signals?: SignalsConfig;
   profiles?: Record<string, Partial<HarnessConfig>>;
+}
+
+export interface IdentityConfig {
+  verifier?: { type?: string; [option: string]: unknown };
+  credentials?: { type?: string; [option: string]: unknown };
+  /** `reinloop serve`: reject /v1 requests without a valid bearer token (default true when a verifier is set). */
+  required?: boolean;
 }
 
 export interface HostedToolConfig {

@@ -32,11 +32,23 @@ const policy = {
         type: 'object',
         additionalProperties: false,
         required: ['action'],
-        properties: { match: str, risk, action: decision, reason: str },
+        properties: {
+          match: str, risk, action: decision, reason: str,
+          when: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { roles: { type: 'array', items: str }, scopes: { type: 'array', items: str }, kind: { enum: ['user', 'agent'] } },
+          },
+        },
       },
     },
+    /** External PDP: `type` names a registered authorizer; other options go to its factory. */
+    pdp: { type: 'object', required: ['type'], properties: { type: str, url: str, onError: decision, includeArgs: { type: 'boolean' }, headers: strMap } },
   },
 };
+
+/** Identity component: `type` defaults to `oidc`. */
+const identityComponent = { type: 'object', properties: { type: str } };
 
 const budget = {
   type: 'object',
@@ -128,6 +140,7 @@ export const CONFIG_SCHEMA: JsonSchema = {
         properties: {
           command: str, args: { type: 'array', items: str }, env: strMap, cwd: str, url: str, headers: strMap,
           prefix: { anyOf: [str, { const: false }] }, risk, include: { type: 'array', items: str }, exclude: { type: 'array', items: str }, readOnly: { type: 'array', items: str }, timeoutMs: int,
+          auth: { type: 'object', additionalProperties: false, required: ['audience'], properties: { audience: str, scopes: { type: 'array', items: str } } },
         },
       },
     },
@@ -144,6 +157,11 @@ export const CONFIG_SCHEMA: JsonSchema = {
       },
     },
     policy,
+    identity: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { verifier: identityComponent, credentials: identityComponent, required: { type: 'boolean' } },
+    },
     store: component,
     sinks: { type: 'array', items: component },
     agents: {
