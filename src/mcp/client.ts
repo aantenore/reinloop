@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readSse } from '../providers/http.ts';
 import { defineTool, safeToolName } from '../tools/define.ts';
+import { redact, secretForms, staticSecrets } from '../tools/redact.ts';
 import type { CredentialProvider, JsonSchema, Risk, Tool } from '../types.ts';
 import { globToRegExp } from '../util.ts';
 import { VERSION } from '../version.ts';
@@ -296,7 +297,14 @@ export async function mcpTools(name: string, cfg: McpServerConfig, opts: McpConn
         description: info.description ?? info.name,
         schema: info.inputSchema ?? { type: 'object', properties: {} },
         risk: riskOf(info, cfg.risk, readOnly),
-        run: async (args, ctx) => client.callTool(info.name, args, ctx.signal, await callHeaders(ctx.credentials, ctx.signal)),
+        run: async (args, ctx) => {
+          const headers = await callHeaders(ctx.credentials, ctx.signal);
+          const res = await client.callTool(info.name, args, ctx.signal, headers);
+          // A server may echo request headers back; the per-call token and the static header secrets must not reach the
+          // model. Structured content is used as text only when there is none, and is covered by the same masking.
+          const token = headers?.authorization?.replace(/^Bearer /, '');
+          return { ...res, content: redact(res.content, secretForms([...(token ? [token] : []), ...staticSecrets(cfg.headers)])) };
+        },
       }),
     );
   return { client, tools };

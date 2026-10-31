@@ -1,6 +1,7 @@
 import { interpolate } from '../config/load.ts';
 import type { JsonSchema, Risk, Tool, ToolOutput } from '../types.ts';
 import { defineTool } from './define.ts';
+import { redact, secretForms, staticSecrets } from './redact.ts';
 
 type Env = Record<string, string | undefined>;
 
@@ -51,6 +52,21 @@ function plain(value: unknown): string {
   return typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value);
 }
 
+/** Fixed part of a URL template: its origin and the path up to the first placeholder. Placeholders may not reach the host. */
+function templateGuard(url: string): { origin: string; prefix: string } {
+  const at = url.indexOf('{');
+  const head = at < 0 ? url : url.slice(0, at);
+  const hostError = new Error('placeholders are allowed in the path and query only, not in the scheme or host');
+  let parsed: URL;
+  try {
+    parsed = new URL(head);
+  } catch {
+    throw hostError;
+  }
+  if (at >= 0 && /^https?:\/\/[^/?#]*$/i.test(head)) throw hostError;
+  return { origin: parsed.origin, prefix: parsed.pathname };
+}
+
 /** Declarative HTTP tool: one request per call, built from the arguments. Non-2xx answers become tool errors. */
 export function httpTool(opts: HttpToolOptions): Tool {
   const method = opts.method.toUpperCase() as HttpMethod;
@@ -61,6 +77,12 @@ export function httpTool(opts: HttpToolOptions): Tool {
   const env = opts.env ?? process.env;
   const url = interpolate(opts.url, env, `httpTool ${opts.name}.url`);
   const staticHeaders = interpolate(opts.headers ?? {}, env, `httpTool ${opts.name}.headers`);
+  let guard: { origin: string; prefix: string };
+  try {
+    guard = templateGuard(url);
+  } catch (err) {
+    throw new Error(`httpTool "${opts.name}": ${errorMessage(err)}`);
+  }
   const pathArgs = [...url.matchAll(PLACEHOLDER)].map((m) => m[1]!);
   const queryArgs = opts.query ?? [];
   const headerArgs = opts.headerArgs ?? [];
@@ -80,13 +102,19 @@ export function httpTool(opts: HttpToolOptions): Tool {
       for (const h of headerArgs) if (args[h] !== undefined && args[h] !== null) headers.set(h, plain(args[h]));
 
       const missing: string[] = [];
+      const dotted: string[] = [];
       const target = new URL(
         url.replace(PLACEHOLDER, (_, key: string) => {
           if (args[key] === undefined || args[key] === null) missing.push(key);
-          return encodeURIComponent(plain(args[key] ?? ''));
+          const value = plain(args[key] ?? '');
+          // encodeURIComponent keeps dots, and "." / ".." would climb the path once the URL is normalized.
+          if (/^\.+$/.test(value)) dotted.push(key);
+          return encodeURIComponent(value);
         }),
       );
       if (missing.length) return error(`Missing path parameter(s): ${missing.join(', ')}`);
+      if (dotted.length) return error(`Invalid path parameter(s): ${dotted.join(', ')} (a value made only of dots is not allowed); the request was not sent`);
+      if (target.origin !== guard.origin || !target.pathname.startsWith(guard.prefix)) return error('The arguments change where the request goes; the request was not sent');
       for (const key of queryArgs) {
         const value = args[key];
         if (value === undefined || value === null) continue;
@@ -103,6 +131,7 @@ export function httpTool(opts: HttpToolOptions): Tool {
       }
       if (!headers.has('accept')) headers.set('accept', 'application/json, text/plain;q=0.9, */*;q=0.5');
 
+      const secrets = [...staticSecrets(staticHeaders), ...headerArgs.flatMap((h) => (args[h] !== undefined && args[h] !== null ? [plain(args[h])] : []))];
       let token: string | undefined;
       if (opts.auth) {
         if (!ctx.credentials) return error(`${opts.name} needs credentials for audience "${opts.auth.audience}" and this run has none; the request was not sent`);
@@ -112,6 +141,7 @@ export function httpTool(opts: HttpToolOptions): Tool {
           return error(`Could not get a token for audience "${opts.auth.audience}": ${errorMessage(err)}; the request was not sent`);
         }
         headers.set('authorization', `Bearer ${token}`);
+        secrets.push(token);
       }
 
       const res = await fetch(target, { ...init, signal: ctx.signal });
@@ -120,8 +150,8 @@ export function httpTool(opts: HttpToolOptions): Tool {
         return `HTTP ${res.status}: ${(await res.arrayBuffer()).byteLength} bytes of ${type.split(';')[0]} (not shown)`;
       }
       let text = await res.text();
-      // A server may echo request headers back; the token must not reach the model.
-      if (token) text = text.split(token).join('[redacted]');
+      // A server may echo request headers back; no configured secret may reach the model.
+      text = redact(text, secretForms(secrets));
       if (!res.ok) return error(`HTTP ${res.status} ${res.statusText}`.trim() + (text ? `: ${truncate(text, 500)}` : ''));
       if (/json/i.test(type) && text) {
         try {

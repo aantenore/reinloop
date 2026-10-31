@@ -24,6 +24,7 @@ before(async () => {
       if (url.pathname === '/png') return void res.writeHead(200, { 'content-type': 'image/png' }).end(Buffer.alloc(10));
       if (url.pathname === '/empty') return void res.writeHead(204).end();
       if (url.pathname === '/big') return void res.writeHead(200, { 'content-type': 'text/plain' }).end('x'.repeat(500));
+      if (url.pathname === '/headers') return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ headers: req.headers }));
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ path: url.pathname, query: url.search, auth: req.headers.authorization ?? null, body }));
     });
   });
@@ -109,6 +110,41 @@ describe('httpTool', () => {
     assert.equal(out.isError, false);
     assert.doesNotMatch(out.content, /tok-secret-123/); // the server echoed it; it is redacted
     assert.match(out.content, /Bearer \[redacted\]/);
+  });
+
+  it('rejects path params made only of dots and sends nothing', async () => {
+    seen = [];
+    const tool = httpTool({ name: 'item', description: 'd', method: 'GET', url: `${base}/api/items/{id}`, schema: schema({}) });
+    for (const bad of ['..', '.', '...']) {
+      const out = await run(tool, { id: bad });
+      assert.equal(out.isError, true);
+      assert.match(out.content, /Invalid path parameter\(s\): id/);
+    }
+    assert.equal(seen.length, 0);
+    assert.equal((await run(tool, { id: '%2e%2e' })).isError, false);
+    assert.equal(seen[0]!.url, '/api/items/%252e%252e');
+    assert.equal((await run(tool, { id: 'a/../b' })).isError, false);
+    assert.equal(seen[1]!.url, '/api/items/a%2F..%2Fb');
+    assert.equal((await run(tool, { id: 'v1.2' })).isError, false);
+    assert.equal(seen[2]!.url, '/api/items/v1.2');
+  });
+
+  it('does not allow placeholders in the scheme or host', () => {
+    for (const url of ['http://{host}/x', 'http://h{x}/x', 'http://h:{port}/x']) {
+      assert.throws(() => httpTool({ name: 'x', description: 'd', method: 'GET', url, schema: schema({}) }), /not in the scheme or host/);
+    }
+  });
+
+  it('redacts every static header value, header argument value and the token from the response', async () => {
+    const credentials: CredentialProvider = { async token() { return 'tok-xyz-789'; } };
+    const tool = httpTool({
+      name: 'hdrs', description: 'd', method: 'GET', url: `${base}/headers`, headerArgs: ['x-trace'], auth: { audience: 'a' },
+      headers: { 'x-api-key': '${env:KEY}', 'x-team': 'blue-team' }, env: { KEY: 'key-from-env-123' }, schema: schema({}),
+    });
+    const out = await run(tool, { 'x-trace': 'trace-secret-9' }, ctx({ credentials }));
+    for (const secret of ['key-from-env-123', 'blue-team', 'trace-secret-9', 'tok-xyz-789']) assert.equal(out.content.includes(secret), false, secret);
+    const echoed = JSON.parse(out.content).headers;
+    assert.deepEqual([echoed['x-api-key'], echoed['x-trace'], echoed.authorization], ['[redacted]', '[redacted]', 'Bearer [redacted]']);
   });
 
   it('never calls out without credentials, or when the token request fails', async () => {
@@ -219,6 +255,27 @@ describe('openapiTools', () => {
     assert.deepEqual(JSON.parse(seen[1]!.body), { name: 'rex', note: null });
     await run(tools.replaceAll, { body: [{ name: 'a' }] }, ctx({ credentials }));
     assert.deepEqual(JSON.parse(seen[2]!.body), [{ name: 'a' }]);
+  });
+});
+
+describe('openapiTools: path safety and servers', () => {
+  it('rejects dot-only path params and a server URL without a host', async () => {
+    seen = [];
+    const tools = Object.fromEntries(openapiTools(spec(), { baseUrl: `${base}/v1` }).map((t) => [t.name, t]));
+    const out = await run(tools.getPet, { petId: '..' });
+    assert.equal(out.isError, true);
+    assert.match(out.content, /Invalid path parameter/);
+    assert.equal(seen.length, 0);
+    assert.throws(() => openapiTools(spec({ servers: [{ url: '{proto}://{host}', variables: { proto: { default: 'http' }, host: { default: '' } } }] })), /absolute "baseUrl"/);
+  });
+
+  it('redacts static header values and the token from responses', async () => {
+    const credentials: CredentialProvider = { async token() { return 'tok-xyz-789'; } };
+    const doc = spec({ paths: { '/headers': { get: { operationId: 'hdrs' } } } });
+    const [tool] = openapiTools(doc, { baseUrl: base, headers: { 'x-api-key': 'key-from-env-123' }, auth: { audience: 'a' } });
+    const out = await run(tool, {}, ctx({ credentials }));
+    assert.equal(out.content.includes('key-from-env-123') || out.content.includes('tok-xyz-789'), false);
+    assert.equal(JSON.parse(out.content).headers['x-api-key'], '[redacted]');
   });
 });
 

@@ -552,13 +552,35 @@ describe('mcp auth and config wiring', () => {
       const callAuth = auths.find((a) => a.method === 'tools/call')!;
       assert.equal(callAuth.authorization, 'Bearer obo-tools-api-SECRET');
       const result = sink.events.find((e) => e.type === 'tool_result') as RunEvent<'tool_result'>;
-      assert.match(result.data.content, /saved by Bearer obo/); // the mock echoes it; real servers do not
+      assert.match(result.data.content, /saved by Bearer \[redacted\]/); // the mock echoes it; real servers should not, and the token is masked anyway
+      assert.doesNotMatch(result.data.content, /obo-tools-api-SECRET/);
       const anon = await run(makeAgent([{ toolCalls: [{ name: 'api__save', args: {} }] }, { text: 'done' }], { tools, policy: { risk: { write: 'allow' } } }), 'go');
       assert.match(JSON.stringify(anon.messages), /requires credentials for audience \\"tools-api\\"/);
     } finally {
       await client.close();
     }
     await assert.rejects(mcpTools('x', { command: 'true', auth: { audience: 'a' } }), /needs the streamable HTTP transport/);
+  });
+
+  it('masks the per-call token and static header secrets in text and in structured content', async () => {
+    const echo = await listen((req, body, res) => {
+      const msg = JSON.parse(body || '{}');
+      if (msg.id === undefined) return void res.writeHead(202).end();
+      const result =
+        msg.method === 'initialize' ? { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'mock' } }
+        : msg.method === 'tools/list' ? { tools: [{ name: 'dump', inputSchema: { type: 'object' } }] }
+        : { content: [], structuredContent: { authorization: req.headers.authorization, apiKey: req.headers['x-api-key'] } };
+      sendJson(res, { jsonrpc: '2.0', id: msg.id, result });
+    });
+    const { client, tools } = await mcpTools('api', { url: echo.url, headers: { 'x-api-key': 'key-from-env-123' }, auth: { audience: 'a' } });
+    try {
+      const out: any = await tools[0]!.run({}, { signal: new AbortController().signal, credentials: { token: async () => 'tok-xyz-789' } } as any);
+      for (const secret of ['tok-xyz-789', 'key-from-env-123']) assert.equal(out.content.includes(secret), false, secret);
+      assert.deepEqual(JSON.parse(out.content), { authorization: 'Bearer [redacted]', apiKey: '[redacted]' });
+    } finally {
+      await client.close();
+      await echo.close();
+    }
   });
 
   it('builds the PDP from config through the registry and binds credentials per run', async () => {

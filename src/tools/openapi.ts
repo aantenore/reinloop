@@ -78,7 +78,7 @@ export function openapiTools(spec: OpenApiDocument, opts: OpenApiOptions = {}): 
     throw new Error('not an OpenAPI 3 document (missing "openapi: 3.x"; Swagger 2 is not supported)');
   }
   const base = (opts.baseUrl ?? serverUrl(spec))?.replace(/\/+$/, '');
-  if (!base || !/^https?:\/\//i.test(base)) throw new Error('OpenAPI: set an absolute "baseUrl" (the spec has no usable absolute "servers" entry)');
+  if (!base || !/^https?:\/\/[^/?#\s]+/i.test(base)) throw new Error('OpenAPI: set an absolute "baseUrl" (the spec has no usable absolute "servers" entry)');
   const include = opts.include?.map(globToRegExp);
   const tools: Tool[] = [];
   const used = new Set<string>();
