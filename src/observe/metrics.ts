@@ -1,5 +1,4 @@
 import type { RunEvent, Sink } from '../types.ts';
-import { errorMessage } from '../util.ts';
 import { type Attrs, nowNanos, toAttributes } from './otlp-json.ts';
 
 export interface OtlpMetricsOptions {
@@ -32,6 +31,7 @@ interface Instrument {
 const instrument = (name: string, unit: string, description: string, bounds?: number[]): Instrument => ({ name, unit, description, bounds, series: new Map() });
 
 /**
+ * Self-contained (contract types, `otlp-json.ts` and Node built-ins only), so it can be reused outside the reinloop sinks.
  * Aggregates run events into OTLP metrics (OTLP/HTTP JSON to `/v1/metrics`, no SDK, cumulative temporality):
  * `gen_ai.client.token.usage` and `gen_ai.client.operation.duration` (histograms, GenAI semantic conventions) and the
  * counters `agent.tool.calls`, `agent.cost.usd`, `agent.policy.decisions`, `agent.guardrail.actions`, `agent.runs`.
@@ -103,7 +103,7 @@ export function otlpMetricsSink(opts: OtlpMetricsOptions): Sink {
       if (!res.ok) throw new Error(`HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`);
     } catch (err) {
       dirty = true;
-      if (!warned) process.emitWarning(`OTLP metrics export to ${url} failed: ${errorMessage(err)}`);
+      if (!warned) process.emitWarning(`OTLP metrics export to ${url} failed: ${err instanceof Error ? err.message : String(err)}`);
       warned = true;
     }
   };
