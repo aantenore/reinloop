@@ -85,6 +85,7 @@ async function drive(
   const storeFailure = new AbortController();
   signal = AbortSignal.any([signal, storeFailure.signal]);
   const { emit, flush } = createEmitter(state, store, opts, channel, (err) => storeFailure.abort(err));
+  hookCtx.emit = emit;
 
   let end: { status: RunStatus; reason?: string } | undefined;
   let data: unknown;

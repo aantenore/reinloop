@@ -69,6 +69,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
   const baseDir = opts.baseDir ?? process.cwd();
   const toolCfg = interpolate(config.tools ?? {}, env, '$.tools');
   const singletons = new Map<string, unknown>();
+  const closers: Array<() => Promise<void> | void> = [];
   const ctx: FactoryContext = {
     baseDir,
     env,
@@ -79,6 +80,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       if (!singletons.has(key)) singletons.set(key, create());
       return singletons.get(key) as T;
     },
+    onClose: (fn) => void closers.push(fn),
   };
 
   const make = async <T>(kind: string, map: Map<string, (o: any, c: FactoryContext) => T | Promise<T>>, spec: { type: string }, path: string): Promise<T> => {
@@ -297,6 +299,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       const servers = await Promise.allSettled(mcp.values());
       await Promise.allSettled(servers.map((s) => (s.status === 'fulfilled' ? s.value.client.close() : undefined)));
       await Promise.allSettled(sinks.map((s) => s.close?.()));
+      await Promise.allSettled(closers.map((fn) => fn()));
     },
   };
 }

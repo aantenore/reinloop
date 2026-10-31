@@ -6,6 +6,8 @@ import { resolveModel } from './presets.ts';
 import { signalTools } from './tools/signals.ts';
 import { webTools } from './tools/web.ts';
 import { BUILTIN_PATTERNS, type PatternDefinition } from './patterns.ts';
+import { knowledgeFromConfig } from './knowledge/config.ts';
+import { knowledgeMiddleware, knowledgeTool } from './knowledge/middleware.ts';
 import { fileNotes, memoryNotes, memoryTools } from './tools/memory.ts';
 import { otlpSink } from './observe/otlp.ts';
 import { consoleSink, jsonlSink } from './observe/sinks.ts';
@@ -27,6 +29,8 @@ export interface FactoryContext {
   config: HarnessConfig;
   /** Per-runtime singleton, e.g. a store shared by several tools. */
   once<T>(key: string, create: () => T): T;
+  /** Registers cleanup that runs when the runtime closes (e.g. an MCP connection a component opened). */
+  onClose(fn: () => Promise<void> | void): void;
 }
 
 export type Factory<T> = (options: Record<string, any>, ctx: FactoryContext) => T | Promise<T>;
@@ -130,5 +134,11 @@ export function createRegistry(): Registry {
       return tool;
     });
   }
+  const knowledge = (ctx: FactoryContext) => ctx.once('knowledge', () => knowledgeFromConfig(ctx));
+  r.middleware.set('knowledge', (_o, ctx) => knowledgeMiddleware(knowledge(ctx)));
+  r.tools.set('search_knowledge', (_o, ctx) => {
+    const { sources, k, maxChars, timeoutMs } = knowledge(ctx);
+    return knowledgeTool(sources, { k, maxChars, timeoutMs });
+  });
   return r;
 }

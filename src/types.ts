@@ -245,7 +245,14 @@ export interface OutputSpec { schema: JsonSchema; retries?: number }
 
 // ---- Middleware ------------------------------------------------------------
 
-export interface HookContext { runId: string; agent: string; state: Readonly<RunState>; identity?: Identity }
+export interface HookContext {
+  runId: string;
+  agent: string;
+  state: Readonly<RunState>;
+  identity?: Identity;
+  /** Records an event in the run (persisted unless the type is ephemeral). Set by the loop. */
+  emit?: <T extends EventType>(type: T, data: EventMap[T]) => void;
+}
 
 export interface Middleware {
   name?: string;
@@ -300,6 +307,12 @@ export interface EventMap {
   /** A provider-hosted tool ran inside the model turn (derived from the response; not persisted). */
   hosted_tool_start: { callId: string; name: string; input: unknown };
   hosted_tool_result: { callId: string; name: string; summary: string; isError: boolean; sources?: Array<{ url: string; title?: string }> };
+  /**
+   * Context retrieved from a knowledge source before a model call. Persisted: it records which passages (ids only, no
+   * text) informed the answer, for audit and replay. Emitted by the `knowledge` middleware; the `search_knowledge` tool
+   * is already recorded by its own tool events.
+   */
+  knowledge_retrieval: { source: string; query: string; passages: number; ids: string[]; durationMs: number; error?: string };
   compaction: { strategy: string; beforeTokens: number; afterTokens: number; messages: Message[]; usage?: Usage; costUsd?: number };
   run_end: { status: RunStatus; reason?: string; output?: string; usage: Usage; turns: number; costUsd: number; failures?: MemberFailure[] };
 }
