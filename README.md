@@ -102,6 +102,9 @@ reference adapters and conformance checks: model providers and routing, knowledg
 identity (OIDC, token exchange, AuthZEN/OPA), guardrails (Presidio, LLM Guard), OpenTelemetry traces and metrics, and
 evaluation with replay. See [docs/layers/README.md](docs/layers/README.md).
 
+reinloop keeps its own copy of the agent-layers `AccessQuestion` shape (no dependency on the SDK);
+`test/access-question-schema.test.ts` checks it against the SDK schema copied in `test/fixtures/agent-layers`.
+
 ## Use them anywhere
 
 ```bash

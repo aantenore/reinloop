@@ -122,6 +122,9 @@ AccessQuestion (the [agent-layers](https://github.com/aantenore/agent-layers) SD
 identity, or a caller that is not a `user` or `agent` with an id, is sent as the anonymous caller
 `{ "kind": "anonymous", "id": "anonymous", "roles": [], "scopes": [] }`, never as the agent.
 
+reinloop keeps its own copy of the agent-layers `AccessQuestion` shape (no dependency on the SDK);
+`test/access-question-schema.test.ts` checks it against the SDK schema copied in `test/fixtures/agent-layers`.
+
 | Adapter | Request | Answer |
 |---|---|---|
 | `opa` | `POST {url}/v1/data/{path}` with `{ input: AccessQuestion }` (`input.caller.roles`, `input.target.risk`) | `{ result: boolean }` or `{ result: { allow, reason? } }`; an undefined result is an error |

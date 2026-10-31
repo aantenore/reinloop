@@ -1,0 +1,350 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/aantenore/agent-layers/spec/schemas/common.json",
+  "title": "Common",
+  "description": "Definitions shared by the schemas of the SDK language 1.0: the extension bag, attributes, vocabularies, messages and callers.",
+  "$defs": {
+    "Ext": {
+      "type": "object",
+      "description": "Extension bag: data a shape carries beyond its fixed fields. Keys are <namespace>.<name>; the namespace is the producing adapter, sdk is the core. Values are JSON. The core copies it and never reads adapter keys.",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9-]*\\.[A-Za-z0-9_.-]+$" }
+    },
+    "Attrs": {
+      "type": "object",
+      "description": "Plain attributes a filter or a policy may read (owner, tags, language).",
+      "additionalProperties": {
+        "anyOf": [
+          { "type": "string" },
+          { "type": "number" },
+          { "type": "boolean" },
+          { "type": "array", "items": { "type": "string" } }
+        ]
+      }
+    },
+    "AttrFilter": {
+      "type": "object",
+      "description": "Equality filter on attrs; a list means any of.",
+      "additionalProperties": {
+        "anyOf": [
+          { "type": "string" },
+          { "type": "number" },
+          { "type": "boolean" },
+          {
+            "type": "array",
+            "items": { "anyOf": [{ "type": "string" }, { "type": "number" }, { "type": "boolean" }] }
+          }
+        ]
+      }
+    },
+    "Time": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}",
+      "description": "ISO 8601 date and time."
+    },
+    "Layer": {
+      "enum": [
+        "infra",
+        "llm",
+        "cache",
+        "harness",
+        "knowledge",
+        "tool",
+        "identity",
+        "guardrail",
+        "interface",
+        "telemetry",
+        "eval"
+      ],
+      "description": "The eleven layer ids. Closed."
+    },
+    "Role": {
+      "enum": ["system", "user", "assistant", "tool"],
+      "description": "Message role. Closed; config may add aliases, resolved by adapters at the edge."
+    },
+    "TextPart": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string" },
+        "ext": { "$ref": "common.json#/$defs/Ext" }
+      },
+      "additionalProperties": false,
+      "description": "Plain text. The only part the core reads."
+    },
+    "MediaPart": {
+      "type": "object",
+      "required": ["type", "mediaType"],
+      "properties": {
+        "type": { "const": "media" },
+        "mediaType": { "type": "string" },
+        "url": { "type": "string" },
+        "data": { "type": "string", "description": "Base64." },
+        "ext": { "$ref": "common.json#/$defs/Ext" }
+      },
+      "additionalProperties": false,
+      "description": "Image, audio or file. Passed through by the core."
+    },
+    "CallPart": {
+      "type": "object",
+      "required": ["type", "id", "tool", "args"],
+      "properties": {
+        "type": { "const": "call" },
+        "id": { "type": "string" },
+        "tool": { "type": "string" },
+        "args": { "type": "object" },
+        "invalid": { "type": "string", "description": "Raw text when the model's arguments did not parse." },
+        "ext": { "$ref": "common.json#/$defs/Ext" }
+      },
+      "additionalProperties": false,
+      "description": "A tool call the model made."
+    },
+    "ResultPart": {
+      "type": "object",
+      "required": ["type", "callId", "ok", "text"],
+      "properties": {
+        "type": { "const": "result" },
+        "callId": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "text": { "type": "string" },
+        "data": {},
+        "ext": { "$ref": "common.json#/$defs/Ext" }
+      },
+      "additionalProperties": false,
+      "description": "The result answering one call."
+    },
+    "ReasoningPart": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "reasoning" },
+        "text": { "type": "string" },
+        "ext": { "$ref": "common.json#/$defs/Ext" }
+      },
+      "additionalProperties": false,
+      "description": "The model's reasoning, when the backend returns it. Kept in history, never shown as output."
+    },
+    "ExtPart": {
+      "type": "object",
+      "required": ["type"],
+      "properties": { "type": { "type": "string", "pattern": "^[a-z][a-z0-9-]*\\.[A-Za-z0-9_.-]+$" } },
+      "description": "Adapter-defined part, type <namespace>.<name>. Passed through untouched, never read by the core."
+    },
+    "Part": {
+      "description": "One piece of a message: a core part or an adapter-defined one.",
+      "anyOf": [
+        { "$ref": "#/$defs/TextPart" },
+        { "$ref": "#/$defs/MediaPart" },
+        { "$ref": "#/$defs/CallPart" },
+        { "$ref": "#/$defs/ResultPart" },
+        { "$ref": "#/$defs/ReasoningPart" },
+        { "$ref": "#/$defs/ExtPart" }
+      ]
+    },
+    "Message": {
+      "type": "object",
+      "required": ["role", "parts"],
+      "properties": {
+        "role": { "$ref": "#/$defs/Role" },
+        "parts": { "type": "array", "items": { "$ref": "#/$defs/Part" } },
+        "ext": { "$ref": "common.json#/$defs/Ext" }
+      },
+      "additionalProperties": false,
+      "description": "One message. parts is always a list. system: text only; user: text and media; assistant: text, reasoning and calls; tool: results only. Adapter parts may appear in any role.",
+      "allOf": [
+        {
+          "if": { "required": ["role"], "properties": { "role": { "const": "system" } } },
+          "then": {
+            "properties": {
+              "parts": {
+                "items": { "anyOf": [{ "$ref": "#/$defs/TextPart" }, { "$ref": "#/$defs/ExtPart" }] }
+              }
+            }
+          }
+        },
+        {
+          "if": { "required": ["role"], "properties": { "role": { "const": "user" } } },
+          "then": {
+            "properties": {
+              "parts": {
+                "items": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/TextPart" },
+                    { "$ref": "#/$defs/MediaPart" },
+                    { "$ref": "#/$defs/ExtPart" }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "required": ["role"], "properties": { "role": { "const": "assistant" } } },
+          "then": {
+            "properties": {
+              "parts": {
+                "items": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/TextPart" },
+                    { "$ref": "#/$defs/ReasoningPart" },
+                    { "$ref": "#/$defs/CallPart" },
+                    { "$ref": "#/$defs/ExtPart" }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "required": ["role"], "properties": { "role": { "const": "tool" } } },
+          "then": {
+            "properties": {
+              "parts": {
+                "items": { "anyOf": [{ "$ref": "#/$defs/ResultPart" }, { "$ref": "#/$defs/ExtPart" }] }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ToolInfo": {
+      "type": "object",
+      "required": ["name", "params"],
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "params": { "type": "object", "description": "JSON Schema of the arguments object." }
+      },
+      "additionalProperties": false,
+      "description": "What the model sees of a tool."
+    },
+    "ToolMode": {
+      "description": "Whether and which tool the model must call. Default auto.",
+      "anyOf": [
+        { "enum": ["auto", "none", "required"] },
+        {
+          "type": "object",
+          "required": ["tool"],
+          "properties": { "tool": { "type": "string" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ModelSettings": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "temperature": { "type": "number", "minimum": 0 },
+        "maxOutputTokens": { "type": "integer", "minimum": 1 },
+        "stop": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false,
+      "description": "Sampling settings. The same shape is AgentSpec.settings."
+    },
+    "Usage": {
+      "type": "object",
+      "required": ["inputTokens", "outputTokens"],
+      "properties": {
+        "inputTokens": { "type": "integer", "minimum": 0 },
+        "outputTokens": { "type": "integer", "minimum": 0 },
+        "ext": { "$ref": "common.json#/$defs/Ext" }
+      },
+      "additionalProperties": false,
+      "description": "Token counts. Cached or reasoning tokens go in ext."
+    },
+    "Finish": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "description": "Why the model stopped. Core values: end, limit, tools, refused, other; config may add values like one of them."
+    },
+    "Risk": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "description": "Risk class read by policy. Missing means exec. Core values: read, write, exec; config may add values like one of them."
+    },
+    "Action": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "description": "What an access question asks about. Core values: call; config may add values like one of them."
+    },
+    "PolicyEffect": { "enum": ["allow", "ask", "deny"], "description": "What a policy rule decides. Closed." },
+    "GuardStage": {
+      "enum": ["input", "output", "tool_args", "tool_result"],
+      "description": "Where a guard runs. Closed."
+    },
+    "GuardAction": { "enum": ["allow", "block", "redact"], "description": "What a guard decides. Closed." },
+    "GuardLabel": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "description": "What a guard found. Native names go in ext. Core values: pii, secret, injection, toxicity, policy, other; config may add values like one of them."
+    },
+    "RunStatus": {
+      "enum": ["completed", "failed", "stopped", "waiting"],
+      "description": "waiting: the run stopped for a human answer and can be resumed. Closed."
+    },
+    "StopCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+      "description": "Why a run did not complete. Core values: guard_block, denied, aborted, timeout, limit, needs_input, needs_auth, rejected, error; config may add values like one of them."
+    },
+    "StopReason": {
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": { "$ref": "#/$defs/StopCode" },
+        "layer": { "$ref": "#/$defs/Layer" },
+        "by": {
+          "type": "string",
+          "description": "Instance that stopped the run: a guard name, an approval adapter, a remote agent."
+        },
+        "stage": { "$ref": "#/$defs/GuardStage" },
+        "detail": { "type": "string", "description": "Internal text, never parsed." }
+      },
+      "additionalProperties": false,
+      "description": "Structured stop reason. Required on a RunResult whose status is not completed."
+    },
+    "CallerKind": {
+      "enum": ["user", "agent"],
+      "description": "Closed. anonymous exists only in an AccessQuestion."
+    },
+    "ApprovalStatus": { "enum": ["pending", "approved", "denied", "expired"], "description": "Closed." },
+    "PublicCaller": {
+      "type": "object",
+      "required": ["id", "kind", "roles", "scopes"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "$ref": "#/$defs/CallerKind" },
+        "roles": { "type": "array", "items": { "type": "string" } },
+        "scopes": { "type": "array", "items": { "type": "string" } },
+        "name": { "type": "string", "description": "Display name." },
+        "ext": { "$ref": "common.json#/$defs/Ext" }
+      },
+      "additionalProperties": false,
+      "description": "A caller without its credential: what guards, events and access questions see. The credential is never serialised."
+    },
+    "AnonymousCaller": {
+      "type": "object",
+      "required": ["kind", "id", "roles", "scopes"],
+      "properties": {
+        "kind": { "const": "anonymous" },
+        "id": { "const": "anonymous" },
+        "roles": { "type": "array", "maxItems": 0 },
+        "scopes": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false,
+      "description": "The caller of a request without a verified identity. Explicit, never the agent."
+    },
+    "RunInput": {
+      "description": "What a run starts from: a text, or a list of messages.",
+      "anyOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "required": ["messages"],
+          "properties": { "messages": { "type": "array", "items": { "$ref": "#/$defs/Message" } } },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

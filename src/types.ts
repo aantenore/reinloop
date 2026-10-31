@@ -493,7 +493,7 @@ export interface AccessQuestion {
   caller: AccessCaller;
   /** `call` for tool calls. */
   action: string;
-  target: { kind: string; id: string; layer: Layer; risk: Risk | null; agent: string; attrs?: Record<string, unknown> };
+  target: { kind: string; id: string; layer: Layer; risk: Risk; agent: string; attrs?: Record<string, unknown> };
   /** The call's arguments, only with `policy.pdp.includeArgs`. */
   args?: unknown;
 }

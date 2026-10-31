@@ -116,12 +116,12 @@ export function opaAuthorizer(opts: HttpAuthorizerOptions & { path?: string }): 
   };
 }
 
-/** The question for one tool call. A run without identity is the anonymous caller, never the agent. */
+/** The question for one tool call. A run without identity is the anonymous caller, never the agent; a tool without a risk label asks as `exec`. */
 export function accessQuestion(call: ToolCallPart, tool: Tool, agent: string, identity: Identity | undefined, includeArgs = false): AccessQuestion {
   return publicQuestion({
     caller: identity ? { id: identity.subject, kind: identity.kind, roles: identity.roles ?? [], scopes: identity.scopes ?? [] } : anonymous(),
     action: 'call',
-    target: { kind: 'tool', id: tool.name, layer: tool.layer ?? (tool.hosted ? 'llm' : 'tool'), risk: tool.risk ?? null, agent },
+    target: { kind: 'tool', id: tool.name, layer: tool.layer ?? (tool.hosted ? 'llm' : 'tool'), risk: tool.risk ?? 'exec', agent },
     ...(includeArgs && { args: call.args }),
   });
 }
