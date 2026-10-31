@@ -114,10 +114,15 @@ export function judgeEvaluator(opts: JudgeOptions): Evaluator {
 
 /** Value of the harness score when the run completed but its context had to be compacted. */
 const COMPACTED_VALUE = 0.5;
+/** Value of the guardrail score when guards only redacted (the run went on with rewritten text). */
+const REDACTED_VALUE = 0.5;
 
 const LLM_FAILURE = /^(max_tokens|refusal)$|invalid structured output|empty responses in a row|^HTTP \d{3}|network error|stream (ended|error)|mock script exhausted|rate.?limit/i;
 const FEEDBACK_PREFIX = 'Your final answer must be only JSON matching this schema';
-const GUARDRAIL_REASON = /^guardrail\b|guardrail:/i;
+/** Run and decision reasons set by the guard middleware: `guardrail:<guard>:<stage>`, `guardrail: ...`. */
+const GUARDRAIL_REASON = /^guardrail[:\s]/i;
+/** Decision reasons set by an external policy decision point: `pdp: <reason>` (deny) or `pdp error (...)`. */
+const PDP_REASON = /(^|; )pdp( error)?[:\s(]/;
 
 const layerScore = (layer: Layer, value: number, reason: string): EvalScore => ({
   metric: `${layer}_health`,
@@ -126,23 +131,12 @@ const layerScore = (layer: Layer, value: number, reason: string): EvalScore => (
   reason,
 });
 
-/** Count of passages in a `knowledge_retrieval` event, whatever shape the knowledge layer used; undefined when unknown. */
-function passageCount(data: Record<string, unknown>): number | undefined {
-  for (const key of ['passages', 'results', 'hits']) {
-    const v = data[key];
-    if (Array.isArray(v)) return v.length;
-    if (typeof v === 'number') return v;
-  }
-  for (const key of ['count', 'passageCount', 'n']) if (typeof data[key] === 'number') return data[key];
-  return undefined;
-}
-
 /**
  * Derives a health score (1 = healthy) per layer from the event log, so a failing case points at the layer to fix:
- * `tool` (tool errors, malformed arguments), `identity` (denied calls), `guardrail` (blocked/redacted),
- * `harness` (failed run, budget stop, compaction), `llm` (truncation, refusal, invalid structured output, provider errors),
- * `knowledge` (empty retrievals), `cache` (hit rate). A layer without any signal gets no score. Unknown event types are ignored,
- * so layers that add events later (`guardrail`, `knowledge_retrieval`, `cache*`) are picked up when present.
+ * `tool` (tool errors, malformed arguments), `identity` (calls denied by policy or a PDP), `guardrail` (blocks, guard
+ * errors, redactions), `harness` (failed run, budget stop, compaction), `llm` (truncation, refusal, invalid structured
+ * output, provider errors), `knowledge` (failed or empty retrievals, failing knowledge tools), `cache` (provider prompt
+ * cache reads). A layer without any signal gets no score; unknown event types are ignored.
  */
 export function layerSignals(): Evaluator {
   return { name: 'layers', score: async (_c, run) => scoreLayers(run.events as unknown as SignalEvent[], run) };
@@ -151,8 +145,9 @@ export function layerSignals(): Evaluator {
 /**
  * The minimal event shape the layer scoring reads. reinloop `RunEvent`s fit it; so can events mapped from another
  * runtime's traces. Types read: run_end {status, reason}, model_response {stopReason, usage, discarded}, message {source, message},
- * tool_result {callId, name, content, isError}, tool_args_invalid {callId, name, repaired}, tool_decision {callId, name, allowed, reason},
- * compaction, guardrail {action}, knowledge_retrieval {passages | count}, cache / cache_hit / cache_miss {hit}.
+ * tool_result {callId, name, content, isError, layer}, tool_args_invalid {callId, name, repaired},
+ * tool_decision {callId, name, allowed, reason}, compaction, guardrail {guard, stage, action, reason},
+ * knowledge_retrieval {source, passages, error}.
  */
 export interface SignalEvent { type: string; data: Record<string, any>; runId?: string; parentRunId?: string }
 
@@ -164,32 +159,49 @@ export function scoreLayers(events: SignalEvent[], run: { runId?: string; status
   const reason: string = top?.data.reason ?? '';
   const guardrailStop = GUARDRAIL_REASON.test(reason);
 
-  // identity / guardrail: denied calls belong to the guardrail layer when the reason says so.
+  // identity / guardrail: calls denied by the guard middleware belong to the guardrail layer.
   const decisions = of('tool_decision');
   const denied = decisions.filter((e) => e.data.allowed === false);
   const guardDenied = denied.filter((e) => GUARDRAIL_REASON.test(String(e.data.reason ?? '')));
   const idDenied = denied.filter((e) => !guardDenied.includes(e));
   const deniedIds = new Set(denied.map((e) => e.data.callId));
 
-  // tool: errors other than denials, plus malformed arguments (even when repaired).
+  // tool: errors other than denials, plus malformed arguments (even when repaired). Calls of tools tagged with
+  // another layer (e.g. `search_knowledge`, layer `knowledge`) are scored under that layer instead.
   const results = of('tool_result');
-  if (results.length) {
+  const knowledgeResults = results.filter((e) => e.data.layer === 'knowledge');
+  const toolResults = results.filter((e) => e.data.layer !== 'knowledge');
+  const knowledgeIds = new Set(knowledgeResults.map((e) => e.data.callId));
+  const argIssues = of('tool_args_invalid').filter((e) => !knowledgeIds.has(e.data.callId));
+  if (toolResults.length || argIssues.length) {
     const bad = new Map<string, string>();
-    for (const e of results) if (e.data.isError && !deniedIds.has(e.data.callId)) bad.set(e.data.callId, `${e.data.name}: ${truncate(String(e.data.content), 100)}`);
-    for (const e of of('tool_args_invalid')) bad.set(e.data.callId, `${e.data.name}: invalid arguments${e.data.repaired ? ' (repaired)' : ''}`);
-    const callIds = new Set([...results.map((e) => e.data.callId), ...bad.keys()]);
+    for (const e of toolResults) if (e.data.isError && !deniedIds.has(e.data.callId)) bad.set(e.data.callId, `${e.data.name}: ${truncate(String(e.data.content), 100)}`);
+    for (const e of argIssues) bad.set(e.data.callId, `${e.data.name}: invalid arguments${e.data.repaired ? ' (repaired)' : ''}`);
+    const callIds = new Set([...toolResults.map((e) => e.data.callId), ...bad.keys()]);
     scores.push(layerScore('tool', 1 - bad.size / callIds.size, bad.size ? `${bad.size}/${callIds.size} calls failed: ${[...bad.values()].slice(0, 3).join('; ')}` : `${callIds.size} calls ok`));
   }
 
-  if (decisions.length) {
-    scores.push(layerScore('identity', 1 - idDenied.length / (decisions.length - guardDenied.length || 1),
-      idDenied.length ? `${idDenied.length} denied: ${idDenied.slice(0, 3).map((e) => `${e.data.name} (${truncate(String(e.data.reason ?? ''), 80)})`).join('; ')}` : 'no denials'));
+  const idDecisions = decisions.length - guardDenied.length;
+  if (idDecisions > 0) {
+    const pdp = idDenied.filter((e) => PDP_REASON.test(String(e.data.reason ?? ''))).length;
+    scores.push(layerScore('identity', 1 - idDenied.length / idDecisions,
+      idDenied.length
+        ? `${idDenied.length}/${idDecisions} denied${pdp ? ` (${pdp} by the PDP)` : ''}: ${idDenied.slice(0, 3).map((e) => `${e.data.name} (${truncate(String(e.data.reason ?? ''), 80)})`).join('; ')}`
+        : `${idDecisions} calls allowed`));
   }
 
+  // guardrail: `guardrail` events are recorded only for interventions (block, redact) and guard errors, so the score
+  // is categorical: 0 when anything was blocked or a guard failed, REDACTED_VALUE when guards only redacted.
   const guardEvents = of('guardrail');
-  const guardHits = guardEvents.filter((e) => e.data.action !== 'allow').length + guardDenied.length + (guardrailStop && !guardEvents.some((e) => e.data.action === 'block') ? 1 : 0);
-  const guardTotal = guardEvents.length + guardDenied.length + (guardrailStop && !guardEvents.some((e) => e.data.action === 'block') ? 1 : 0);
-  if (guardTotal) scores.push(layerScore('guardrail', 1 - guardHits / guardTotal, guardHits ? `${guardHits}/${guardTotal} checks intervened${guardrailStop ? ` (${reason})` : ''}` : `${guardTotal} checks passed`));
+  if (guardEvents.length || guardDenied.length || guardrailStop) {
+    const blocks = guardEvents.filter((e) => e.data.action === 'block').length + guardDenied.length + (guardrailStop && !guardEvents.some((e) => e.data.action === 'block') ? 1 : 0);
+    const errors = guardEvents.filter((e) => /^guard error/.test(String(e.data.reason ?? ''))).length;
+    const redactions = guardEvents.filter((e) => e.data.action === 'redact').length;
+    const where = [...new Set(guardEvents.filter((e) => e.data.action !== 'allow').map((e) => `${e.data.guard}@${e.data.stage}`))].slice(0, 3).join(', ');
+    const value = blocks || errors ? 0 : redactions ? REDACTED_VALUE : 1;
+    const parts = [blocks && `${blocks} blocked`, errors && `${errors} guard errors`, redactions && `${redactions} redacted`].filter(Boolean).join(', ');
+    scores.push(layerScore('guardrail', value, `${parts || 'no interventions'}${where ? ` (${where})` : ''}${guardrailStop ? `; run ${reason}` : ''}`));
+  }
 
   // llm: truncated or refused answers, structured-output retries, or a run that failed for a model-side reason.
   const responses = of('model_response').filter((e) => !e.data.discarded);
@@ -210,24 +222,22 @@ export function scoreLayers(events: SignalEvent[], run: { runId?: string; status
     scores.push(layerScore('harness', 0, `run ${run.status}${reason ? `: ${truncate(reason, 160)}` : ''}`));
   }
 
-  const retrievals = of('knowledge_retrieval').flatMap((e) => {
-    const n = passageCount(e.data);
-    return n === undefined ? [] : [n];
-  });
-  if (retrievals.length) {
-    const empty = retrievals.filter((n) => n === 0).length;
-    scores.push(layerScore('knowledge', 1 - empty / retrievals.length, empty ? `${empty}/${retrievals.length} retrievals returned no passages` : `${retrievals.length} retrievals returned passages`));
+  // knowledge: retrievals by the knowledge middleware (failed or empty) and calls of knowledge-layer tools (errors).
+  const retrievals = of('knowledge_retrieval').filter((e) => typeof e.data.passages === 'number' || e.data.error);
+  if (retrievals.length || knowledgeResults.length) {
+    const failed = retrievals.filter((e) => e.data.error).length;
+    const empty = retrievals.filter((e) => !e.data.error && e.data.passages === 0).length;
+    const toolErrors = knowledgeResults.filter((e) => e.data.isError && !deniedIds.has(e.data.callId)).length;
+    const total = retrievals.length + knowledgeResults.length;
+    const bad = failed + empty + toolErrors;
+    const parts = [failed && `${failed} retrievals failed`, empty && `${empty} returned no passages`, toolErrors && `${toolErrors} knowledge tool errors`].filter(Boolean).join(', ');
+    scores.push(layerScore('knowledge', 1 - bad / total, bad ? `${parts} (of ${total})` : `${total} retrievals ok`));
   }
 
-  // cache: hit rate, from explicit cache events or provider cache token counts.
-  const cacheEvents = events.filter((e) => /^cache(_|$)/.test(e.type));
-  const tokenSignal = responses.some((e) => (e.data.usage?.cacheReadTokens ?? 0) > 0 || (e.data.usage?.cacheWriteTokens ?? 0) > 0);
-  if (cacheEvents.length || tokenSignal) {
-    const hits = cacheEvents.length
-      ? cacheEvents.filter((e) => e.type === 'cache_hit' || e.data.hit === true).length
-      : responses.filter((e) => (e.data.usage?.cacheReadTokens ?? 0) > 0).length;
-    const total = cacheEvents.length || responses.length;
-    scores.push(layerScore('cache', hits / total, `${hits}/${total} cache hits`));
+  // cache: provider prompt-cache reads per response (the response cache reports no events of its own).
+  if (responses.some((e) => (e.data.usage?.cacheReadTokens ?? 0) > 0 || (e.data.usage?.cacheWriteTokens ?? 0) > 0)) {
+    const hits = responses.filter((e) => (e.data.usage?.cacheReadTokens ?? 0) > 0).length;
+    scores.push(layerScore('cache', hits / responses.length, `${hits}/${responses.length} responses read the prompt cache`));
   }
   return scores;
 }

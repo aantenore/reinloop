@@ -1,7 +1,7 @@
 import type { EvalCase, EvalScore, Layer, RunStatus } from '../types.ts';
 
 /** Every platform layer; the `layer` field of cases and scores must be one of these. */
-export const LAYERS: readonly Layer[] = ['infra', 'llm', 'harness', 'knowledge', 'tool', 'identity', 'guardrail', 'cache', 'telemetry', 'eval'];
+export const LAYERS: readonly Layer[] = ['infra', 'llm', 'harness', 'knowledge', 'tool', 'identity', 'guardrail', 'cache', 'telemetry', 'eval', 'interface'];
 
 /** One line of a result JSONL file. */
 export interface EvalResult { id: string; runId: string; output: string; status: RunStatus; scores: EvalScore[] }

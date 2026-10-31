@@ -271,6 +271,14 @@ describe('knowledgeTool', () => {
     assert.equal((await tool.run({ query: 'q', source: 'zz' }, ctx) as { isError: boolean }).isError, true);
   });
 
+  it('tags its tool_start and tool_result events with the knowledge layer', async () => {
+    const sink = collectSink();
+    const agent = makeAgent([{ toolCalls: [{ name: 'search_knowledge', args: { query: 'q' } }] }, { text: 'done' }], { tools: [knowledgeTool([fake('a', [p('a1')])])] });
+    assert.equal((await run(agent, 'go', { sinks: [sink] })).status, 'completed');
+    const layers = sink.events.filter((e) => e.type === 'tool_start' || e.type === 'tool_result').map((e) => (e.data as { layer?: string }).layer);
+    assert.deepEqual(layers, ['knowledge', 'knowledge']);
+  });
+
   it('errors when every source fails and reports partial failures otherwise', async () => {
     const down: KnowledgeSource = { name: 'down', search: async () => Promise.reject(new Error('x')) };
     const all = (await knowledgeTool([down]).run({ query: 'q' }, ctx)) as { isError: boolean; content: string };

@@ -201,27 +201,48 @@ describe('layerSignals attribution', () => {
     assert.equal(byLayer(await layers.score(c, broken)).llm!.value, 0);
   });
 
-  it('guardrail, knowledge and cache: from events when present, absent otherwise', async () => {
+  it('guardrail and knowledge: from their real event shapes when present, absent otherwise', async () => {
     const input = await observed(makeAgent([{ text: 'ok' }]));
     const base = byLayer(await layers.score(c, input));
     for (const l of ['guardrail', 'knowledge', 'cache', 'identity', 'tool']) assert.equal(base[l], undefined, `${l} has no signal`);
 
     const extra = (type: string, data: unknown) => ({ runId: input.runId, seq: 100, ts: 0, type, data }) as unknown as RunEvent;
-    const events = [
-      ...input.events,
-      extra('guardrail', { stage: 'output', action: 'block', guard: 'pii' }),
-      extra('guardrail', { stage: 'input', action: 'allow' }),
-      extra('knowledge_retrieval', { query: 'q', passages: [] }),
-      extra('knowledge_retrieval', { query: 'q2', passages: [{ id: 'p' }] }),
-      extra('mystery_event', { x: 1 }),
-      extra('cache', { hit: true }),
-      extra('cache', { hit: false }),
-    ];
-    const scores = byLayer(await layers.score(c, { ...input, events }));
+    const retrieval = (passages: number, error?: string) => extra('knowledge_retrieval', { source: 'docs', query: 'q', passages, ids: [], durationMs: 3, ...(error && { error }) });
+    const redacted = [...input.events, extra('guardrail', { guard: 'pii', stage: 'output', action: 'redact', reason: 'EMAIL' }), retrieval(0), retrieval(2), extra('mystery_event', { x: 1 })];
+    const scores = byLayer(await layers.score(c, { ...input, events: redacted }));
     assert.equal(scores.guardrail!.value, 0.5);
+    assert.match(scores.guardrail!.reason!, /1 redacted \(pii@output\)/);
     assert.equal(scores.knowledge!.value, 0.5);
-    assert.equal(scores.cache!.value, 0.5);
+    assert.equal(scores.cache, undefined);
     assert.equal(scores.harness!.value, 1);
+
+    const blocked = [...input.events, extra('guardrail', { guard: 'pii', stage: 'tool_result', action: 'block' }), extra('guardrail', { guard: 'pii', stage: 'input', action: 'redact' })];
+    assert.equal(byLayer(await layers.score(c, { ...input, events: blocked })).guardrail!.value, 0);
+    const failOpen = [...input.events, extra('guardrail', { guard: 'presidio', stage: 'input', action: 'allow', reason: 'guard error: HTTP 503' })];
+    assert.equal(byLayer(await layers.score(c, { ...input, events: failOpen })).guardrail!.value, 0);
+    const failed = [...input.events, retrieval(0, 'timed out'), retrieval(3)];
+    const k = byLayer(await layers.score(c, { ...input, events: failed })).knowledge!;
+    assert.equal(k.value, 0.5);
+    assert.match(k.reason!, /1 retrievals failed/);
+  });
+
+  it('identity, guardrail and knowledge: decisions and tool results are split by layer', () => {
+    const events = [
+      { type: 'tool_decision', data: { callId: 'a', name: 'search_knowledge', allowed: true, reason: 'risk read: allow; pdp: allowed' } },
+      { type: 'tool_result', data: { callId: 'a', name: 'search_knowledge', content: 'knowledge search failed: docs: down', isError: true, layer: 'knowledge' } },
+      { type: 'tool_decision', data: { callId: 'b', name: 'delete', allowed: false, reason: 'pdp: not an admin' } },
+      { type: 'tool_result', data: { callId: 'b', name: 'delete', content: 'Tool call denied (pdp: not an admin).', isError: true, layer: 'tool' } },
+      { type: 'tool_decision', data: { callId: 'c', name: 'send', allowed: false, reason: 'guardrail:secrets:tool_args (API key)' } },
+      { type: 'tool_result', data: { callId: 'c', name: 'send', content: 'Tool call denied: guardrail:secrets:tool_args (API key)', isError: true } },
+      { type: 'tool_result', data: { callId: 'd', name: 'fetch', content: 'ok', isError: false, layer: 'tool' } },
+      { type: 'run_end', data: { status: 'completed' } },
+    ];
+    const scores = byLayer(scoreLayers(events, { status: 'completed' }));
+    assert.equal(scores.identity!.value, 0.5);
+    assert.match(scores.identity!.reason!, /1\/2 denied \(1 by the PDP\)/);
+    assert.equal(scores.guardrail!.value, 0);
+    assert.equal(scores.knowledge!.value, 0);
+    assert.equal(scores.tool!.value, 1, 'denied calls and knowledge-tool errors are not tool failures');
   });
 
   it('guardrail: a stopped run with a guardrail reason is not a harness failure', async () => {

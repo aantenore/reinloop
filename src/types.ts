@@ -421,7 +421,7 @@ export interface RunOptions {
 // ---- Layers and adapter contracts ------------------------------------------
 
 /** Platform layer a span, tool or adapter belongs to. */
-export type Layer = 'infra' | 'llm' | 'harness' | 'knowledge' | 'tool' | 'identity' | 'guardrail' | 'cache' | 'telemetry' | 'eval';
+export type Layer = 'infra' | 'llm' | 'harness' | 'knowledge' | 'tool' | 'identity' | 'guardrail' | 'cache' | 'telemetry' | 'eval' | 'interface';
 
 /** Who a run acts as: a person (on behalf of) or the agent's own identity. */
 export interface Identity {

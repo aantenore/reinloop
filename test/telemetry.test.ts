@@ -84,6 +84,27 @@ describe('otlp sink layers', () => {
   });
 });
 
+describe('knowledge span events', () => {
+  it('records knowledge_retrieval counts, and its query and error only with captureContent', async () => {
+    for (const captureContent of [false, true]) {
+      const rx = await receiver();
+      const sink = otlpSink({ endpoint: rx.endpoint, captureContent });
+      inject(sink, 'r-k', 'run_start', { agent: 'k', resumed: false });
+      inject(sink, 'r-k', 'knowledge_retrieval', { source: 'docs', query: 'SECRET-QUERY', passages: 0, ids: [], durationMs: 12, error: 'timed out' });
+      inject(sink, 'r-k', 'run_end', { status: 'completed', usage: { inputTokens: 0, outputTokens: 0 }, turns: 0, costUsd: 0 });
+      await sink.close!();
+      rx.close();
+      const spans = rx.got.flatMap((b) => b.body.resourceSpans[0].scopeSpans[0].spans);
+      const ev = spans.find((s: any) => s.name === 'invoke_agent k').events[0];
+      assert.equal(str(attr(ev, 'agent.layer')), 'knowledge');
+      assert.equal(str(attr(ev, 'source')), 'docs');
+      assert.equal(attr(ev, 'passages').intValue, '0');
+      assert.equal(attr(ev, 'error') !== undefined, captureContent);
+      assert.equal(JSON.stringify(rx.got).includes('SECRET-QUERY'), captureContent);
+    }
+  });
+});
+
 describe('otlp metrics', () => {
   it('exports cumulative histograms and counters to /v1/metrics', async () => {
     const rx = await receiver();

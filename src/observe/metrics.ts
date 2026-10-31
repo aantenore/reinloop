@@ -115,7 +115,6 @@ export function otlpMetricsSink(opts: OtlpMetricsOptions): Sink {
   return {
     name: 'otlp-metrics',
     onEvent(ev: RunEvent) {
-      const type: string = ev.type;
       switch (ev.type) {
         case 'model_response': {
           const attrs = { 'gen_ai.operation.name': 'chat', 'gen_ai.request.model': ev.data.model };
@@ -138,11 +137,9 @@ export function otlpMetricsSink(opts: OtlpMetricsOptions): Sink {
           add(runs, { status: ev.data.status });
           void flush();
           break;
-        default:
-          if (type === 'guardrail') {
-            const data = ev.data as unknown as Record<string, unknown>;
-            add(guardrails, { action: typeof data.action === 'string' ? data.action : 'unknown' });
-          }
+        case 'guardrail':
+          add(guardrails, { action: ev.data.action, stage: ev.data.stage, guard: ev.data.guard });
+          break;
       }
     },
     async close() {
