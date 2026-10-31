@@ -26,18 +26,39 @@ registry, so plugins can add their own. Editors get completion from `schema/rein
 
   "mcpServers": {
     "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."], "exclude": ["write_*"] },
-    "docs": { "url": "https://mcp.example.com/mcp", "headers": { "authorization": "Bearer ${env:DOCS_TOKEN}" }, "risk": "read" }
+    "docs": { "url": "https://mcp.example.com/mcp", "headers": { "authorization": "Bearer ${env:DOCS_TOKEN}" }, "risk": "read" },
+    "tools": { "url": "https://tools.example.com/mcp", "auth": { "audience": "tools-api", "scopes": ["tools.read"] } }
   },
 
+  "httpTools": {
+    "get_user": { "description": "Fetch a user", "method": "GET", "url": "https://api.example.com/users/{id}", "schema": { "properties": { "id": { "type": "string" } }, "required": ["id"] }, "risk": "read", "auth": { "audience": "users-api" } }
+  },
+  "openapi": { "petstore": { "spec": "./petstore.json", "baseUrl": "https://petstore.example/v1", "include": ["get*", "list*"], "auth": { "audience": "petstore" } } },
+
   "tools": { "workspace": ".", "concurrency": 8, "timeoutMs": 120000, "maxResultChars": 32000, "artifacts": "file", "shellTimeoutMs": 120000 },
-  "policy": { "risk": { "write": "allow" }, "rules": [{ "match": "shell", "action": "ask" }, { "match": "fs__*", "risk": "exec", "action": "deny" }] },
+  "policy": {
+    "risk": { "write": "allow" },
+    "rules": [{ "match": "shell", "action": "ask" }, { "match": "fs__*", "risk": "exec", "action": "deny" }, { "match": "docs__*", "action": "allow", "when": { "roles": ["analyst"], "kind": "user" } }],
+    "pdp": { "type": "opa", "url": "${env:OPA_URL}", "path": "agents/allow", "onError": "deny" }
+  },
+  "identity": {
+    "verifier": { "issuer": "${env:OIDC_ISSUER}", "audience": "agent-api" },
+    "credentials": { "issuer": "${env:OIDC_ISSUER}", "clientId": "${env:OIDC_CLIENT_ID}", "clientSecret": "${env:OIDC_CLIENT_SECRET}", "mode": "on-behalf-of" },
+    "required": true
+  },
+  "knowledge": {
+    "k": 4, "mode": "first-turn",
+    "sources": { "docs": { "type": "mcp", "server": "qdrant", "tool": "qdrant-find" }, "wiki": { "type": "wiki", "dir": "wiki" } }
+  },
+  "guardrails": { "onError": "block", "guards": [{ "type": "regex", "action": "redact", "patterns": ["secret"] }] },
+  "routers": { "by-size": { "type": "rule", "rules": [{ "when": { "minEstTokens": 6000 }, "model": "smart" }], "default": "fast" } },
 
   "store": { "type": "file", "dir": ".reinloop/runs" },
   "responseCache": { "type": "file", "dir": ".reinloop/cache", "ttlMs": 86400000, "namespace": "v1" },
   "memory": { "type": "file", "dir": ".reinloop/memory", "scope": "shared" },
   "sinks": [{ "type": "console", "level": "info" }, { "type": "jsonl", "dir": ".reinloop/traces" }],
 
-  "agents": { "coder": { "model": "fast", "instructions": "file:./prompts/coder.md", "tools": ["read_file", "edit_file", "shell", "fs__*"] } },
+  "agents": { "coder": { "model": "fast", "router": "by-size", "middleware": ["knowledge", "guard"], "instructions": "file:./prompts/coder.md", "tools": ["read_file", "edit_file", "shell", "fs__*"] } },
   "teams": { "ship": { "pattern": "evaluator", "roles": { "generator": "coder", "evaluator": "reviewer" } } },
 
   "profiles": { "ci": { "defaultModel": "mock/echo", "responseCache": { "type": "memory" } } }
@@ -62,9 +83,16 @@ needs it is built, so an unused provider never blocks a run.
 | `presets.<name>` | Settings for a built-in preset used as `"<name>/<model>"`: `headers` (extra request headers, `${env:...}` allowed). Ignored when `providers.<name>` defines a provider with the same name. Presets also read headers from env vars: `ANTHROPIC_WORKSPACE_ID` becomes `anthropic-workspace-id` for `anthropic/...`; config headers win over env ones. |
 | `models.<alias>` | `provider`, `model`, `params`, `pricing` (USD per million tokens, used for cost budgets), `fallback` (aliases tried in order). |
 | `pricing.<model id>` | Price overrides (`inputPerMTok`, `outputPerMTok`, `cacheReadPerMTok`, USD per million tokens; `cacheWriteMultiplier` / `cacheWrite1hMultiplier`, cache writes as a multiple of the input price, built in for Claude as 1.25 / 2; `serverToolUsd`, USD per hosted-tool request such as `{ "webSearchRequests": 0.01 }`) keyed by the model id without the provider prefix, merged field by field over the built-in table (`PRICING`: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`). `models.<alias>.pricing` takes precedence. Models without a price cost 0, so `maxCostUsd` does not limit them. |
-| `mcpServers.<name>` | stdio (`command`, `args`, `env`, `cwd`) or HTTP (`url`, `headers`); `prefix`, `include`/`exclude` globs, `risk` (otherwise derived from tool annotations), `readOnly` (globs of tool names treated as `read`), `timeoutMs`. Tools appear as `<prefix>__<tool>` (prefix defaults to the server name); `prefix: false` (or `""`) keeps the server's own names, and agents then select them with `mcp:<name>` (narrow with `include`). |
+| `mcpServers.<name>` | stdio (`command`, `args`, `env`, `cwd`) or HTTP (`url`, `headers`); `prefix`, `include`/`exclude` globs, `risk` (otherwise derived from tool annotations), `readOnly` (globs of tool names treated as `read`), `timeoutMs`, `auth: { audience, scopes? }` (streamable HTTP only: every call carries a token for that audience from the run's credentials, see [layers/identity.md](layers/identity.md#mcp-streamable-http)). Tools appear as `<prefix>__<tool>` (prefix defaults to the server name); `prefix: false` (or `""`) keeps the server's own names, and agents then select them with `mcp:<name>` (narrow with `include`). |
+| `httpTools.<name>` | Declarative HTTP tool: `description`, `method`, `url` (with `{param}`), `schema` (`properties`, `required`), `query`, `headerArgs`, `headers`, `body: json \| none`, `bodyArg`, `risk`, `timeoutMs`, `maxResultChars`, `auth: { audience, scopes? }`. See [layers/tool.md](layers/tool.md). |
+| `openapi.<name>` | Tools generated from an OpenAPI 3 JSON document, one per operation: `spec` (path or URL), `baseUrl`, `include` (globs over `operationId`), `headers`, `timeoutMs`, `maxResultChars`, `auth: { audience, scopes? }`. Tool names are prefixed with `<name>__`. See [layers/tool.md](layers/tool.md). |
 | `tools` | Workspace root and execution limits; `artifacts: none \| memory \| file` enables offloading when an agent lists `read_artifact`. |
-| `policy` | Global rules, evaluated after each agent's own rules. Unlabelled tools (your functions) are allowed by default; `read` is allowed, while `write` and `exec` ask. With no approver, "ask" means deny. |
+| `policy` | Global rules, evaluated after each agent's own rules. `default`, `risk.<read\|write\|exec>` and `rules[]` (`match` glob, `risk`, `action: allow \| ask \| deny`, `reason`, `when: { roles, scopes, kind }`; `roles` and `scopes` match any-of, `kind` is `user` or `agent`, and a rule with `when` never matches a run without identity). Unlabelled tools (your functions) are allowed by default; `read` is allowed, while `write` and `exec` ask. With no approver, "ask" means deny. |
+| `policy.pdp` | External policy decision point asked after the local rules (a local `deny` is final): `type` (`opa`, `authzen`, or a plugin), `url`, `path` (OPA), `headers`, `includeArgs` (send tool arguments; off by default), `onError: allow \| ask \| deny` (default `deny`). See [layers/identity.md](layers/identity.md#external-pdp). |
+| `identity` | `verifier` (turns a bearer token into the run identity) and `credentials` (outbound tokens: `mode: on-behalf-of \| self`), each with `type` (default `oidc`) plus the factory's own fields (`issuer`, `audience`, `clientId`, `clientSecret`); `required` (default true): `reinloop serve` rejects `/v1/*` calls without a valid token. See [layers/identity.md](layers/identity.md). |
+| `knowledge` | Retrieval sources and auto-retrieval settings: `sources.<name>` with `type: mcp \| http \| wiki` (`mcp`: `server` or `command`/`args`/`env`/`cwd` or `url`/`headers`, `tool`, `queryArg`, `toolArgs`; `http`: `url`, `headers`; `wiki`: `dir`, `maxPassageChars`; all: `timeoutMs`), `k`, `maxChars`, `mode: first-turn \| every-turn` (default `first-turn`), `timeoutMs`. Agents enable it with `tools: [search_knowledge]` and/or `middleware: [knowledge]`. See [layers/knowledge.md](layers/knowledge.md). |
+| `guardrails` | `guards[]` (each with `type`: `regex`, `presidio`, `llm-guard`, `http`, or a plugin, plus its options), `onError: block \| allow` (default `block`, fail closed), `name`. Agents opt in with `middleware: [guard]`. See [layers/guardrail.md](layers/guardrail.md). |
+| `routers.<name>` | Model routers (`type: rule` with `rules[]` of `when: { minEstTokens, maxEstTokens, hasTools, turnAtLeast }` and `model`, plus `default`; or a plugin type). Agents attach one with `router: <name>`. See [layers/cache.md](layers/cache.md). |
 | `store` | `memory` or `file`: the event log used for sessions and resume. |
 | `responseCache` | `memory` or `file` (+ `ttlMs`, `namespace`): identical requests replay at zero cost. Agents opt out with `responseCache: false`. |
 | `memory` | Backing store for `remember` / `recall`; `scope: shared \| agent`. |

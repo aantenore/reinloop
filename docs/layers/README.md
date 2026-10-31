@@ -7,13 +7,13 @@ number.
 | Layer id | Page | Contract | Standard / reference | Conformance |
 |---|---|---|---|---|
 | `llm` | [llm.md](llm.md) | `Provider` | OpenAI-compatible Chat Completions, Anthropic Messages | `checkProvider`, `checkOpenAIEndpoint` |
-| `cache` | [model-access.md](model-access.md) | `CacheStore`, `ModelRouter` | response cache, `ruleRouter`, gateways (LiteLLM) | none |
+| `cache` | [cache.md](cache.md) | `CacheStore`, `ModelRouter` | response cache, `ruleRouter`, gateways (LiteLLM) | none |
 | `knowledge` | [knowledge.md](knowledge.md) | `KnowledgeSource` | MCP (`mcpKnowledge`), HTTP, local wiki | `checkKnowledgeSource` |
-| `tool` | [tools.md](tools.md) | `Tool` | MCP, HTTP tools, OpenAPI 3 | none |
+| `tool` | [tool.md](tool.md) | `Tool` | MCP, HTTP tools, OpenAPI 3 | none |
 | `identity` | [identity.md](identity.md) | `IdentityVerifier`, `CredentialProvider`, `Authorizer` | OIDC/JWT, RFC 8693 token exchange, AuthZEN, OPA | `checkIdentityVerifier`, `checkCredentialProvider`, `checkAuthorizer` |
-| `guardrail` | [guardrails.md](guardrails.md) | `Guard` | Presidio, LLM Guard, HTTP, regex | `checkGuard` |
+| `guardrail` | [guardrail.md](guardrail.md) | `Guard` | Presidio, LLM Guard, HTTP, regex | `checkGuard` |
 | `telemetry` | [telemetry.md](telemetry.md) | `Sink` | OpenTelemetry (OTLP/HTTP traces and metrics, GenAI conventions) | none |
-| `eval` | [evaluation.md](evaluation.md) | `Evaluator` | JSONL datasets, replay, LLM as judge | `checkEvaluator` |
+| `eval` | [eval.md](eval.md) | `Evaluator` | JSONL datasets, replay, LLM as judge | `checkEvaluator` |
 
 `harness` (the loop itself), `infra` and `interface` (CLI, HTTP, MCP server) have no adapter contract; they appear as
 `Layer` values on spans, tools and evaluation scores.
