@@ -17,6 +17,7 @@ const pricing = {
     serverToolUsd: { type: 'object', additionalProperties: num },
   },
 };
+const toolAuth = { type: 'object', additionalProperties: false, required: ['audience'], properties: { audience: str, scopes: { type: 'array', items: str } } };
 const decision = { enum: ['allow', 'deny', 'ask'] };
 const risk = { enum: ['read', 'write', 'exec'] };
 
@@ -214,6 +215,32 @@ export const CONFIG_SCHEMA: JsonSchema = {
         githubIssues: { type: 'boolean' },
         stackExchangeSite: str,
         userAgent: str,
+      },
+    },
+    httpTools: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['description', 'method', 'url', 'schema'],
+        properties: {
+          description: str, method: { enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] }, url: str,
+          query: { type: 'array', items: str }, headerArgs: { type: 'array', items: str }, headers: strMap,
+          body: { enum: ['json', 'none'] }, bodyArg: str, schema: jsonSchema, risk,
+          timeoutMs: int, maxResultChars: { type: 'integer', minimum: 100 }, auth: toolAuth,
+        },
+      },
+    },
+    openapi: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['spec'],
+        properties: {
+          spec: str, baseUrl: str, include: { type: 'array', items: str }, auth: toolAuth, headers: strMap,
+          timeoutMs: int, maxResultChars: { type: 'integer', minimum: 100 },
+        },
       },
     },
     profiles: { type: 'object', additionalProperties: { type: 'object' } },
