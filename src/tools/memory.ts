@@ -1,6 +1,5 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { rank } from '../knowledge/rank.ts';
 import { limitDefault } from '../limits.ts';
 import type { Tool } from '../types.ts';
 import { defineTool } from './define.ts';
@@ -44,7 +43,23 @@ export function fileNotes(dir: string): MemoryStore {
   };
 }
 
-export { rank };
+const words = (s: string) => new Set(s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2));
+
+/** Keyword-overlap ranking: dependency-free and predictable; swap the store for embeddings if needed. */
+export function rank(notes: Note[], query: string, limit: number): Note[] {
+  const q = words(query);
+  return notes
+    .map((n, i) => {
+      const w = words(`${n.text} ${(n.tags ?? []).join(' ')}`);
+      let score = 0;
+      for (const t of q) if (w.has(t)) score++;
+      return { n, score: score + i / (notes.length * 1000) }; // recency breaks ties
+    })
+    .filter((x) => x.score >= 1 || !q.size)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((x) => x.n);
+}
 
 export interface MemoryToolsOptions {
   store: MemoryStore;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  collectSink, createRegistry, createRuntime, mockProvider, run, ruleRouter, routedModel, withRouter,
+  collectSink, createRegistry, createRuntime, mockProvider, run, routedModel, withRouter,
   type HarnessConfig, type HookContext, type ModelRequest, type ModelRouter,
 } from '../src/index.ts';
 import { echoTool, makeAgent } from './helpers.ts';
@@ -9,37 +9,6 @@ import { echoTool, makeAgent } from './helpers.ts';
 const req = (over: Partial<ModelRequest> = {}): ModelRequest => ({ model: 'm', messages: [], tools: [], ...over });
 const ctx = (turns = 0, over: Partial<HookContext['state']> = {}): HookContext => ({
   runId: 'r', agent: 'a', state: { runId: 'r', agent: 'a', messages: [], usage: { inputTokens: 0, outputTokens: 0 }, costUsd: 0, turns, toolCalls: 0, status: 'running', seq: 0, ...over },
-});
-
-describe('ruleRouter', () => {
-  const router = ruleRouter({
-    rules: [
-      { when: { hasTools: true, turnAtLeast: 2 }, model: 'big' },
-      { when: { minEstTokens: 100 }, model: 'long' },
-      { when: { maxEstTokens: 5, hasTools: false }, model: 'tiny' },
-    ],
-    default: 'dflt',
-  });
-  const tool = { name: 't', description: 'd', schema: {} };
-
-  it('picks the first matching rule and falls back to the default', async () => {
-    assert.equal(await router.select(req({ tools: [tool] }), ctx(0)), 'dflt'); // turn 1: turnAtLeast 2 not met
-    assert.equal(await router.select(req({ tools: [tool] }), ctx(1)), 'big'); // turn 2
-    assert.equal(await router.select(req({ messages: [{ role: 'user', parts: [{ type: 'text', text: 'x'.repeat(800) }] }] }), ctx(0)), 'long');
-    assert.equal(await router.select(req(), ctx(0)), 'tiny');
-    assert.equal(await router.select(req({ instructions: 'x'.repeat(100) }), ctx(0)), 'dflt');
-  });
-
-  it('estimates from the last real usage when there is one', async () => {
-    const state = { lastUsage: { inputTokens: 500, outputTokens: 10 }, lastUsageAt: 0 };
-    assert.equal(await router.select(req(), ctx(0, state)), 'long');
-  });
-
-  it('lists its models and rejects malformed options', () => {
-    assert.deepEqual(router.models, ['big', 'long', 'tiny', 'dflt']);
-    assert.throws(() => ruleRouter({ rules: [], default: '' }), /default model/);
-    assert.throws(() => ruleRouter({ rules: [{ when: {}, model: '' }], default: 'x' }), /rule 0 needs a model/);
-  });
 });
 
 describe('routedModel', () => {
@@ -117,15 +86,21 @@ describe('routedModel', () => {
 });
 
 describe('router config', () => {
+  // Routers come from plugins: a test registry registers one that always picks `model`.
+  const registry = () => {
+    const r = createRegistry();
+    r.routers.set('fixed', (o) => ({ models: [o.model], select: () => o.model as string }) as ModelRouter);
+    return r;
+  };
   const config = (): HarnessConfig => ({
     providers: { fast: { type: 'mock', responses: [{ text: 'fast answer' }] }, deep: { type: 'mock', responses: [{ text: 'deep answer' }] } },
     models: { quick: { provider: 'fast', model: 'f-1' }, thorough: { provider: 'deep', model: 'd-1' } },
-    routers: { byTurn: { type: 'rule', rules: [{ when: { turnAtLeast: 3 }, model: 'thorough' }], default: 'quick' } },
-    agents: { main: { model: 'quick', router: 'byTurn' } },
+    routers: { pick: { type: 'fixed', model: 'quick' } },
+    agents: { main: { model: 'quick', router: 'pick' } },
   });
 
   it('wires an agent to a named router and records the selected model', async () => {
-    const runtime = await createRuntime(config(), { env: {} });
+    const runtime = await createRuntime(config(), { env: {}, registry: registry() });
     const sink = collectSink();
     const res = await runtime.run('main', 'hi', { sinks: [sink] });
     assert.equal(res.output, 'fast answer');
@@ -134,22 +109,22 @@ describe('router config', () => {
 
   it('routes to a model served by another configured provider', async () => {
     const cfg = config();
-    cfg.routers!.byTurn = { type: 'rule', rules: [{ when: { hasTools: false }, model: 'thorough' }], default: 'quick' };
-    const runtime = await createRuntime(cfg, { env: {} });
+    cfg.routers!.pick = { type: 'fixed', model: 'thorough' };
+    const runtime = await createRuntime(cfg, { env: {}, registry: registry() });
     const res = await runtime.run('main', 'hi');
     assert.equal(res.output, 'deep answer');
   });
 
-  it('rejects unknown routers and unknown models in rules', async () => {
+  it('rejects unknown routers, unknown router models and unregistered router types', async () => {
     const unknown = config();
     unknown.agents!.main!.router = 'nope';
-    await assert.rejects(createRuntime(unknown, { env: {} }), /agents\.main\.router: unknown router "nope"/);
+    await assert.rejects(createRuntime(unknown, { env: {}, registry: registry() }), /agents\.main\.router: unknown router "nope"/);
     const badModel = config();
-    badModel.routers!.byTurn = { type: 'rule', rules: [], default: 'missing' };
-    const runtime = await createRuntime(badModel, { env: {} });
+    badModel.routers!.pick = { type: 'fixed', model: 'missing' };
+    const runtime = await createRuntime(badModel, { env: {}, registry: registry() });
     await assert.rejects(runtime.agent('main'), /unknown model "missing"/);
     const badType = config();
-    badType.routers!.byTurn = { type: 'magic' };
-    await assert.rejects((await createRuntime(badType, { env: {}, registry: createRegistry() })).agent('main'), /unknown router "magic"/);
+    badType.routers!.pick = { type: 'rule' };
+    await assert.rejects((await createRuntime(badType, { env: {} })).agent('main'), /unknown router "rule" \(none registered; load a plugin.*agent-layers/);
   });
 });

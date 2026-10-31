@@ -6,7 +6,6 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { design } from './architect.ts';
 import { loadConfig } from './config/load.ts';
-import { evalCommand, replayCommand } from './eval/cli.ts';
 import { addIntegration, INTEGRATIONS } from './integrations.ts';
 import { describeMembers } from './describe.ts';
 import type { RunHandle } from './loop.ts';
@@ -30,8 +29,6 @@ const HELP = `reinloop — agents as files, harness included
   reinloop mcp                   Expose agents as MCP tools over stdio
   reinloop resume <runId> [task] Resume an interrupted run or continue a session
   reinloop runs | validate       Stored runs | check configuration
-  reinloop eval <dataset.jsonl>  Score an agent on a dataset (--out results.jsonl, --judge <agent>)
-  reinloop replay <runId...|--all>  Re-run stored inputs on another agent or model (--model, --out)
 
 Options:
   -a, --agent <name>      Agent or team (default: defaultAgent or the only one)
@@ -129,9 +126,6 @@ async function main(argv: string[]): Promise<number> {
       debug: { type: 'boolean' },
       description: { type: 'string', short: 'd' },
       tools: { type: 'string' },
-      out: { type: 'string' },
-      judge: { type: 'string' },
-      all: { type: 'boolean' },
       port: { type: 'string' },
       host: { type: 'string' },
       token: { type: 'string' },
@@ -239,10 +233,6 @@ async function main(argv: string[]): Promise<number> {
         rl?.close();
         return 0;
       }
-      case 'eval':
-        return evalCommand(rt, rest, values);
-      case 'replay':
-        return replayCommand(rt, rest, values);
       case 'run':
       case 'resume': {
         const runId = command === 'resume' ? rest.shift() : undefined;

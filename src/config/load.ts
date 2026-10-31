@@ -4,9 +4,7 @@ import type { McpServerConfig } from '../mcp/client.ts';
 import { withAgentFiles } from '../agentfile.ts';
 import { MODEL_ALIASES, PRESETS, type PresetOverrides, splitModel } from '../presets.ts';
 import { validate } from '../schema.ts';
-import type { HttpToolOptions } from '../tools/http.ts';
 import type { Budget, JsonSchema, ModelParams, PolicyConfig, Pricing, Risk } from '../types.ts';
-import type { KnowledgeConfig } from '../knowledge/config.ts';
 import { checkLimit, forEachLimit, limitAt, limitRange, limitWarning } from '../limits.ts';
 import type { ServeSettings } from '../serve.ts';
 import { ReinloopError } from '../util.ts';
@@ -86,14 +84,14 @@ export interface HarnessConfig {
     artifacts?: 'none' | 'memory' | 'file';
   };
   policy?: PolicyConfig;
-  /** Inbound token verification and outbound credentials (`type` defaults to `oidc`). */
+  /** Inbound token verification and outbound credentials; `type` names a factory a plugin registered. */
   identity?: IdentityConfig;
   store?: ComponentConfig;
   sinks?: ComponentConfig[];
   agents?: Record<string, AgentConfig>;
   teams?: Record<string, TeamConfig>;
   responseCache?: ComponentConfig & { ttlMs?: number; namespace?: string; maxEntries?: number };
-  /** In-process model routers by name (e.g. `{ "type": "rule", "rules": [...], "default": "..." }`), used by agents' `router`. */
+  /** In-process model routers by name (`{ "type": <registered router>, ...options }`), used by agents' `router`. */
   routers?: Record<string, ComponentConfig>;
   memory?: { type?: 'file' | 'memory'; dir?: string; scope?: 'shared' | 'agent'; namespace?: string; recallLimit?: number };
   /** Provider-hosted tools by tool name (e.g. Anthropic `web_search_20250305`), usable in agents' `tools`. */
@@ -102,14 +100,6 @@ export interface HarnessConfig {
   web?: WebConfig;
   /** Settings of the public-signal tools (`search_discussions`, `search_projects`, `search_questions`, `search_papers`). */
   signals?: SignalsConfig;
-  /** Knowledge sources for the `knowledge` middleware (auto-retrieval) and the `search_knowledge` tool. */
-  knowledge?: KnowledgeConfig;
-  /** Declarative HTTP tools by tool name, usable in agents' `tools`. */
-  httpTools?: Record<string, HttpToolConfig>;
-  /** OpenAPI 3 (JSON) sources; their operations become tools named `<source>__<operationId>`. */
-  openapi?: Record<string, OpenApiConfig>;
-  /** Guards behind the `guard` middleware (agents opt in with `middleware: [guard]`). */
-  guardrails?: GuardrailsConfig;
   /** Limits of `reinloop serve` (options passed to `serve()` win). */
   serve?: ServeSettings;
   /** Cross-cutting limits: run loop and redaction. */
@@ -127,20 +117,10 @@ export interface LimitsConfig {
 }
 
 export interface IdentityConfig {
-  verifier?: { type?: string; [option: string]: unknown };
-  credentials?: { type?: string; [option: string]: unknown };
+  verifier?: { type: string; [option: string]: unknown };
+  credentials?: { type: string; [option: string]: unknown };
   /** `reinloop serve`: reject /v1 requests without a valid bearer token (default true when a verifier is set). */
   required?: boolean;
-}
-
-export interface GuardrailsConfig {
-  /** Guards in run order: `{ type: "presidio" | "llm-guard" | "http" | "regex" | <registered>, ...options }`. */
-  guards: ComponentConfig[];
-  /** A guard that throws: `block` (default) or `allow`. */
-  onError?: 'block' | 'allow';
-  name?: string;
-  /** Characters of a guard reason kept in events and run results (default 200). */
-  maxReasonChars?: number;
 }
 
 export interface HostedToolConfig {
@@ -151,27 +131,6 @@ export interface HostedToolConfig {
   description?: string;
   limitParam?: string;
   beta?: string;
-}
-
-/** An `httpTool` without its name (the key) and env. */
-export type HttpToolConfig = Omit<HttpToolOptions, 'name' | 'env'>;
-
-export interface OpenApiConfig {
-  /** Path (relative to the config) or http(s) URL of a JSON OpenAPI 3 document. */
-  spec: string;
-  /** Default: the first absolute entry of the spec's `servers`. */
-  baseUrl?: string;
-  /** Globs of operationIds to import (default: all). */
-  include?: string[];
-  auth?: { audience: string; scopes?: string[] };
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-  maxResultChars?: number;
-  errorBodyChars?: number;
-  /** Time limit for downloading a spec given as a URL (default 30 s). */
-  specTimeoutMs?: number;
-  maxRefDepth?: number;
-  descriptionChars?: number;
 }
 
 export interface WebConfig {
@@ -338,12 +297,29 @@ export function applyProfile(config: HarnessConfig, profile: string | undefined)
   return deepMerge(config, overlay);
 }
 
+/** Where layer implementations live; reinloop keeps the hooks they plug into. */
+export const LAYERS_HOME = 'agent-layers (https://github.com/aantenore/agent-layers)';
+
+/** Top-level keys of layer implementations that moved out of reinloop, with the hook that remains. */
+const MOVED: Readonly<Record<string, string>> = {
+  knowledge: 'knowledge sources are agent-layers adapters; reinloop keeps the KnowledgeSource hook (knowledgeMiddleware)',
+  guardrails: 'guard adapters are agent-layers adapters; reinloop keeps the Guard hook (guardMiddleware)',
+  httpTools: 'declarative HTTP tools are an agent-layers adapter; register tools from a plugin instead',
+  openapi: 'OpenAPI import is an agent-layers adapter; register tools from a plugin instead',
+};
+
 /** Structural (JSON Schema) and referential checks. Returns the list of problems. */
 export function checkConfig(config: HarnessConfig): string[] {
   // Limit fields get precise messages from their descriptor; the schema's generic "does not match" for them is dropped.
   const limits = checkLimits(config).errors;
   const limitPaths = new Set(limits.map((e) => e.path));
-  const errors = [...validate(CONFIG_SCHEMA, config).filter((e) => !limitPaths.has(e.slice(0, e.indexOf(': ')))), ...limits.map((e) => e.message)];
+  const moved = Object.keys(MOVED).filter((k) => k in (config as object));
+  const movedPath = (e: string) => moved.some((k) => e === `$.${k}: unknown property` || e.startsWith(`$.${k}.`) || e.startsWith(`$.${k}[`));
+  const errors = [
+    ...moved.map((k) => `$.${k}: no longer part of reinloop: ${MOVED[k]} (see ${LAYERS_HOME})`),
+    ...validate(CONFIG_SCHEMA, config).filter((e) => !limitPaths.has(e.slice(0, e.indexOf(': '))) && !movedPath(e)),
+    ...limits.map((e) => e.message),
+  ];
   if (errors.length) return errors;
   const providers = config.providers ?? {};
   const models = config.models ?? {};

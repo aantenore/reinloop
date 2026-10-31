@@ -1,7 +1,21 @@
 import { RunStop } from '../stop.ts';
 import type { Guard, GuardStage, GuardVerdict, HookContext, Message, Middleware, Part } from '../types.ts';
 import { errorMessage, truncate } from '../util.ts';
-import { GUARD_LIMITS, GUARD_STAGES, parseVerdict } from './contract.ts';
+
+/** Stages a guard runs at when it sets no `stages`. */
+export const GUARD_STAGES: readonly GuardStage[] = ['input', 'output', 'tool_args', 'tool_result'];
+const ACTIONS: ReadonlySet<string> = new Set(['allow', 'block', 'redact']);
+/** Characters of a guard reason kept in events and run results when `maxReasonChars` is not set. */
+const GUARD_MAX_REASON_CHARS = 200;
+
+/** Throws unless `value` has the shape of a GuardVerdict; returns it normalized. */
+export function parseVerdict(value: unknown): GuardVerdict {
+  const v = value as Partial<GuardVerdict> | null;
+  const invalid = () => new Error('invalid guard verdict');
+  if (!v || typeof v !== 'object' || !ACTIONS.has(v.action as string)) throw invalid();
+  if (v.action === 'redact' && typeof v.text !== 'string') throw invalid();
+  return { action: v.action!, ...(typeof v.text === 'string' && { text: v.text }), ...(typeof v.reason === 'string' && { reason: v.reason }) };
+}
 
 export interface GuardMiddlewareOptions {
   /** What a guard that throws (service down, bad answer) means: `block` (default, fail closed) or `allow` (fail open). */
@@ -14,7 +28,7 @@ export interface GuardMiddlewareOptions {
 type Outcome = { text: string; changed: boolean } | { block: { guard: string; reason?: string } };
 
 /**
- * Runs guards at the four checkpoints of a run:
+ * Runs any `Guard` objects (implementations live in plugins, e.g. agent-layers adapters) at the four checkpoints of a run:
  * - `input`: new user text before it is recorded (`beforeInput`; `beforeModel` for older history); redaction changes
  *   what is persisted and what the model sees.
  * - `output`: assistant text after each model call (`afterModel`); redaction changes what is persisted and returned.
@@ -29,7 +43,7 @@ type Outcome = { text: string; changed: boolean } | { block: { guard: string; re
  */
 export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = {}): Middleware {
   const failOpen = opts.onError === 'allow';
-  const maxReason = opts.maxReasonChars ?? GUARD_LIMITS['guardrails.maxReasonChars'].default;
+  const maxReason = opts.maxReasonChars ?? GUARD_MAX_REASON_CHARS;
   // Each user message checked so far -> what the model sees (or the block); redacted messages map to themselves.
   const checked = new WeakMap<Message, Message | { blocked: string }>();
 

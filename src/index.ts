@@ -3,13 +3,7 @@ export type * from './types.ts';
 export { run, stream, createHandle, createEmitter, contextTokens, costOf, responseCost, OUTPUT_FEEDBACK, type RunHandle } from './loop.ts';
 export { reduce, replay, pendingToolCalls, initialState, EPHEMERAL } from './state.ts';
 export { decide, matchesCondition, mergePolicies, exceededBudget, DEFAULT_RISK_DECISIONS } from './policy.ts';
-export { oidcVerifier, defaultKind, rolesOf, scopesOf, DEFAULT_ALGORITHMS, type OidcVerifierOptions } from './identity/verifier.ts';
-export { oidcCredentials, TOKEN_EXCHANGE_GRANT, ACCESS_TOKEN_TYPE, type CredentialFactory, type OidcCredentialsOptions } from './identity/credentials.ts';
-export { authorizeCall } from './identity/authorize.ts';
-export { accessQuestion, authzenAuthorizer, authzenRequest, opaAuthorizer, publicQuestion, type HttpAuthorizerOptions } from './identity/authorizers.ts';
-export { IdentityError } from './identity/http.ts';
-export { JWS_ALGORITHMS, decodeJwt } from './identity/jwt.ts';
-export { checkAuthorizer, checkIdentityVerifier, checkCredentialProvider, type AuthorizerCases, type VerifierCases, type CredentialCases } from './conformance/identity.ts';
+export { authorizeCall, accessQuestion, publicQuestion, IdentityError } from './identity/authorize.ts';
 export { validate } from './schema.ts';
 export { windowCompaction, summarizeCompaction, DEFAULT_SUMMARY_PROMPT } from './compaction.ts';
 export { agentTool, type AgentToolOptions } from './subagent.ts';
@@ -32,8 +26,8 @@ export { McpClient, mcpTools, MCP_PROTOCOL_VERSION, type McpServerConfig, type M
 
 export { Registry, createRegistry, type Factory, type FactoryContext } from './registry.ts';
 export {
-  loadConfig, checkConfig, checkLimits, limitWarnings, interpolate, resolveLimits, deepMerge, applyProfile, ConfigError,
-  type HarnessConfig, type AgentConfig, type LimitsConfig, type LoadConfigOptions, type LoadedConfig,
+  loadConfig, checkConfig, checkLimits, limitWarnings, interpolate, resolveLimits, deepMerge, applyProfile, ConfigError, LAYERS_HOME,
+  type HarnessConfig, type AgentConfig, type IdentityConfig, type LimitsConfig, type LoadConfigOptions, type LoadedConfig,
 } from './config/load.ts';
 export { LIMITS, UNBOUNDED, limitDefault, checkLimit, type LimitName, type LimitSpec } from './limits.ts';
 export { createRuntime, loadRuntime, loadPlugins, type Runtime, type RuntimeOptions } from './config/runtime.ts';
@@ -60,43 +54,20 @@ export {
   signalTools, hackerNewsSource, githubSource, stackExchangeSource, arxivSource, parseArxivAtom, SignalRateLimitError, BUILTIN_SIGNAL_SOURCES,
   type SignalToolsOptions, type SignalSource, type SignalItem, type SignalSearchOptions, type SignalTools, type BuiltinSignalSource,
 } from './tools/signals.ts';
-export { httpTool, type HttpToolOptions, type HttpToolAuth, type HttpMethod } from './tools/http.ts';
-export { openapiTools, readOpenApiSpec, type OpenApiOptions, type OpenApiDocument } from './tools/openapi.ts';
 export { pathGlob } from './tools/node.ts';
 export { serve, type ServeOptions, type ServeSettings, type Served } from './serve.ts';
 export { serveMcp, type McpServeOptions } from './mcp/server.ts';
 export { describeMembers, type MemberInfo } from './describe.ts';
 export { architect, architectInstructions, design, validateProject } from './architect.ts';
 export { DEFAULT_BUDGET } from './policy.ts';
-export type { TeamConfig, RoleBinding, HostedToolConfig, WebConfig, SignalsConfig, HttpToolConfig, OpenApiConfig } from './config/load.ts';
+export type { TeamConfig, RoleBinding, HostedToolConfig, WebConfig, SignalsConfig } from './config/load.ts';
 export { discoverSkills, selectSkills, skillTool, DEFAULT_SKILL_DIRS, type Skill } from './skills.ts';
 export { checkProvider, checkOpenAIEndpoint, type ProviderCheckOptions, type EndpointCheckOptions } from './conformance/provider.ts';
-export { ruleRouter, type RouteCondition, type RouteRule, type RuleRouterOptions } from './rule-router.ts';
 export { routedModel, withRouter, type RoutedModelOptions } from './router.ts';
 export { otlpSink, type OtlpOptions } from './observe/otlp.ts';
 export { otlpMetricsSink, type OtlpMetricsOptions } from './observe/metrics.ts';
 export { EVENT_LAYERS, EVENT_ATTR_KEYS, EVENT_CONTENT_KEYS, eventAttributes } from './observe/layers.ts';
 export { INTEGRATIONS, addIntegration, type Integration } from './integrations.ts';
-export { retrieve, mergePassages, fitPassages, formatBlock, toPassage, hashId, KNOWLEDGE_NOTE, type RetrievalOutcome, type RetrieveOptions } from './knowledge/core.ts';
-export {
-  mcpKnowledge, httpKnowledge, wikiKnowledge, parseMcpResult, splitMarkdown,
-  type ClosableSource, type McpCaller, type McpKnowledgeOptions, type HttpKnowledgeOptions, type WikiKnowledgeOptions,
-} from './knowledge/adapters.ts';
-export { knowledgeMiddleware, knowledgeTool, type KnowledgeMiddlewareOptions, type KnowledgeToolOptions } from './knowledge/middleware.ts';
-export type { KnowledgeConfig, KnowledgeSourceConfig } from './knowledge/config.ts';
-export { checkKnowledgeSource, type KnowledgeConformanceOptions } from './conformance/knowledge.ts';
+export { knowledgeMiddleware, type KnowledgeMiddlewareOptions } from './knowledge/middleware.ts';
 export { RunStop } from './stop.ts';
-export { guardMiddleware, type GuardMiddlewareOptions } from './guardrails/middleware.ts';
-export { httpGuard, type HttpGuardOptions } from './guardrails/http.ts';
-export { parseVerdict, GUARD_STAGES, type HttpClientOptions } from './guardrails/contract.ts';
-export { presidioGuard, type PresidioGuardOptions } from './guardrails/presidio.ts';
-export { llmGuardGuard, type LlmGuardOptions } from './guardrails/llm-guard.ts';
-export { regexGuard, REGEX_PATTERNS, luhn, ibanValid, type RegexGuardOptions, type RegexPattern } from './guardrails/regex.ts';
-export { registerGuardrails } from './guardrails/register.ts';
-export { checkGuard, type GuardCheckOptions } from './conformance/guardrails.ts';
-export type { GuardrailsConfig } from './config/load.ts';
-export { evaluate, summarize, type EvaluateOptions } from './eval/evaluate.ts';
-export { expectedEvaluator, judgeEvaluator, layerSignals, scoreLayers, JUDGE_SCHEMA, type ExpectedOptions, type JudgeOptions, type JudgeRunner, type SignalEvent } from './eval/evaluators.ts';
-export { replayRuns, withOverrides, inputSegments, type ReplayOptions, type ReplayOverrides, type ReplayRow } from './eval/replay.ts';
-export { LAYERS, parseDataset, toJsonl, caseProblems, scoreProblems, type EvalResult } from './eval/contract.ts';
-export { checkEvaluator, type EvalFixture, type EvaluatorCheckOptions } from './conformance/eval.ts';
+export { guardMiddleware, parseVerdict, GUARD_STAGES, type GuardMiddlewareOptions } from './guardrails/middleware.ts';

@@ -21,7 +21,7 @@ const pricing = {
     serverToolUsd: { type: 'object', additionalProperties: num },
   },
 };
-/** `auth` of HTTP tools, OpenAPI sources and MCP servers: a delegated token for `audience` from the run's credentials. */
+/** `auth` of MCP servers: a delegated token for `audience` from the run's credentials. */
 const toolAuth = { type: 'object', additionalProperties: false, required: ['audience'], properties: { audience: str, scopes: { type: 'array', items: str } } };
 const decision = { enum: ['allow', 'deny', 'ask'] };
 const risk = { enum: ['read', 'write', 'exec'] };
@@ -48,16 +48,16 @@ const policy = {
         },
       },
     },
-    /** External PDP: `type` names a registered authorizer; other options go to its factory. */
+    /** External PDP: `type` names an authorizer a plugin registered; other options go to its factory. */
     pdp: {
       type: 'object', required: ['type'],
-      properties: { type: str, url: str, onError: decision, includeArgs: { type: 'boolean' }, headers: strMap, maxReasonChars: lim('pdp.maxReasonChars') },
+      properties: { type: str, onError: decision, includeArgs: { type: 'boolean' }, maxReasonChars: lim('pdp.maxReasonChars') },
     },
   },
 };
 
-/** Identity component: `type` defaults to `oidc`. */
-const identityComponent = { type: 'object', properties: { type: str } };
+/** Identity component: `type` names a factory a plugin registered; other options go to it. */
+const identityComponent = { type: 'object', required: ['type'], properties: { type: str } };
 
 const budget = {
   type: 'object',
@@ -261,68 +261,6 @@ export const CONFIG_SCHEMA: JsonSchema = {
       },
     },
     routers: { type: 'object', additionalProperties: component },
-    knowledge: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        sources: {
-          type: 'object',
-          additionalProperties: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['type'],
-            properties: {
-              type: { enum: ['mcp', 'http', 'wiki'] },
-              server: str, command: str, args: { type: 'array', items: str }, env: strMap, cwd: str, url: str, headers: strMap,
-              tool: str, queryArg: str, toolArgs: { type: 'object' }, dir: str,
-              // timeoutMs: http request (default 10000) or inline MCP connection (default 60000).
-              timeoutMs: lim('knowledge.source.timeoutMs'), errorBodyChars: lim('knowledge.source.errorBodyChars'), maxPassageChars: lim('knowledge.source.maxPassageChars'),
-            },
-          },
-        },
-        k: lim('knowledge.k'),
-        maxK: lim('knowledge.maxK'),
-        maxChars: lim('knowledge.maxChars'),
-        toolMaxChars: lim('knowledge.toolMaxChars'),
-        mode: { enum: ['first-turn', 'every-turn'] },
-        timeoutMs: lim('knowledge.timeoutMs'),
-        maxQueryChars: lim('knowledge.maxQueryChars'),
-        maxTrackedRuns: lim('knowledge.maxTrackedRuns'),
-      },
-    },
-    httpTools: {
-      type: 'object',
-      additionalProperties: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['description', 'method', 'url', 'schema'],
-        properties: {
-          description: str, method: { enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] }, url: str,
-          query: { type: 'array', items: str }, headerArgs: { type: 'array', items: str }, headers: strMap,
-          body: { enum: ['json', 'none'] }, bodyArg: str, schema: jsonSchema, risk,
-          timeoutMs: lim('httpTools.timeoutMs'), maxResultChars: lim('httpTools.maxResultChars'), errorBodyChars: lim('httpTools.errorBodyChars'), auth: toolAuth,
-        },
-      },
-    },
-    openapi: {
-      type: 'object',
-      additionalProperties: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['spec'],
-        properties: {
-          spec: str, baseUrl: str, include: { type: 'array', items: str }, auth: toolAuth, headers: strMap,
-          timeoutMs: lim('openapi.timeoutMs'), maxResultChars: lim('openapi.maxResultChars'), errorBodyChars: lim('openapi.errorBodyChars'),
-          specTimeoutMs: lim('openapi.specTimeoutMs'), maxRefDepth: lim('openapi.maxRefDepth'), descriptionChars: lim('openapi.descriptionChars'),
-        },
-      },
-    },
-    guardrails: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['guards'],
-      properties: { guards: { type: 'array', items: component }, onError: { enum: ['block', 'allow'] }, name: str, maxReasonChars: lim('guardrails.maxReasonChars') },
-    },
     serve: {
       type: 'object',
       additionalProperties: false,

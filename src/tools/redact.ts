@@ -2,7 +2,7 @@ import type { LimitSpec } from '../types.ts';
 
 export const REDACT_LIMITS = {
   'limits.minSecretChars': {
-    component: 'Run loop and redaction', path: 'limits.minSecretChars', option: 'secretForms(values, minChars); minSecretChars of httpTool, httpKnowledge, McpClient.connect',
+    component: 'Run loop and redaction', path: 'limits.minSecretChars', option: 'secretForms(values, minChars); McpClient.connect minSecretChars',
     default: 4, min: 1, safe: [1, 8], why: 'Shorter secrets are not masked in echoed error text (they would mangle ordinary text)',
   },
 } as const satisfies Record<string, LimitSpec>;

@@ -6,12 +6,7 @@ import { resolveModel } from './presets.ts';
 import { signalTools } from './tools/signals.ts';
 import { webTools } from './tools/web.ts';
 import { BUILTIN_PATTERNS, type PatternDefinition } from './patterns.ts';
-import { knowledgeFromConfig } from './knowledge/config.ts';
-import { knowledgeMiddleware, knowledgeTool } from './knowledge/middleware.ts';
 import { fileNotes, memoryNotes, memoryTools } from './tools/memory.ts';
-import { authzenAuthorizer, opaAuthorizer } from './identity/authorizers.ts';
-import { type CredentialFactory, oidcCredentials } from './identity/credentials.ts';
-import { oidcVerifier } from './identity/verifier.ts';
 import { otlpSink } from './observe/otlp.ts';
 import { consoleSink, jsonlSink } from './observe/sinks.ts';
 import { anthropic } from './providers/anthropic.ts';
@@ -21,9 +16,7 @@ import { type RetryOptions, withRetry } from './providers/resilient.ts';
 import { fileStore } from './store/file.ts';
 import { memoryStore } from './store/memory.ts';
 import { type WorkspaceLimits, workspaceTools } from './tools/node.ts';
-import { ruleRouter } from './rule-router.ts';
-import { registerGuardrails } from './guardrails/register.ts';
-import type { Authorizer, CompactionStrategy, Guard, IdentityVerifier, Middleware, ModelRouter, Provider, RunStore, Sink, Tool } from './types.ts';
+import type { Authorizer, CompactionStrategy, CredentialFactory, IdentityVerifier, Middleware, ModelRouter, Provider, RunStore, Sink, Tool } from './types.ts';
 
 export interface FactoryContext {
   baseDir: string;
@@ -53,16 +46,15 @@ export class Registry {
   readonly middleware = new Map<string, Factory<Middleware>>();
   readonly tools = new Map<string, Factory<Tool>>();
   readonly caches = new Map<string, Factory<CacheStore>>();
+  // Layer hooks: empty by default; plugins register implementations (e.g. agent-layers adapters).
   /** In-process model routers, declared under `routers` and referenced by an agent's `router`. */
   readonly routers = new Map<string, Factory<ModelRouter>>();
-  /** Inbound token verification (`identity.verifier`). */
+  /** Inbound token verification (`identity.verifier`, used by `serve`). */
   readonly verifiers = new Map<string, Factory<IdentityVerifier>>();
   /** Outbound credentials bound per run (`identity.credentials`). */
   readonly credentials = new Map<string, Factory<CredentialFactory>>();
-  /** External policy decision points (`policy.pdp`): add Cedar, OpenFGA, Cerbos... from plugins. */
+  /** External policy decision points (`policy.pdp`). */
   readonly authorizers = new Map<string, Factory<Authorizer>>();
-  /** Guard types for the `guard` middleware (presidio, llm-guard, http, regex, and your own). */
-  readonly guards = new Map<string, Factory<Guard>>();
   /** Multi-agent patterns (chain, parallel, router, evaluator, orchestrator, and your own). */
   readonly patterns = new Map<string, PatternDefinition>(Object.entries(BUILTIN_PATTERNS));
 
@@ -96,12 +88,6 @@ export function createRegistry(): Registry {
 
   r.caches.set('memory', (o) => memoryCache(o.maxEntries));
   r.caches.set('file', (o, ctx) => fileCache(resolve(ctx.baseDir, o.dir ?? '.reinloop/cache')));
-
-  r.routers.set('rule', (o) => ruleRouter({ rules: o.rules, default: o.default }));
-  r.verifiers.set('oidc', (o) => oidcVerifier(o as Parameters<typeof oidcVerifier>[0]));
-  r.credentials.set('oidc', (o) => oidcCredentials(o as Parameters<typeof oidcCredentials>[0]));
-  r.authorizers.set('opa', (o) => opaAuthorizer(o as Parameters<typeof opaAuthorizer>[0]));
-  r.authorizers.set('authzen', (o) => authzenAuthorizer(o as Parameters<typeof authzenAuthorizer>[0]));
 
   for (const name of ['read_file', 'list_dir', 'write_file', 'edit_file', 'find_files', 'search_files', 'shell']) {
     r.tools.set(name, (_o, ctx) => workspaceTools({ ...ctx.workspaceLimits, root: ctx.workspace, shellTimeoutMs: ctx.shellTimeoutMs })[name]!);
@@ -161,12 +147,5 @@ export function createRegistry(): Registry {
       return tool;
     });
   }
-  const knowledge = (ctx: FactoryContext) => ctx.once('knowledge', () => knowledgeFromConfig(ctx));
-  r.middleware.set('knowledge', (_o, ctx) => knowledgeMiddleware(knowledge(ctx)));
-  r.tools.set('search_knowledge', (_o, ctx) => {
-    const { sources, k, maxChars, toolMaxChars, maxK, timeoutMs } = knowledge(ctx);
-    return knowledgeTool(sources, { k, maxChars: toolMaxChars ?? maxChars, maxK, timeoutMs });
-  });
-  registerGuardrails(r);
   return r;
 }

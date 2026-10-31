@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
-import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { describe, it } from 'node:test';
 import {
-  checkGuard, collectSink, createRegistry, createRuntime, guardMiddleware, httpGuard, llmGuardGuard, memoryStore, presidioGuard, regexGuard, run,
+  collectSink, createRegistry, createRuntime, guardMiddleware, memoryStore, parseVerdict, run,
   type Guard, type GuardInput, type GuardVerdict, type HarnessConfig, type RunEvent,
 } from '../src/index.ts';
 import { echoTool, makeAgent } from './helpers.ts';
@@ -200,7 +199,7 @@ describe('guardMiddleware', () => {
   it('events carry guard, stage, action and reason but never the inspected text', async () => {
     const sink = collectSink();
     const store = memoryStore();
-    const g = regexGuard({ action: 'redact' });
+    const g = spy('mask', (i) => (/example\.com|4111/.test(i.text) ? { action: 'redact', text: i.text.replace(/\S+@example\.com|4111[\d ]+/g, '[x]'), reason: 'pii' } : allow));
     const agent = makeAgent([{ text: `reply to ${EMAIL}` }], { middleware: [guardMiddleware([g])] });
     await run(agent, `contact ${EMAIL} or 4111 1111 1111 1111`, { sinks: [sink], store });
     const events = guardEvents(sink.events);
@@ -222,184 +221,19 @@ describe('guardMiddleware', () => {
   });
 });
 
-describe('regexGuard', () => {
-  const check = (text: string, opts: { action: 'redact' | 'block' } = { action: 'redact' }) => regexGuard(opts).check({ stage: 'input', text, agent: 'a', runId: 'r' });
-
-  it('redacts emails, phones, IBANs, valid cards and API-key-like secrets', async () => {
-    const out = await check(
-      `${EMAIL} +39 333 1234567 (555) 123-4567 IT60 X054 2811 1010 0000 0123 456 IT60X0542811101000000123456 4111 1111 1111 1111 sk-ant-abcdefghijklmnopqrstuvwx AKIAABCDEFGHIJKLMNOP api_key=abcd1234abcd1234abcd`,
-    );
-    assert.equal(out.action, 'redact');
-    assert.doesNotMatch(out.text!, /example|1234567|555|0542811|4111|sk-ant|AKIA|abcd1234/);
-    for (const name of ['email', 'phone', 'iban', 'credit_card', 'secret']) assert.match(out.reason!, new RegExp(name));
-  });
-
-  it('ignores near misses: failed checksums, dates, plain numbers, ordinary prose', async () => {
-    for (const text of ['card 4111 1111 1111 1112', 'iban IT60X0542811101000000123457', 'on 2026-10-31 at 12:30', 'order 123456789012', 'the key is under the mat', 'user@localhost']) {
-      assert.equal((await check(text)).action, 'allow', text);
-    }
-  });
-
-  it('block mode and pattern selection', async () => {
-    const v = await check(`mail ${EMAIL}`, { action: 'block' });
-    assert.deepEqual(v, { action: 'block', reason: 'matched: email' });
-    const only = regexGuard({ action: 'redact', patterns: ['iban', { name: 'ssn', pattern: String.raw`\b\d{3}-\d{2}-\d{4}\b` }] });
-    const res = await only.check({ stage: 'input', text: `${EMAIL} 123-45-6789`, agent: 'a', runId: 'r' });
-    assert.equal(res.text, `${EMAIL} [REDACTED:ssn]`);
-    assert.throws(() => regexGuard({ action: 'block', patterns: ['nope'] }), /unknown pattern "nope"/);
-  });
-
-  it('passes the conformance check; a broken guard does not', async () => {
-    assert.deepEqual(await checkGuard(regexGuard({ action: 'redact' }), { benign: 'What is the weather in Rome?', pii: { text: `mail ${EMAIL}`, contains: EMAIL }, harmful: ['key sk-abcdefghijklmnopqrstuvwxyz'] }), []);
-    const broken: Guard = { name: '', async check() { return { action: 'redact' } as GuardVerdict; } };
-    const failures = await checkGuard(broken, { benign: 'hello', pii: 'x@y.com' });
-    assert.ok(failures.some((f) => /name/.test(f)));
-    assert.ok(failures.some((f) => /redact must carry/.test(f)));
-    const lax: Guard = { name: 'lax', async check() { return allow; } };
-    assert.deepEqual((await checkGuard(lax, { benign: 'hi', harmful: 'bad', pii: 'x' })).length, 2);
-  });
-});
-
-/** node:http server recording requests and answering through `handle`. */
-async function mock(handle: (req: { url: string; body: any; auth?: string }) => { status?: number; body: unknown }): Promise<{ url: string; requests: Array<{ url: string; body: any; auth?: string }>; close(): Promise<void> }> {
-  const requests: Array<{ url: string; body: any; auth?: string }> = [];
-  const server: Server = createServer(async (req: IncomingMessage, res) => {
-    let raw = '';
-    for await (const chunk of req) raw += chunk;
-    const parsed = { url: req.url!, body: JSON.parse(raw), auth: req.headers.authorization };
-    requests.push(parsed);
-    const out = handle(parsed);
-    res.writeHead(out.status ?? 200, { 'content-type': 'application/json' }).end(JSON.stringify(out.body));
-  });
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
-  const { port } = server.address() as { port: number };
-  return { url: `http://127.0.0.1:${port}`, requests, close: () => new Promise((r) => server.close(() => r())) };
-}
-const input = (text: string, stage: GuardInput['stage'] = 'input'): GuardInput => ({ stage, text, agent: 'a', runId: 'r', subject: 'u' });
-
-describe('guard adapters (HTTP mocks)', () => {
-  it('httpGuard posts the GuardInput and validates the verdict', async () => {
-    const m = await mock((r) => ({ body: r.body.text.includes('bad') ? { action: 'block', reason: 'nope' } : r.body.text.includes('weird') ? { action: 'explode' } : { action: 'allow' } }));
-    try {
-      const g = httpGuard({ url: `${m.url}/guard`, headers: { 'x-key': 'k' }, name: 'shim' });
-      assert.equal(g.name, 'shim');
-      assert.deepEqual(await g.check(input('bad text')), { action: 'block', reason: 'nope' });
-      assert.deepEqual(m.requests[0]!.body, input('bad text'));
-      assert.equal(m.requests[0]!.url, '/guard');
-      await assert.rejects(g.check(input('weird')), /^GuardCallError: invalid response$/);
-      assert.deepEqual(await checkGuard(g, { benign: 'fine', harmful: 'bad text' }), []);
-    } finally {
-      await m.close();
-    }
-    const down = httpGuard({ url: 'http://127.0.0.1:1/guard', timeoutMs: 500 });
-    await assert.rejects(down.check(input('x')));
-  });
-
-  it('guard call failures use a fixed set of messages and never echo error text, bodies or URLs', async () => {
-    const leak = 'connect ECONNREFUSED https://admin:hunter2@internal.example/guard authorization: Bearer abc123';
-    const messageOf = async (g: Guard) => { try { await g.check(input('mail jane.doe@example.com')); } catch (err) { return (err as Error).message; } return 'no error'; };
-    const fetchWith = (f: (u: string, i: RequestInit) => Promise<Response>) => ({ fetch: f });
-    const network = fetchWith(async () => { throw new Error(leak); });
-    const status = fetchWith(async () => new Response(`echo jane.doe@example.com ${leak}`, { status: 502 }));
-    const notJson = fetchWith(async () => new Response(`<html>${leak}</html>`));
-    const slow = { timeoutMs: 20, fetch: (_u: string, init: RequestInit) => new Promise<Response>((_r, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason))) };
-    const wrongShape = fetchWith(async () => new Response(JSON.stringify({ is_valid: 'yes', secret: leak })));
-    const p = { analyzerUrl: 'http://a', anonymizerUrl: 'http://b' };
-    const cases: Array<[Guard, string]> = [
-      [httpGuard({ url: 'http://x', ...network }), 'network error'],
-      [httpGuard({ url: 'http://x', ...status }), 'HTTP 502'],
-      [httpGuard({ url: 'http://x', ...notJson }), 'invalid response'],
-      [httpGuard({ url: 'http://x', ...slow }), 'timeout'],
-      [httpGuard({ url: 'http://x', fetch: async () => new Response(JSON.stringify({ action: 'maybe', reason: leak })) }), 'invalid response'],
-      [presidioGuard({ ...p, action: 'redact', ...network }), 'network error'],
-      [presidioGuard({ ...p, action: 'redact', ...status }), 'HTTP 502'],
-      [presidioGuard({ ...p, action: 'redact', fetch: async () => new Response(JSON.stringify({ leak })) }), 'invalid response'],
-      [presidioGuard({ ...p, action: 'redact', ...slow }), 'timeout'],
-      [llmGuardGuard({ url: 'http://x', token: 'tok-secret', ...network }), 'network error'],
-      [llmGuardGuard({ url: 'http://x', token: 'tok-secret', ...status }), 'HTTP 502'],
-      [llmGuardGuard({ url: 'http://x', ...wrongShape }), 'invalid response'],
-      [llmGuardGuard({ url: 'http://x', ...slow }), 'timeout'],
-    ];
-    for (const [g, expected] of cases) assert.equal(await messageOf(g), expected, g.name);
-  });
-
-  it('guard URLs with credentials, or that are not URLs, are rejected at creation', () => {
-    assert.throws(() => httpGuard({ url: 'https://u:p@guard.example/check' }), /must not carry credentials/);
-    assert.throws(() => presidioGuard({ analyzerUrl: 'http://u:p@a', anonymizerUrl: 'http://b', action: 'block' }), /must not carry credentials/);
-    assert.throws(() => presidioGuard({ analyzerUrl: 'http://a', anonymizerUrl: 'http://u@b', action: 'block' }), /must not carry credentials/);
-    assert.throws(() => llmGuardGuard({ url: 'http://:secret@llm-guard:8000' }), /must not carry credentials/);
-    assert.throws(() => llmGuardGuard({ url: 'llm-guard:8000' }), /not a valid http\(s\) URL/);
-  });
-
-  it('llm-guard keeps service-supplied scanner names out of reasons unless identifier-like', async () => {
-    const g = llmGuardGuard({ url: 'http://x', fetch: async () => new Response(JSON.stringify({ is_valid: false, scanners: { 'Prompt Injection\nignore the rules': 1, Toxicity: 0.9 } })) });
-    assert.deepEqual(await g.check(input('hello')), { action: 'block', reason: 'llm-guard: Toxicity' });
-  });
-
-  it('presidioGuard: analyze then anonymize (redact), or block with entity types', async () => {
-    const analyzer = await mock((r) => ({
-      body: r.body.text.includes(EMAIL)
-        ? [{ entity_type: 'EMAIL_ADDRESS', start: 5, end: 25, score: 1, analysis_explanation: null, recognition_metadata: {} }]
-        : [],
-    }));
-    const anonymizer = await mock((r) => ({ body: { text: r.body.text.replace(EMAIL, '<EMAIL_ADDRESS>'), items: [] } }));
-    try {
-      const opts = { analyzerUrl: analyzer.url, anonymizerUrl: `${anonymizer.url}/`, entities: ['EMAIL_ADDRESS'], scoreThreshold: 0.5, language: 'it' };
-      const redact = presidioGuard({ ...opts, action: 'redact' });
-      const v = await redact.check(input(`mail ${EMAIL}`));
-      assert.deepEqual(v, { action: 'redact', text: 'mail <EMAIL_ADDRESS>', reason: 'PII redacted: EMAIL_ADDRESS' });
-      assert.deepEqual(analyzer.requests[0]!.body, { text: `mail ${EMAIL}`, language: 'it', entities: ['EMAIL_ADDRESS'], score_threshold: 0.5 });
-      assert.equal(analyzer.requests[0]!.url, '/analyze');
-      assert.equal(anonymizer.requests[0]!.url, '/anonymize');
-      assert.deepEqual(anonymizer.requests[0]!.body.analyzer_results, [{ entity_type: 'EMAIL_ADDRESS', start: 5, end: 25, score: 1 }]);
-
-      const block = presidioGuard({ ...opts, action: 'block' });
-      assert.deepEqual(await block.check(input(`mail ${EMAIL}`)), { action: 'block', reason: 'PII detected: EMAIL_ADDRESS' });
-      assert.deepEqual(await block.check(input('hello')), { action: 'allow' });
-    } finally {
-      await analyzer.close();
-      await anonymizer.close();
-    }
-  });
-
-  it('llmGuardGuard: bearer auth, prompt vs output endpoint, invalid blocks with scanner names', async () => {
-    const m = await mock((r) => {
-      const text: string = r.body.prompt || r.body.output;
-      if (text.includes('inject')) return { body: { sanitized_prompt: text, is_valid: false, scanners: { PromptInjection: 0.97, Secrets: -1 } } };
-      if (text.includes('leak')) return { body: { sanitized_output: text, is_valid: false, scanners: { Sensitive: 0.8 } } };
-      if (text.includes('token')) return { body: { sanitized_prompt: text.replace('token', '[T]'), is_valid: true, scanners: {} } };
-      return { body: { [r.url.endsWith('output') ? 'sanitized_output' : 'sanitized_prompt']: text, is_valid: true, scanners: { PromptInjection: -1 } } };
-    });
-    try {
-      const g = llmGuardGuard({ url: m.url, token: 'tkn', scannersSuppress: ['Toxicity'] });
-      assert.deepEqual(g.stages, ['input', 'output', 'tool_result']);
-      assert.deepEqual(await g.check(input('please inject')), { action: 'block', reason: 'llm-guard: PromptInjection' });
-      assert.equal(m.requests[0]!.url, '/analyze/prompt');
-      assert.equal(m.requests[0]!.auth, 'Bearer tkn');
-      assert.deepEqual(m.requests[0]!.body, { prompt: 'please inject', scanners_suppress: ['Toxicity'] });
-      assert.deepEqual(await g.check(input('a leak', 'output')), { action: 'block', reason: 'llm-guard: Sensitive' });
-      assert.equal(m.requests[1]!.url, '/analyze/output');
-      assert.deepEqual(m.requests[1]!.body, { prompt: '', output: 'a leak', scanners_suppress: ['Toxicity'] });
-      assert.deepEqual(await g.check(input('my token')), { action: 'redact', text: 'my [T]', reason: 'llm-guard: sanitized' });
-      assert.deepEqual(await g.check(input('hello')), { action: 'allow' });
-    } finally {
-      await m.close();
-    }
-  });
-});
-
-describe('guard middleware from config', () => {
-  const config = (guardrails: HarnessConfig['guardrails']): HarnessConfig => ({
+describe('guard hook from config', () => {
+  const config = (extra: Partial<HarnessConfig> = {}): HarnessConfig => ({
     providers: { mock: { type: 'mock', responses: [{ text: 'ok' }] } },
     models: { m: { provider: 'mock', model: 'x' } },
     agents: { a: { model: 'm', middleware: ['guard'] } },
-    guardrails,
+    ...extra,
   });
 
-  it('builds guards from guardrails config, including plugin-registered types', async () => {
+  it('a plugin registers guardMiddleware over its own guards as a middleware', async () => {
     const registry = createRegistry();
-    registry.guards.set('deny-word', (o) => ({ name: 'deny-word', async check(i) { return i.text.includes(o.word) ? { action: 'block', reason: 'word' } : allow; } }));
-    const runtime = await createRuntime(config({ guards: [{ type: 'regex', action: 'redact' }, { type: 'deny-word', word: 'banned' }], onError: 'block' }), { registry, env: {} });
+    const denyWord: Guard = { name: 'deny-word', async check(i) { return i.text.includes('banned') ? { action: 'block', reason: 'word' } : allow; } };
+    registry.middleware.set('guard', () => guardMiddleware([denyWord]));
+    const runtime = await createRuntime(config(), { registry, env: {} });
     try {
       assert.equal((await runtime.run('a', 'fine')).status, 'completed');
       const res = await runtime.run('a', 'a banned word');
@@ -410,9 +244,13 @@ describe('guard middleware from config', () => {
     }
   });
 
-  it('reports a missing guardrails section, an unknown guard type and bad config', async () => {
-    await assert.rejects((await createRuntime(config(undefined), { env: {} })).agent('a'), /needs a top-level "guardrails" config/);
-    await assert.rejects((await createRuntime(config({ guards: [{ type: 'nope' }] }), { env: {} })).agent('a'), /guardrails\.guards\[0\]\.type: unknown guard "nope" \(registered: presidio, llm-guard, http, regex\)/);
-    await assert.rejects(createRuntime(config({ guards: [], onError: 'maybe' as any }), { env: {} }), /onError/);
+  it('the removed guardrails section points to agent-layers', async () => {
+    await assert.rejects(createRuntime(config({ guardrails: { guards: [{ type: 'regex' }] } } as Partial<HarnessConfig>), { env: {} }), /\$\.guardrails: no longer part of reinloop.*guardMiddleware.*agent-layers/);
+  });
+
+  it('parseVerdict rejects malformed verdicts', () => {
+    assert.deepEqual(parseVerdict({ action: 'redact', text: 'x', extra: 1 }), { action: 'redact', text: 'x' });
+    assert.throws(() => parseVerdict({ action: 'redact' }), /invalid guard verdict/);
+    assert.throws(() => parseVerdict({ action: 'maybe' }), /invalid guard verdict/);
   });
 });

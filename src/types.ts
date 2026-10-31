@@ -225,7 +225,7 @@ export interface PdpSettings {
   authorizer?: Authorizer;
   /** What a PDP failure (network, timeout, malformed answer) means. Default `deny`. */
   onError?: Decision;
-  /** Send the tool arguments (`args`; AuthZEN `context.args`) (default false: arguments may hold personal data). */
+  /** Send the tool arguments as `args` (default false: arguments may hold personal data). */
   includeArgs?: boolean;
   /** Characters of a PDP reason or error kept in the decision (default 200). */
   maxReasonChars?: number;
@@ -380,8 +380,7 @@ export interface EventMap {
   hosted_tool_result: { callId: string; name: string; summary: string; isError: boolean; sources?: Array<{ url: string; title?: string }> };
   /**
    * Context retrieved from a knowledge source before a model call. Persisted: it records which passages (ids only, no
-   * text) informed the answer, for audit and replay. Emitted by the `knowledge` middleware; the `search_knowledge` tool
-   * is already recorded by its own tool events.
+   * text) informed the answer, for audit and replay. Emitted by `knowledgeMiddleware`.
    */
   knowledge_retrieval: { source: string; query: string; passages: number; ids: string[]; durationMs: number; error?: string };
   compaction: { strategy: string; beforeTokens: number; afterTokens: number; messages: Message[]; usage?: Usage; costUsd?: number };
@@ -486,6 +485,11 @@ export interface Identity {
 export interface IdentityVerifier { verify(token: string, opts?: { signal?: AbortSignal }): Promise<Identity> }
 /** Access token for a downstream audience (token exchange on behalf of the user, or client credentials). */
 export interface CredentialProvider { token(audience: string, opts?: { scopes?: string[]; signal?: AbortSignal }): Promise<string> }
+/**
+ * Binds credentials to a run identity (`identity.credentials` in config). Called without identity for the agent's own
+ * credentials (e.g. MCP connection setup outside any run).
+ */
+export type CredentialFactory = (identity?: Identity) => CredentialProvider;
 /** Who asks, as a PDP sees it: never a token. A run without identity is the explicit `anonymous` caller, never the agent. */
 export interface AccessCaller { id: string; kind: 'user' | 'agent' | 'anonymous'; roles: string[]; scopes: string[]; name?: string }
 /** What a tool call asks a PDP, in the agent-layers `AccessQuestion` names. */

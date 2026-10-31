@@ -16,14 +16,12 @@ import { agentTool } from '../subagent.ts';
 import { DEFAULT_SKILL_DIRS, discoverSkills, selectSkills, skillTool, type Skill } from '../skills.ts';
 import { type Member, streamMember } from '../team.ts';
 import { memoryArtifacts, readArtifactTool } from '../tools/define.ts';
-import { declaredTools } from '../tools/declared.ts';
 import type { WorkspaceLimits } from '../tools/node.ts';
 import { hostedTool } from '../tools/hosted.ts';
-import type { CredentialFactory } from '../identity/credentials.ts';
-import type { Agent, ArtifactStore, CredentialProvider, IdentityVerifier, Message, Middleware, ModelRef, PolicyConfig, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
+import type { Agent, ArtifactStore, CredentialFactory, CredentialProvider, IdentityVerifier, Message, Middleware, ModelRef, PolicyConfig, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
 import type { ServeSettings } from '../serve.ts';
 import { globToRegExp } from '../util.ts';
-import { type AgentConfig, ConfigError, type Env, type HarnessConfig, checkConfig, interpolate, loadConfig, resolveLimits } from './load.ts';
+import { type AgentConfig, ConfigError, type Env, type HarnessConfig, checkConfig, interpolate, LAYERS_HOME, loadConfig, resolveLimits } from './load.ts';
 
 export interface RuntimeOptions {
   registry?: Registry;
@@ -102,7 +100,11 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
 
   const make = async <T>(kind: string, map: Map<string, (o: any, c: FactoryContext) => T | Promise<T>>, spec: { type: string }, path: string): Promise<T> => {
     const factory = map.get(spec.type);
-    if (!factory) throw new ConfigError(`${path}.type: unknown ${kind} "${spec.type}" (registered: ${[...map.keys()].join(', ')})`);
+    if (!factory) {
+      // Layer hooks have no built-in implementation: they come from plugins.
+      const hint = map.size ? `registered: ${[...map.keys()].join(', ')}` : `none registered; load a plugin that registers one, see ${LAYERS_HOME}`;
+      throw new ConfigError(`${path}.type: unknown ${kind} "${spec.type}" (${hint})`);
+    }
     const { type: _, ...options } = interpolate(spec, env, path) as Record<string, unknown>;
     return factory(options, ctx);
   };
@@ -116,15 +118,11 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     : undefined;
 
   const idCfg = config.identity ?? {};
-  const verifier = idCfg.verifier ? await make('identity verifier', registry.verifiers, { type: 'oidc', ...idCfg.verifier }, '$.identity.verifier') : undefined;
-  const credentials = idCfg.credentials ? await make('credentials', registry.credentials, { type: 'oidc', ...idCfg.credentials }, '$.identity.credentials') : undefined;
-  // MCP connection setup happens outside any run: it uses the agent's own identity (client_credentials).
+  const verifier = idCfg.verifier ? await make('identity verifier', registry.verifiers, idCfg.verifier, '$.identity.verifier') : undefined;
+  const credentials: CredentialFactory | undefined = idCfg.credentials ? await make('credentials', registry.credentials, idCfg.credentials, '$.identity.credentials') : undefined;
+  // MCP connection setup happens outside any run: it uses the agent's own credentials (the factory without identity).
   let connectCredentials: CredentialProvider | undefined;
-  const mcpConnectCredentials = async () => {
-    if (!idCfg.credentials) return undefined;
-    connectCredentials ??= (await make('credentials', registry.credentials, { type: 'oidc', ...idCfg.credentials, mode: 'self' } as { type: string }, '$.identity.credentials'))();
-    return connectCredentials;
-  };
+  const mcpConnectCredentials = () => (credentials ? (connectCredentials ??= credentials()) : undefined);
   const authorizers = new Map<string, Promise<PolicyConfig['pdp']>>();
   const withPdp = async (policy: PolicyConfig | undefined, path: string): Promise<PolicyConfig | undefined> => {
     const spec = policy?.pdp;
@@ -172,7 +170,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
   const serverTools = (server: string) => {
     if (!mcp.has(server)) {
       const cfg = interpolate(config.mcpServers![server]!, env, `$.mcpServers.${server}`);
-      mcp.set(server, (async () => mcpTools(server, cfg, { credentials: cfg.auth ? await mcpConnectCredentials() : undefined, minSecretChars: limits.minSecretChars }))());
+      mcp.set(server, mcpTools(server, cfg, { credentials: cfg.auth ? mcpConnectCredentials() : undefined, minSecretChars: limits.minSecretChars }));
     }
     return mcp.get(server)!.then((s) => s.tools);
   };
@@ -181,8 +179,6 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     const prefix = pattern.split('__')[0]!;
     return Object.entries(config.mcpServers ?? {}).find(([name, s]) => (s.prefix ?? name) === prefix && prefix !== '' && pattern.includes('__'))?.[0];
   };
-
-  const declared = declaredTools(config, env, baseDir, { minSecretChars: limits.minSecretChars });
 
   let skills: Promise<Skill[]> | undefined;
   const allSkills = () => {
@@ -207,11 +203,6 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
         for (const t of hits) byName.set(t.name, t);
         continue;
       }
-      const spec = await declared.openapi(pattern, owner);
-      if (spec) {
-        for (const t of spec) byName.set(t.name, t);
-        continue;
-      }
       const re = globToRegExp(pattern);
       let matched = false;
       for (const name of registry.tools.keys()) {
@@ -234,10 +225,6 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
         if (!re.test(toolName)) continue;
         matched = true;
         byName.set(toolName, hostedTool({ ...interpolate(def, env, `$.hostedTools.${toolName}`), name: toolName }));
-      }
-      for (const t of declared.http(pattern)) {
-        matched = true;
-        byName.set(t.name, t);
       }
       if (pattern === 'read_artifact' && artifacts) {
         matched = true;

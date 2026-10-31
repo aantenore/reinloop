@@ -1,10 +1,7 @@
 // Every configurable limit in one place: defaults, config paths, accepted and safe ranges. Components read their
 // defaults from here; config validation, the JSON Schema, load-time warnings and the docs tables are derived from it.
-// Self-contained modules (identity, guardrails, knowledge adapters, metrics, redaction) declare their own limits and
-// are merged in below, so they keep depending on contract types and Node built-ins only.
-import { GUARD_LIMITS } from './guardrails/contract.ts';
-import { IDENTITY_LIMITS } from './identity/http.ts';
-import { KNOWLEDGE_LIMITS } from './knowledge/core.ts';
+// Self-contained modules (metrics, provider timeouts, redaction) declare their own limits and are merged in below, so
+// they keep depending on contract types and Node built-ins only.
 import { TELEMETRY_LIMITS } from './observe/metrics.ts';
 import { PROVIDER_TIMEOUT_LIMITS } from './providers/limits.ts';
 import { REDACT_LIMITS } from './tools/redact.ts';
@@ -116,45 +113,6 @@ const MCP_LIMITS = {
   },
 } as const satisfies Record<string, LimitSpec>;
 
-const HTTP_TOOL_LIMITS = {
-  'httpTools.timeoutMs': {
-    component: 'HTTP and OpenAPI tools', path: 'httpTools.<name>.timeoutMs', option: 'httpTool({ timeoutMs })', default: 'unbounded', min: 1, unbounded: true, warnUnbounded: true,
-    safe: [1000, 600_000], why: 'Time limit of one call; without it tools.timeoutMs applies, "unbounded" overrides that',
-  },
-  'httpTools.maxResultChars': {
-    component: 'HTTP and OpenAPI tools', path: 'httpTools.<name>.maxResultChars', option: 'httpTool({ maxResultChars })', default: 16_000, min: 100, unbounded: true, warnUnbounded: true,
-    safe: [1000, 1_000_000], why: 'Response text returned to the model',
-  },
-  'httpTools.errorBodyChars': {
-    component: 'HTTP and OpenAPI tools', path: 'httpTools.<name>.errorBodyChars', option: 'httpTool({ errorBodyChars })', default: 500, min: 0,
-    why: 'Response text kept in an error result (secrets are masked first)',
-  },
-  'openapi.timeoutMs': {
-    component: 'HTTP and OpenAPI tools', path: 'openapi.<name>.timeoutMs', option: 'openapiTools(spec, { timeoutMs })', default: 'unbounded', min: 1, unbounded: true, warnUnbounded: true,
-    safe: [1000, 600_000], why: 'Time limit of one call; without it tools.timeoutMs applies, "unbounded" overrides that',
-  },
-  'openapi.maxResultChars': {
-    component: 'HTTP and OpenAPI tools', path: 'openapi.<name>.maxResultChars', option: 'openapiTools(spec, { maxResultChars })', default: 16_000, min: 100, unbounded: true, warnUnbounded: true,
-    safe: [1000, 1_000_000], why: 'Response text returned to the model',
-  },
-  'openapi.errorBodyChars': {
-    component: 'HTTP and OpenAPI tools', path: 'openapi.<name>.errorBodyChars', option: 'openapiTools(spec, { errorBodyChars })', default: 500, min: 0,
-    why: 'Response text kept in an error result (secrets are masked first)',
-  },
-  'openapi.specTimeoutMs': {
-    component: 'HTTP and OpenAPI tools', path: 'openapi.<name>.specTimeoutMs', option: 'readOpenApiSpec(source, baseDir, { timeoutMs })', default: 30_000, min: 1,
-    safe: [1000, 120_000], why: 'Time limit for downloading a spec given as a URL',
-  },
-  'openapi.maxRefDepth': {
-    component: 'HTTP and OpenAPI tools', path: 'openapi.<name>.maxRefDepth', option: 'openapiTools(spec, { maxRefDepth })', default: 24, min: 1, safe: [1, 64],
-    why: 'Nested $ref levels inlined; deeper ones become an open schema',
-  },
-  'openapi.descriptionChars': {
-    component: 'HTTP and OpenAPI tools', path: 'openapi.<name>.descriptionChars', option: 'openapiTools(spec, { descriptionChars })', default: 1000, min: 50,
-    why: 'Characters of an operation summary used as the tool description',
-  },
-} as const satisfies Record<string, LimitSpec>;
-
 const BUILTIN_PROVIDERS = ['openai-compatible', 'anthropic'] as const;
 
 const PROVIDER_LIMITS = {
@@ -250,6 +208,13 @@ const SERVE_LIMITS = {
   },
 } as const satisfies Record<string, LimitSpec>;
 
+const POLICY_LIMITS = {
+  'pdp.maxReasonChars': {
+    component: 'Policy', path: 'policy.pdp.maxReasonChars', also: ['agents.<name>.policy.pdp.maxReasonChars'], option: 'PolicyConfig.pdp.maxReasonChars', default: 200, min: 20,
+    why: 'Characters of a PDP reason or error kept in the decision',
+  },
+} as const satisfies Record<string, LimitSpec>;
+
 const LOOP_LIMITS = {
   'limits.maxTurns': {
     component: 'Run loop and redaction', path: 'limits.maxTurns', option: 'DEFAULT_BUDGET.maxTurns (Agent.budget)', default: 50, min: 1, unbounded: true, warnUnbounded: true,
@@ -266,14 +231,11 @@ export const LIMITS = {
   ...TOOL_LIMITS,
   ...WEB_LIMITS,
   ...SIGNAL_LIMITS,
-  ...KNOWLEDGE_LIMITS,
   ...MCP_LIMITS,
-  ...HTTP_TOOL_LIMITS,
   ...PROVIDER_LIMITS,
   ...PROVIDER_TIMEOUT_LIMITS,
   ...AGENT_LIMITS,
-  ...IDENTITY_LIMITS,
-  ...GUARD_LIMITS,
+  ...POLICY_LIMITS,
   ...TELEMETRY_LIMITS,
   ...SERVE_LIMITS,
   ...LOOP_LIMITS,

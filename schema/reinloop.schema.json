@@ -723,9 +723,6 @@
             "type": {
               "type": "string"
             },
-            "url": {
-              "type": "string"
-            },
             "onError": {
               "enum": [
                 "allow",
@@ -735,12 +732,6 @@
             },
             "includeArgs": {
               "type": "boolean"
-            },
-            "headers": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "string"
-              }
             },
             "maxReasonChars": {
               "description": "Characters of a PDP reason or error kept in the decision. Default 200.",
@@ -766,6 +757,9 @@
       "properties": {
         "verifier": {
           "type": "object",
+          "required": [
+            "type"
+          ],
           "properties": {
             "type": {
               "type": "string"
@@ -774,6 +768,9 @@
         },
         "credentials": {
           "type": "object",
+          "required": [
+            "type"
+          ],
           "properties": {
             "type": {
               "type": "string"
@@ -1011,9 +1008,6 @@
                   "type": {
                     "type": "string"
                   },
-                  "url": {
-                    "type": "string"
-                  },
                   "onError": {
                     "enum": [
                       "allow",
@@ -1023,12 +1017,6 @@
                   },
                   "includeArgs": {
                     "type": "boolean"
-                  },
-                  "headers": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
                   },
                   "maxReasonChars": {
                     "description": "Characters of a PDP reason or error kept in the decision. Default 200.",
@@ -1405,9 +1393,6 @@
                             "type": {
                               "type": "string"
                             },
-                            "url": {
-                              "type": "string"
-                            },
                             "onError": {
                               "enum": [
                                 "allow",
@@ -1417,12 +1402,6 @@
                             },
                             "includeArgs": {
                               "type": "boolean"
-                            },
-                            "headers": {
-                              "type": "object",
-                              "additionalProperties": {
-                                "type": "string"
-                              }
                             },
                             "maxReasonChars": {
                               "description": "Characters of a PDP reason or error kept in the decision. Default 200.",
@@ -1782,9 +1761,6 @@
                                   "type": {
                                     "type": "string"
                                   },
-                                  "url": {
-                                    "type": "string"
-                                  },
                                   "onError": {
                                     "enum": [
                                       "allow",
@@ -1794,12 +1770,6 @@
                                   },
                                   "includeArgs": {
                                     "type": "boolean"
-                                  },
-                                  "headers": {
-                                    "type": "object",
-                                    "additionalProperties": {
-                                      "type": "string"
-                                    }
                                   },
                                   "maxReasonChars": {
                                     "description": "Characters of a PDP reason or error kept in the decision. Default 200.",
@@ -2399,551 +2369,6 @@
           "type": {
             "type": "string"
           }
-        }
-      }
-    },
-    "knowledge": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "sources": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "enum": [
-                  "mcp",
-                  "http",
-                  "wiki"
-                ]
-              },
-              "server": {
-                "type": "string"
-              },
-              "command": {
-                "type": "string"
-              },
-              "args": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "env": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                }
-              },
-              "cwd": {
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              },
-              "headers": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                }
-              },
-              "tool": {
-                "type": "string"
-              },
-              "queryArg": {
-                "type": "string"
-              },
-              "toolArgs": {
-                "type": "object"
-              },
-              "dir": {
-                "type": "string"
-              },
-              "timeoutMs": {
-                "description": "Time limit of one request to an http source. Default 10000.",
-                "default": 10000,
-                "anyOf": [
-                  {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  {
-                    "type": "string",
-                    "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-                  }
-                ]
-              },
-              "errorBodyChars": {
-                "description": "Response text kept in a source error (secrets are masked first). Default 300.",
-                "default": 300,
-                "anyOf": [
-                  {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  {
-                    "type": "string",
-                    "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-                  }
-                ]
-              },
-              "maxPassageChars": {
-                "description": "Size of the passages a wiki page is split into. Default 1500.",
-                "default": 1500,
-                "anyOf": [
-                  {
-                    "type": "integer",
-                    "minimum": 100
-                  },
-                  {
-                    "type": "string",
-                    "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-                  }
-                ]
-              }
-            }
-          }
-        },
-        "k": {
-          "description": "Passages per retrieval. Default 4.",
-          "default": 4,
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 1
-            },
-            {
-              "type": "string",
-              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-            }
-          ]
-        },
-        "maxK": {
-          "description": "Most passages search_knowledge may ask for. Default 10.",
-          "default": 10,
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 1
-            },
-            {
-              "type": "string",
-              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-            }
-          ]
-        },
-        "maxChars": {
-          "description": "Passage text appended to the user message by the middleware (search_knowledge too, unless toolMaxChars is set). Default 6000.",
-          "default": 6000,
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 100
-            },
-            {
-              "type": "string",
-              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-            }
-          ]
-        },
-        "toolMaxChars": {
-          "description": "Passage text of one search_knowledge result (default: maxChars when set). Default 8000.",
-          "default": 8000,
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 100
-            },
-            {
-              "type": "string",
-              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-            }
-          ]
-        },
-        "mode": {
-          "enum": [
-            "first-turn",
-            "every-turn"
-          ]
-        },
-        "timeoutMs": {
-          "description": "Per-source time limit; a slow source is skipped, the run goes on. Default 10000.",
-          "default": 10000,
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 100
-            },
-            {
-              "type": "string",
-              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-            }
-          ]
-        },
-        "maxQueryChars": {
-          "description": "Characters of the user text sent as the query. Default 1000.",
-          "default": 1000,
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 10
-            },
-            {
-              "type": "string",
-              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-            }
-          ]
-        },
-        "maxTrackedRuns": {
-          "description": "Runs whose retrieved blocks are kept in memory (a forgotten run costs one re-query). Default 64.",
-          "default": 64,
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 1
-            },
-            {
-              "type": "string",
-              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-            }
-          ]
-        }
-      }
-    },
-    "httpTools": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "description",
-          "method",
-          "url",
-          "schema"
-        ],
-        "properties": {
-          "description": {
-            "type": "string"
-          },
-          "method": {
-            "enum": [
-              "GET",
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE",
-              "HEAD"
-            ]
-          },
-          "url": {
-            "type": "string"
-          },
-          "query": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "headerArgs": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "headers": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
-          "body": {
-            "enum": [
-              "json",
-              "none"
-            ]
-          },
-          "bodyArg": {
-            "type": "string"
-          },
-          "schema": {
-            "type": "object",
-            "properties": {
-              "properties": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "object"
-                }
-              },
-              "required": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "risk": {
-            "enum": [
-              "read",
-              "write",
-              "exec"
-            ]
-          },
-          "timeoutMs": {
-            "description": "Time limit of one call; without it tools.timeoutMs applies, \"unbounded\" overrides that. Default unbounded.",
-            "default": "unbounded",
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1
-              },
-              {
-                "const": "unbounded"
-              },
-              {
-                "type": "string",
-                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-              }
-            ]
-          },
-          "maxResultChars": {
-            "description": "Response text returned to the model. Default 16000.",
-            "default": 16000,
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 100
-              },
-              {
-                "const": "unbounded"
-              },
-              {
-                "type": "string",
-                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-              }
-            ]
-          },
-          "errorBodyChars": {
-            "description": "Response text kept in an error result (secrets are masked first). Default 500.",
-            "default": 500,
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0
-              },
-              {
-                "type": "string",
-                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-              }
-            ]
-          },
-          "auth": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "audience"
-            ],
-            "properties": {
-              "audience": {
-                "type": "string"
-              },
-              "scopes": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "openapi": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "spec"
-        ],
-        "properties": {
-          "spec": {
-            "type": "string"
-          },
-          "baseUrl": {
-            "type": "string"
-          },
-          "include": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "auth": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "audience"
-            ],
-            "properties": {
-              "audience": {
-                "type": "string"
-              },
-              "scopes": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "headers": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string"
-            }
-          },
-          "timeoutMs": {
-            "description": "Time limit of one call; without it tools.timeoutMs applies, \"unbounded\" overrides that. Default unbounded.",
-            "default": "unbounded",
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1
-              },
-              {
-                "const": "unbounded"
-              },
-              {
-                "type": "string",
-                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-              }
-            ]
-          },
-          "maxResultChars": {
-            "description": "Response text returned to the model. Default 16000.",
-            "default": 16000,
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 100
-              },
-              {
-                "const": "unbounded"
-              },
-              {
-                "type": "string",
-                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-              }
-            ]
-          },
-          "errorBodyChars": {
-            "description": "Response text kept in an error result (secrets are masked first). Default 500.",
-            "default": 500,
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0
-              },
-              {
-                "type": "string",
-                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-              }
-            ]
-          },
-          "specTimeoutMs": {
-            "description": "Time limit for downloading a spec given as a URL. Default 30000.",
-            "default": 30000,
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1
-              },
-              {
-                "type": "string",
-                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-              }
-            ]
-          },
-          "maxRefDepth": {
-            "description": "Nested $ref levels inlined; deeper ones become an open schema. Default 24.",
-            "default": 24,
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 1
-              },
-              {
-                "type": "string",
-                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-              }
-            ]
-          },
-          "descriptionChars": {
-            "description": "Characters of an operation summary used as the tool description. Default 1000.",
-            "default": 1000,
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 50
-              },
-              {
-                "type": "string",
-                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-              }
-            ]
-          }
-        }
-      }
-    },
-    "guardrails": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "guards"
-      ],
-      "properties": {
-        "guards": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "type": "string"
-              }
-            }
-          }
-        },
-        "onError": {
-          "enum": [
-            "block",
-            "allow"
-          ]
-        },
-        "name": {
-          "type": "string"
-        },
-        "maxReasonChars": {
-          "description": "Characters of a guard reason kept in events and run results. Default 200.",
-          "default": 200,
-          "anyOf": [
-            {
-              "type": "integer",
-              "minimum": 20
-            },
-            {
-              "type": "string",
-              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
-            }
-          ]
         }
       }
     },
