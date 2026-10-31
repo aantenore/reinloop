@@ -62,3 +62,11 @@ export { ruleRouter, type RouteCondition, type RouteRule, type RuleRouterOptions
 export { routedModel, withRouter, type RoutedModelOptions } from './router.ts';
 export { otlpSink, type OtlpOptions } from './observe/otlp.ts';
 export { INTEGRATIONS, addIntegration, type Integration } from './integrations.ts';
+export { retrieve, mergePassages, fitPassages, formatBlock, toPassage, hashId, KNOWLEDGE_NOTE, type RetrievalOutcome, type RetrieveOptions } from './knowledge/core.ts';
+export {
+  mcpKnowledge, httpKnowledge, wikiKnowledge, parseMcpResult, splitMarkdown,
+  type ClosableSource, type McpCaller, type McpKnowledgeOptions, type HttpKnowledgeOptions, type WikiKnowledgeOptions,
+} from './knowledge/adapters.ts';
+export { knowledgeMiddleware, knowledgeTool, type KnowledgeMiddlewareOptions, type KnowledgeToolOptions } from './knowledge/middleware.ts';
+export type { KnowledgeConfig, KnowledgeSourceConfig } from './knowledge/config.ts';
+export { checkKnowledgeSource, type KnowledgeConformanceOptions } from './conformance/knowledge.ts';

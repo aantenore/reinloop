@@ -218,6 +218,29 @@ export const CONFIG_SCHEMA: JsonSchema = {
       },
     },
     routers: { type: 'object', additionalProperties: component },
+    knowledge: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        sources: {
+          type: 'object',
+          additionalProperties: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['type'],
+            properties: {
+              type: { enum: ['mcp', 'http', 'wiki'] },
+              server: str, command: str, args: { type: 'array', items: str }, env: strMap, cwd: str, url: str, headers: strMap,
+              tool: str, queryArg: str, toolArgs: { type: 'object' }, timeoutMs: int, dir: str, maxPassageChars: { type: 'integer', minimum: 100 },
+            },
+          },
+        },
+        k: { type: 'integer', minimum: 1 },
+        maxChars: { type: 'integer', minimum: 100 },
+        mode: { enum: ['first-turn', 'every-turn'] },
+        timeoutMs: { type: 'integer', minimum: 100 },
+      },
+    },
     profiles: { type: 'object', additionalProperties: { type: 'object' } },
   },
 };

@@ -5,6 +5,7 @@ import { withAgentFiles } from '../agentfile.ts';
 import { MODEL_ALIASES, PRESETS, type PresetOverrides, splitModel } from '../presets.ts';
 import { validate } from '../schema.ts';
 import type { Budget, JsonSchema, ModelParams, PolicyConfig, Pricing, Risk } from '../types.ts';
+import type { KnowledgeConfig } from '../knowledge/config.ts';
 import { ReinloopError } from '../util.ts';
 import { CONFIG_SCHEMA } from './schema.ts';
 
@@ -82,6 +83,8 @@ export interface HarnessConfig {
   web?: WebConfig;
   /** Settings of the public-signal tools (`search_discussions`, `search_projects`, `search_questions`, `search_papers`). */
   signals?: SignalsConfig;
+  /** Knowledge sources for the `knowledge` middleware (auto-retrieval) and the `search_knowledge` tool. */
+  knowledge?: KnowledgeConfig;
   profiles?: Record<string, Partial<HarnessConfig>>;
 }
 
