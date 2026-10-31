@@ -77,6 +77,7 @@ properties: {
   output: { type: 'object', required: ['schema'], additionalProperties: false, properties: { schema: jsonSchema, retries: int } },
   middleware: { type: 'array', items: str },
   responseCache: { type: 'boolean' },
+  router: str,
   skills: { type: 'array', items: str },
   asTool: {
     type: 'object',
@@ -216,6 +217,7 @@ export const CONFIG_SCHEMA: JsonSchema = {
         userAgent: str,
       },
     },
+    routers: { type: 'object', additionalProperties: component },
     profiles: { type: 'object', additionalProperties: { type: 'object' } },
   },
 };

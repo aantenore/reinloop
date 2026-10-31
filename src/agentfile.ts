@@ -20,7 +20,7 @@ export const TOOL_ALIASES: Record<string, string> = {
 /** Directories scanned for `*.md` agents when nothing else is configured. */
 export const DEFAULT_AGENT_DIRS = ['agents', '.reinloop/agents'];
 
-const FIELDS = new Set(['name', 'description', 'model', 'tools', 'params', 'policy', 'budget', 'compaction', 'output', 'middleware', 'asTool', 'responseCache', 'skills']);
+const FIELDS = new Set(['name', 'description', 'model', 'tools', 'params', 'policy', 'budget', 'compaction', 'output', 'middleware', 'asTool', 'responseCache', 'skills', 'router']);
 const TEAM_FIELDS = new Set(['name', 'description', 'pattern', 'roles', 'options']);
 
 /** Keys from other agent-file formats that have no meaning here and are skipped. */

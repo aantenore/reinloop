@@ -25,6 +25,8 @@ export interface AgentConfig {
   asTool?: { name?: string; description: string; context?: 'fresh' | 'fork'; forwardEvents?: boolean };
   /** Set to false to bypass the global response cache for this agent. */
   responseCache?: boolean;
+  /** Name of a router under `routers` that picks the model per request (`model` stays the default model). */
+  router?: string;
   /** Agent Skills (names or globs) this agent may load. */
   skills?: string[];
 }
@@ -71,6 +73,8 @@ export interface HarnessConfig {
   agents?: Record<string, AgentConfig>;
   teams?: Record<string, TeamConfig>;
   responseCache?: ComponentConfig & { ttlMs?: number; namespace?: string };
+  /** In-process model routers by name (e.g. `{ "type": "rule", "rules": [...], "default": "..." }`), used by agents' `router`. */
+  routers?: Record<string, ComponentConfig>;
   memory?: { type?: 'file' | 'memory'; dir?: string; scope?: 'shared' | 'agent'; namespace?: string };
   /** Provider-hosted tools by tool name (e.g. Anthropic `web_search_20250305`), usable in agents' `tools`. */
   hostedTools?: Record<string, HostedToolConfig>;
@@ -211,6 +215,10 @@ export function checkConfig(config: HarnessConfig): string[] {
   };
   checkModel(config.defaultModel, '$.defaultModel');
   for (const [name, a] of Object.entries(agents)) checkModel(a.model, `$.agents.${name}.model`);
+  const checkRouter = (ref: string | undefined, path: string) => {
+    if (ref !== undefined && !ref.includes('${') && !config.routers?.[ref]) errors.push(`${path}: unknown router "${ref}"`);
+  };
+  for (const [name, a] of Object.entries(agents)) checkRouter(a.router, `$.agents.${name}.router`);
   const teams = config.teams ?? {};
   for (const name of Object.keys(teams)) if (agents[name]) errors.push(`$.teams.${name}: name already used by an agent`);
   for (const [name, t] of Object.entries(teams)) {

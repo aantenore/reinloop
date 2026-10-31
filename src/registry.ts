@@ -16,7 +16,8 @@ import { type RetryOptions, withRetry } from './providers/resilient.ts';
 import { fileStore } from './store/file.ts';
 import { memoryStore } from './store/memory.ts';
 import { workspaceTools } from './tools/node.ts';
-import type { CompactionStrategy, Middleware, Provider, RunStore, Sink, Tool } from './types.ts';
+import { ruleRouter } from './rule-router.ts';
+import type { CompactionStrategy, Middleware, ModelRouter, Provider, RunStore, Sink, Tool } from './types.ts';
 
 export interface FactoryContext {
   baseDir: string;
@@ -40,6 +41,8 @@ export class Registry {
   readonly middleware = new Map<string, Factory<Middleware>>();
   readonly tools = new Map<string, Factory<Tool>>();
   readonly caches = new Map<string, Factory<CacheStore>>();
+  /** In-process model routers, declared under `routers` and referenced by an agent's `router`. */
+  readonly routers = new Map<string, Factory<ModelRouter>>();
   /** Multi-agent patterns (chain, parallel, router, evaluator, orchestrator, and your own). */
   readonly patterns = new Map<string, PatternDefinition>(Object.entries(BUILTIN_PATTERNS));
 
@@ -73,6 +76,8 @@ export function createRegistry(): Registry {
 
   r.caches.set('memory', (o) => memoryCache(o.maxEntries));
   r.caches.set('file', (o, ctx) => fileCache(resolve(ctx.baseDir, o.dir ?? '.reinloop/cache')));
+
+  r.routers.set('rule', (o) => ruleRouter({ rules: o.rules, default: o.default }));
 
   for (const name of ['read_file', 'list_dir', 'write_file', 'edit_file', 'find_files', 'search_files', 'shell']) {
     r.tools.set(name, (_o, ctx) => workspaceTools({ root: ctx.workspace, shellTimeoutMs: ctx.shellTimeoutMs })[name]!);
