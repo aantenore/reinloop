@@ -271,7 +271,7 @@ export interface HookContext {
   agent: string;
   state: Readonly<RunState>;
   identity?: Identity;
-  /** Records an event in the run (persisted unless the type is ephemeral). Set by the loop. */
+  /** Records an event in the run (persisted unless the type is ephemeral), e.g. audit events from guardrails. Set by the loop. */
   emit?: <T extends EventType>(type: T, data: EventMap[T]) => void;
 }
 
@@ -335,6 +335,8 @@ export interface EventMap {
    */
   knowledge_retrieval: { source: string; query: string; passages: number; ids: string[]; durationMs: number; error?: string };
   compaction: { strategy: string; beforeTokens: number; afterTokens: number; messages: Message[]; usage?: Usage; costUsd?: number };
+  /** Verdict of one guard on one text (audit data; never carries the inspected text). */
+  guardrail: { guard: string; stage: GuardStage; action: 'allow' | 'block' | 'redact'; reason?: string };
   run_end: { status: RunStatus; reason?: string; output?: string; usage: Usage; turns: number; costUsd: number; failures?: MemberFailure[] };
 }
 

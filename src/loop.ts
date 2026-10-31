@@ -2,6 +2,7 @@ import { authorizeCall } from './identity/authorize.ts';
 import { DEFAULT_BUDGET, exceededBudget } from './policy.ts';
 import { validate } from './schema.ts';
 import { Channel, EPHEMERAL, pendingToolCalls, reduce, replay } from './state.ts';
+import { RunStop } from './stop.ts';
 import { memoryStore } from './store/memory.ts';
 import { executeToolCalls } from './tools/executor.ts';
 import type {
@@ -81,12 +82,11 @@ async function drive(
   const specs: ToolSpec[] = agent.tools.map((t) => ({ name: t.name, description: t.description, schema: t.schema, ...(t.hosted && { hosted: t.hosted }) }));
   let offered: ToolSpec[] | undefined; // tool specs after the hosted-tool policy check, done once per run
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
-  const hookCtx: HookContext = { runId, agent: agent.name, state, identity: opts.identity };
 
   const storeFailure = new AbortController();
   signal = AbortSignal.any([signal, storeFailure.signal]);
   const { emit, flush } = createEmitter(state, store, opts, channel, (err) => storeFailure.abort(err));
-  hookCtx.emit = emit;
+  const hookCtx: HookContext = { runId, agent: agent.name, state, identity: opts.identity, emit };
 
   let end: { status: RunStatus; reason?: string } | undefined;
   let data: unknown;
@@ -240,11 +240,14 @@ async function drive(
       else if (emptyStreak > MAX_EMPTY_RESPONSES) end = { status: 'failed', reason: `model returned ${emptyStreak} empty responses in a row` };
     }
   } catch (err) {
+    if (err instanceof RunStop && !storeFailure.signal.aborted) stopOutput = err.output; // middleware asked to end the run
     end = storeFailure.signal.aborted
       ? { status: 'failed', reason: `store: ${errorMessage(storeFailure.signal.reason)}` }
-      : signal.aborted
-        ? { status: 'interrupted', reason: errorMessage(signal.reason ?? err) }
-        : { status: 'failed', reason: errorMessage(err) };
+      : err instanceof RunStop
+        ? { status: 'stopped', reason: err.reason }
+        : signal.aborted
+          ? { status: 'interrupted', reason: errorMessage(signal.reason ?? err) }
+          : { status: 'failed', reason: errorMessage(err) };
   }
 
   await flush().catch((err) => {

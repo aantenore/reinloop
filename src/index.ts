@@ -79,3 +79,13 @@ export {
 export { knowledgeMiddleware, knowledgeTool, type KnowledgeMiddlewareOptions, type KnowledgeToolOptions } from './knowledge/middleware.ts';
 export type { KnowledgeConfig, KnowledgeSourceConfig } from './knowledge/config.ts';
 export { checkKnowledgeSource, type KnowledgeConformanceOptions } from './conformance/knowledge.ts';
+export { RunStop } from './stop.ts';
+export { guardMiddleware, type GuardMiddlewareOptions } from './guardrails/middleware.ts';
+export { httpGuard, type HttpGuardOptions } from './guardrails/http.ts';
+export { parseVerdict, GUARD_STAGES, type HttpClientOptions } from './guardrails/contract.ts';
+export { presidioGuard, type PresidioGuardOptions } from './guardrails/presidio.ts';
+export { llmGuardGuard, type LlmGuardOptions } from './guardrails/llm-guard.ts';
+export { regexGuard, REGEX_PATTERNS, luhn, ibanValid, type RegexGuardOptions, type RegexPattern } from './guardrails/regex.ts';
+export { registerGuardrails } from './guardrails/register.ts';
+export { checkGuard, type GuardCheckOptions } from './conformance/guardrails.ts';
+export type { GuardrailsConfig } from './config/load.ts';

@@ -92,6 +92,8 @@ export interface HarnessConfig {
   httpTools?: Record<string, HttpToolConfig>;
   /** OpenAPI 3 (JSON) sources; their operations become tools named `<source>__<operationId>`. */
   openapi?: Record<string, OpenApiConfig>;
+  /** Guards behind the `guard` middleware (agents opt in with `middleware: [guard]`). */
+  guardrails?: GuardrailsConfig;
   profiles?: Record<string, Partial<HarnessConfig>>;
 }
 
@@ -100,6 +102,14 @@ export interface IdentityConfig {
   credentials?: { type?: string; [option: string]: unknown };
   /** `reinloop serve`: reject /v1 requests without a valid bearer token (default true when a verifier is set). */
   required?: boolean;
+}
+
+export interface GuardrailsConfig {
+  /** Guards in run order: `{ type: "presidio" | "llm-guard" | "http" | "regex" | <registered>, ...options }`. */
+  guards: ComponentConfig[];
+  /** A guard that throws: `block` (default) or `allow`. */
+  onError?: 'block' | 'allow';
+  name?: string;
 }
 
 export interface HostedToolConfig {

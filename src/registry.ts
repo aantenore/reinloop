@@ -22,7 +22,8 @@ import { fileStore } from './store/file.ts';
 import { memoryStore } from './store/memory.ts';
 import { workspaceTools } from './tools/node.ts';
 import { ruleRouter } from './rule-router.ts';
-import type { Authorizer, CompactionStrategy, IdentityVerifier, Middleware, ModelRouter, Provider, RunStore, Sink, Tool } from './types.ts';
+import { registerGuardrails } from './guardrails/register.ts';
+import type { Authorizer, CompactionStrategy, Guard, IdentityVerifier, Middleware, ModelRouter, Provider, RunStore, Sink, Tool } from './types.ts';
 
 export interface FactoryContext {
   baseDir: string;
@@ -56,6 +57,8 @@ export class Registry {
   readonly credentials = new Map<string, Factory<CredentialFactory>>();
   /** External policy decision points (`policy.pdp`): add Cedar, OpenFGA, Cerbos... from plugins. */
   readonly authorizers = new Map<string, Factory<Authorizer>>();
+  /** Guard types for the `guard` middleware (presidio, llm-guard, http, regex, and your own). */
+  readonly guards = new Map<string, Factory<Guard>>();
   /** Multi-agent patterns (chain, parallel, router, evaluator, orchestrator, and your own). */
   readonly patterns = new Map<string, PatternDefinition>(Object.entries(BUILTIN_PATTERNS));
 
@@ -158,5 +161,6 @@ export function createRegistry(): Registry {
     const { sources, k, maxChars, timeoutMs } = knowledge(ctx);
     return knowledgeTool(sources, { k, maxChars, timeoutMs });
   });
+  registerGuardrails(r);
   return r;
 }
