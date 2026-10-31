@@ -93,8 +93,9 @@ In code: `httpTool({ name, ...same fields })`.
 An OpenAPI API can also be exposed through an MCP bridge (for example FastMCP `from_openapi`) when a shared MCP gateway
 is preferred over importing the spec in each runtime; the agent sees the same tool shape either way.
 
-Limit: an MCP HTTP server takes static `headers` only. Per-call delegated credentials (`auth`, as for HTTP tools) are
-not wired for MCP; use `httpTools` or `openapi` for APIs that need a delegated token.
+Delegated credentials work for MCP servers too: `auth: { audience, scopes? }` on a streamable HTTP server sends a
+token for that audience from the run's credentials on every call (implemented in `src/mcp/client.ts`, documented in
+[identity](identity.md#mcp-streamable-http)). It is the same `auth` shape as for `httpTools` and `openapi`.
 
 ## Choosing
 

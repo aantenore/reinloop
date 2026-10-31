@@ -17,6 +17,7 @@ const pricing = {
     serverToolUsd: { type: 'object', additionalProperties: num },
   },
 };
+/** `auth` of HTTP tools, OpenAPI sources and MCP servers: a delegated token for `audience` from the run's credentials. */
 const toolAuth = { type: 'object', additionalProperties: false, required: ['audience'], properties: { audience: str, scopes: { type: 'array', items: str } } };
 const decision = { enum: ['allow', 'deny', 'ask'] };
 const risk = { enum: ['read', 'write', 'exec'] };
@@ -142,7 +143,7 @@ export const CONFIG_SCHEMA: JsonSchema = {
         properties: {
           command: str, args: { type: 'array', items: str }, env: strMap, cwd: str, url: str, headers: strMap,
           prefix: { anyOf: [str, { const: false }] }, risk, include: { type: 'array', items: str }, exclude: { type: 'array', items: str }, readOnly: { type: 'array', items: str }, timeoutMs: int,
-          auth: { type: 'object', additionalProperties: false, required: ['audience'], properties: { audience: str, scopes: { type: 'array', items: str } } },
+          auth: toolAuth,
         },
       },
     },
