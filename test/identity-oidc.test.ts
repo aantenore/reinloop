@@ -589,6 +589,8 @@ describe('mcp auth and config wiring', () => {
       const msg = JSON.parse(body || '{}');
       if (msg.id === undefined) return void res.writeHead(202).end();
       const secrets = `${req.headers.authorization} ${req.headers['x-api-key']}`;
+      // The credentials start 287 characters in, so the 300-character cut falls inside them.
+      if (msg.method === 'tools/call' && mode === 'long') return void res.writeHead(500, { 'content-type': 'text/plain' }).end(`${'y'.repeat(287)}${secrets}`);
       if (msg.method === 'tools/call' && mode === 'http') return void res.writeHead(500, { 'content-type': 'text/plain' }).end(`upstream failed for ${secrets}`);
       if (msg.method === 'tools/call') return void sendJson(res, { jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `rejected ${secrets}` } });
       const result =
@@ -598,10 +600,10 @@ describe('mcp auth and config wiring', () => {
     });
     const { client, tools } = await mcpTools('api', { url: echo.url, headers: { 'x-api-key': 'key-from-env-123' }, auth: { audience: 'a' } });
     try {
-      for (mode of ['http', 'rpc']) {
+      for (mode of ['http', 'rpc', 'long']) {
         await assert.rejects(
           Promise.resolve(tools[0]!.run({}, { signal: new AbortController().signal, credentials: { token: async () => 'tok-xyz-789' } } as any)),
-          (err: Error) => /\[redacted\]/.test(err.message) && !/tok-xyz-789|key-from-env-123/.test(`${err.message}\n${err.stack}`),
+          (err: Error) => /\[redacted\]/.test(err.message) && !/tok-|key-from/.test(`${err.message}\n${err.stack}`), // no fragment either
           mode,
         );
       }
