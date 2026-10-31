@@ -583,6 +583,34 @@ describe('mcp auth and config wiring', () => {
     }
   });
 
+  it('masks the token and static header secrets in errors thrown by the transport and by the server', async () => {
+    let mode = 'http';
+    const echo = await listen((req, body, res) => {
+      const msg = JSON.parse(body || '{}');
+      if (msg.id === undefined) return void res.writeHead(202).end();
+      const secrets = `${req.headers.authorization} ${req.headers['x-api-key']}`;
+      if (msg.method === 'tools/call' && mode === 'http') return void res.writeHead(500, { 'content-type': 'text/plain' }).end(`upstream failed for ${secrets}`);
+      if (msg.method === 'tools/call') return void sendJson(res, { jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: `rejected ${secrets}` } });
+      const result =
+        msg.method === 'initialize' ? { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'mock' } }
+        : { tools: [{ name: 'boom', inputSchema: { type: 'object' } }] };
+      sendJson(res, { jsonrpc: '2.0', id: msg.id, result });
+    });
+    const { client, tools } = await mcpTools('api', { url: echo.url, headers: { 'x-api-key': 'key-from-env-123' }, auth: { audience: 'a' } });
+    try {
+      for (mode of ['http', 'rpc']) {
+        await assert.rejects(
+          Promise.resolve(tools[0]!.run({}, { signal: new AbortController().signal, credentials: { token: async () => 'tok-xyz-789' } } as any)),
+          (err: Error) => /\[redacted\]/.test(err.message) && !/tok-xyz-789|key-from-env-123/.test(`${err.message}\n${err.stack}`),
+          mode,
+        );
+      }
+    } finally {
+      await client.close();
+      await echo.close();
+    }
+  });
+
   it('builds the PDP from config through the registry and binds credentials per run', async () => {
     const registry = createRegistry();
     const pdp = recordingAuthorizer((r) => r.subject.id === 'alice');

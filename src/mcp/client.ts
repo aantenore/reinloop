@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readSse } from '../providers/http.ts';
 import { defineTool, safeToolName } from '../tools/define.ts';
-import { redact, secretForms, staticSecrets } from '../tools/redact.ts';
+import { redact, scrubError, secretForms, staticSecrets } from '../tools/redact.ts';
 import type { CredentialProvider, JsonSchema, Risk, Tool } from '../types.ts';
 import { globToRegExp } from '../util.ts';
 import { VERSION } from '../version.ts';
@@ -56,8 +56,8 @@ interface Transport {
 
 interface Pending { resolve: (v: any) => void; reject: (e: Error) => void }
 
-function rpcError(error: any): Error {
-  return new Error(`MCP error ${error?.code ?? ''}: ${error?.message ?? JSON.stringify(error)}`);
+function rpcError(error: any, forms: readonly string[] = []): Error {
+  return new Error(redact(`MCP error ${error?.code ?? ''}: ${error?.message ?? JSON.stringify(error)}`, forms));
 }
 
 class StdioTransport implements Transport {
@@ -152,7 +152,12 @@ class HttpTransport implements Transport {
     this.protocol = version;
   }
 
-  private async post(body: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<Response> {
+  /** Static header values and the active credential: a server error body may echo them. */
+  private secrets(auth: HeaderMap | undefined): string[] {
+    return secretForms([...staticSecrets(this.cfg.headers), ...staticSecrets(auth)]);
+  }
+
+  private async post(body: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<{ res: Response; auth: HeaderMap | undefined }> {
     const auth = headers ?? (await this.connectHeaders());
     const res = await fetch(this.cfg.url!, {
       method: 'POST',
@@ -167,15 +172,15 @@ class HttpTransport implements Transport {
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
     });
     this.session = res.headers.get('mcp-session-id') ?? this.session;
-    if (!res.ok) throw new Error(`MCP HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
-    return res;
+    if (!res.ok) throw new Error(redact(`MCP HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`, this.secrets(auth)));
+    return { res, auth };
   }
 
   async request(method: string, params: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<any> {
     const id = this.nextId++;
-    const res = await this.post({ jsonrpc: '2.0', id, method, params }, signal, headers);
+    const { res, auth } = await this.post({ jsonrpc: '2.0', id, method, params }, signal, headers);
     const pick = (msg: any) => {
-      if (msg.error) throw rpcError(msg.error);
+      if (msg.error) throw rpcError(msg.error, this.secrets(auth));
       return msg.result;
     };
     if ((res.headers.get('content-type') ?? '').includes('text/event-stream')) {
@@ -189,7 +194,7 @@ class HttpTransport implements Transport {
   }
 
   async notify(method: string, params?: unknown): Promise<void> {
-    const res = await this.post({ jsonrpc: '2.0', method, ...(params !== undefined && { params }) });
+    const { res } = await this.post({ jsonrpc: '2.0', method, ...(params !== undefined && { params }) });
     await res.body?.cancel();
   }
 
@@ -299,11 +304,17 @@ export async function mcpTools(name: string, cfg: McpServerConfig, opts: McpConn
         risk: riskOf(info, cfg.risk, readOnly),
         run: async (args, ctx) => {
           const headers = await callHeaders(ctx.credentials, ctx.signal);
-          const res = await client.callTool(info.name, args, ctx.signal, headers);
           // A server may echo request headers back; the per-call token and the static header secrets must not reach the
-          // model. Structured content is used as text only when there is none, and is covered by the same masking.
+          // model, in a result or in an error. Structured content is used as text only when there is none, so the same
+          // masking covers it.
           const token = headers?.authorization?.replace(/^Bearer /, '');
-          return { ...res, content: redact(res.content, secretForms([...(token ? [token] : []), ...staticSecrets(cfg.headers)])) };
+          const forms = secretForms([...(token ? [token] : []), ...staticSecrets(cfg.headers)]);
+          try {
+            const res = await client.callTool(info.name, args, ctx.signal, headers);
+            return { ...res, content: redact(res.content, forms) };
+          } catch (err) {
+            throw scrubError(err, forms);
+          }
         },
       }),
     );

@@ -24,6 +24,11 @@ before(async () => {
       if (url.pathname === '/png') return void res.writeHead(200, { 'content-type': 'image/png' }).end(Buffer.alloc(10));
       if (url.pathname === '/empty') return void res.writeHead(204).end();
       if (url.pathname === '/big') return void res.writeHead(200, { 'content-type': 'text/plain' }).end('x'.repeat(500));
+      if (url.pathname === '/escaped' || url.pathname === '/escaped-error') {
+        // The API key echoed with every character as a \u escape: only decoding the JSON reveals it.
+        const escaped = [...String(req.headers['x-api-key'])].map((c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
+        return void res.writeHead(url.pathname === '/escaped' ? 200 : 500, { 'content-type': 'application/json' }).end(`{"echo":"${escaped}"}`);
+      }
       if (url.pathname === '/headers') return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ headers: req.headers }));
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ path: url.pathname, query: url.search, auth: req.headers.authorization ?? null, body }));
     });
@@ -145,6 +150,16 @@ describe('httpTool', () => {
     for (const secret of ['key-from-env-123', 'blue-team', 'trace-secret-9', 'tok-xyz-789']) assert.equal(out.content.includes(secret), false, secret);
     const echoed = JSON.parse(out.content).headers;
     assert.deepEqual([echoed['x-api-key'], echoed['x-trace'], echoed.authorization], ['[redacted]', '[redacted]', 'Bearer [redacted]']);
+  });
+
+  it('masks a secret the server echoes as \\u escapes, in successes and in error bodies', async () => {
+    for (const path of ['/escaped', '/escaped-error']) {
+      const tool = httpTool({ name: 'esc', description: 'd', method: 'GET', url: `${base}${path}`, headers: { 'x-api-key': 'key-from-env-123' }, schema: schema({}) });
+      const out = await run(tool, {});
+      assert.equal(out.isError, path === '/escaped-error');
+      assert.equal(out.content.includes('key-from-env-123'), false, path);
+      assert.match(out.content, /\[redacted\]/);
+    }
   });
 
   it('never calls out without credentials, or when the token request fails', async () => {

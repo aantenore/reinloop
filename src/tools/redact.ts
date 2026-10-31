@@ -20,3 +20,11 @@ export const redact = (text: string, forms: readonly string[]): string => forms.
 export function staticSecrets(headers: Record<string, string> | undefined): string[] {
   return Object.entries(headers ?? {}).flatMap(([k, v]) => (k.toLowerCase() === 'authorization' ? [v, v.replace(/^\s*\w+\s+/, '').trim()] : [v]));
 }
+
+/** Masks secrets in an error's message and stack, keeping its class and properties. */
+export function scrubError(err: unknown, forms: readonly string[]): unknown {
+  if (!(err instanceof Error) || !forms.length) return err;
+  err.message = redact(err.message, forms);
+  if (err.stack) err.stack = redact(err.stack, forms);
+  return err;
+}

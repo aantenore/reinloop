@@ -149,17 +149,19 @@ export function httpTool(opts: HttpToolOptions): Tool {
       if (res.status >= 200 && res.status < 300 && type && !TEXTUAL.test(type)) {
         return `HTTP ${res.status}: ${(await res.arrayBuffer()).byteLength} bytes of ${type.split(';')[0]} (not shown)`;
       }
-      let text = await res.text();
-      // A server may echo request headers back; no configured secret may reach the model.
-      text = redact(text, secretForms(secrets));
-      if (!res.ok) return error(`HTTP ${res.status} ${res.statusText}`.trim() + (text ? `: ${truncate(text, 500)}` : ''));
-      if (/json/i.test(type) && text) {
+      // A server may echo request headers back; no configured secret may reach the model. Mask the raw body, normalise
+      // JSON (which decodes \u escapes), then mask again, so a secret cannot survive in any form.
+      const forms = secretForms(secrets);
+      let text = redact(await res.text(), forms);
+      const json = /json/i.test(type) && text;
+      if (json) {
         try {
-          text = JSON.stringify(JSON.parse(text), null, 2);
+          text = redact(JSON.stringify(JSON.parse(text), null, res.ok ? 2 : undefined), forms);
         } catch {
           // not valid JSON: keep the raw text
         }
       }
+      if (!res.ok) return error(redact(`HTTP ${res.status} ${res.statusText}`, forms).trim() + (text ? `: ${truncate(text, 500)}` : ''));
       if (!text) return `HTTP ${res.status} (no content)`;
       return text.length > maxChars ? `${text.slice(0, maxChars)}\n[truncated: ${text.length} chars in total]` : text;
     },
