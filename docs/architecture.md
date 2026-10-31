@@ -19,20 +19,22 @@ agent files / reinloop.json ──► config loader ──► registry factories
 | Layer | Files | Depends on |
 |---|---|---|
 | Kernel: types, loop, state fold, policy, budgets, executor, compaction | `types.ts`, `loop.ts`, `state.ts`, `policy.ts`, `stop.ts`, `tools/executor.ts`, `identity/authorize.ts`, `compaction.ts` | nothing |
-| Adapters: providers, stores, sinks, MCP, workspace/HTTP/OpenAPI tools, cache, router, memory, knowledge, identity, guardrails, evaluation | `providers/`, `store/`, `observe/`, `mcp/`, `tools/`, `cache.ts`, `router.ts`, `rule-router.ts`, `knowledge/`, `identity/`, `guardrails/`, `eval/` | kernel (contract types only, where noted in each layer page) |
-| Conformance checks | `conformance/` | contract types |
+| Adapters: providers, stores, sinks, MCP, workspace tools, cache, memory | `providers/`, `store/`, `observe/`, `mcp/`, `tools/`, `cache.ts` | kernel |
+| Layer hooks: routing, knowledge and guard middleware | `router.ts`, `knowledge/`, `guardrails/` | kernel |
+| Provider conformance checks | `conformance/` | contract types |
 | Composition: subagents, teams, patterns | `subagent.ts`, `team.ts`, `patterns.ts` | kernel |
 | Declarative: presets, agent files, config, registry, runtime, project | `presets.ts`, `agentfile.ts`, `frontmatter.ts`, `config/`, `registry.ts`, `project.ts` | all of the above |
-| Interfaces: easy API, CLI (incl. `eval`, `replay`), HTTP (optional OIDC bearer auth), MCP server, architect | `easy.ts`, `cli.ts`, `eval/cli.ts`, `serve.ts`, `mcp/server.ts`, `architect.ts` | all of the above |
+| Interfaces: easy API, CLI, HTTP (optional bearer verification through an `IdentityVerifier`), MCP server, architect | `easy.ts`, `cli.ts`, `serve.ts`, `mcp/server.ts`, `architect.ts` | all of the above |
 
 Every layer can be used without the ones above it. `stream(agentObject)` with a hand-built `Agent` needs no config,
 registry or files.
 
 ### Platform layers
 
-The code layers above host the adapters of the platform layers (`Layer` in `types.ts`): `llm`, `cache`, `knowledge`,
-`tool`, `identity`, `guardrail`, `telemetry`, `eval`, plus `harness`, `infra` and `interface`. Each has a contract, reference
-adapters, a conformance check and a page; the index is [layers/README.md](layers/README.md).
+Platform layers (`Layer` in `types.ts`: `llm`, `cache`, `knowledge`, `tool`, `identity`, `guardrail`, `telemetry`,
+`eval`, plus `harness`, `infra` and `interface`) meet reinloop through hooks: contract interfaces, the loop's middleware
+points and registry entries that are empty by default. Implementations live in
+[agent-layers](https://github.com/aantenore/agent-layers); the index is [layers/README.md](layers/README.md).
 
 ## Events and state
 
@@ -88,21 +90,17 @@ most code; the rest is the lower layers.
 | Policy and budgets | `decide`, `matchesCondition`, `mergePolicies`, `exceededBudget`, `DEFAULT_RISK_DECISIONS`, `DEFAULT_BUDGET`; `RunStop` |
 | Compaction | `windowCompaction`, `summarizeCompaction`, `DEFAULT_SUMMARY_PROMPT` |
 | Tools | `defineTool`, `objectSchema`, `safeToolName`, `memoryArtifacts`, `readArtifactTool`, `workspaceTools`, `resolveInside`, `pathGlob`, `WorkspaceOptions`; `memoryTools`, `memoryNotes`, `fileNotes`, `MemoryStore`, `Note`; `hostedTool`, `hostedRisk`, `HostedToolOptions`; `skillTool`, `discoverSkills`, `selectSkills`, `DEFAULT_SKILL_DIRS`, `Skill` |
-| HTTP and OpenAPI tools | `httpTool`, `openapiTools`, `readOpenApiSpec` and their option types ([layers/tool.md](layers/tool.md)) |
 | Web and signals | `webTools`, `checkFetchUrl`, `tavilyProvider`, `anthropicWebProvider`, `UNTRUSTED_NOTE` and the `Web*` option types ([web-tools.md](web-tools.md)); `signalTools`, `hackerNewsSource`, `githubSource`, `stackExchangeSource`, `arxivSource`, `parseArxivAtom`, `SignalRateLimitError`, `BUILTIN_SIGNAL_SOURCES` and the `Signal*` types ([signal-tools.md](signal-tools.md)) |
 | Providers | `openaiCompatible`, `anthropic`, `checkThinking`, `THINKING_RULES`, `mockProvider`, `withRetry`, `withFallback`, `DEFAULT_RETRY_ON`, `withResponseCache`, `memoryCache`, `fileCache` and their option types |
 | Models and prices | `PRESETS`, `MODEL_ALIASES`, `defaultModel`, `resolveModel`, `splitModel`, `presetProvider`, `missingCredentials`; `PRICING`, `pricingFor`, `ANTHROPIC_SERVER_TOOL_USD` |
-| Model access | `routedModel`, `withRouter`, `ruleRouter` and their option types; `checkProvider`, `checkOpenAIEndpoint` ([layers/cache.md](layers/cache.md), [layers/llm.md](layers/llm.md)) |
+| Model access | `routedModel`, `withRouter` and their option types; `checkProvider`, `checkOpenAIEndpoint` ([layers/cache.md](layers/cache.md), [layers/llm.md](layers/llm.md)) |
 | Stores and sinks | `memoryStore`, `fileStore`, `fileArtifacts`; `consoleSink`, `jsonlSink`, `collectSink`, `otelSink`, `otlpSink`, `otlpMetricsSink`; `EVENT_LAYERS`, `EVENT_ATTR_KEYS`, `EVENT_CONTENT_KEYS`, `eventAttributes` ([layers/telemetry.md](layers/telemetry.md)) |
-| Knowledge | `knowledgeMiddleware`, `knowledgeTool`, `mcpKnowledge`, `httpKnowledge`, `wikiKnowledge`, `retrieve`, `mergePassages`, `fitPassages`, `formatBlock`, `toPassage`, `hashId`, `parseMcpResult`, `splitMarkdown`, `KNOWLEDGE_NOTE`, `checkKnowledgeSource` ([layers/knowledge.md](layers/knowledge.md)) |
-| Identity | `oidcVerifier`, `oidcCredentials`, `authorizeCall`, `accessQuestion`, `publicQuestion`, `authzenRequest`, `authzenAuthorizer`, `opaAuthorizer`, `decodeJwt`, `rolesOf`, `scopesOf`, `defaultKind`, `IdentityError`, `JWS_ALGORITHMS`, `DEFAULT_ALGORITHMS`, `TOKEN_EXCHANGE_GRANT`, `ACCESS_TOKEN_TYPE`; `checkIdentityVerifier`, `checkCredentialProvider`, `checkAuthorizer` ([layers/identity.md](layers/identity.md)) |
-| Guardrails | `guardMiddleware`, `httpGuard`, `presidioGuard`, `llmGuardGuard`, `regexGuard`, `REGEX_PATTERNS`, `luhn`, `ibanValid`, `parseVerdict`, `GUARD_STAGES`, `registerGuardrails`, `checkGuard` ([layers/guardrail.md](layers/guardrail.md)) |
-| Evaluation | `evaluate`, `summarize`, `expectedEvaluator`, `judgeEvaluator`, `layerSignals`, `scoreLayers`, `JUDGE_SCHEMA`, `replayRuns`, `withOverrides`, `inputSegments`, `LAYERS`, `parseDataset`, `toJsonl`, `caseProblems`, `scoreProblems`, `checkEvaluator` ([layers/eval.md](layers/eval.md)) |
+| Layer hooks | `knowledgeMiddleware` ([layers/knowledge.md](layers/knowledge.md)); `guardMiddleware`, `parseVerdict`, `GUARD_STAGES` ([layers/guardrail.md](layers/guardrail.md)); `authorizeCall`, `accessQuestion`, `publicQuestion`, `IdentityError` ([layers/identity.md](layers/identity.md)) |
 | MCP | `McpClient`, `mcpTools`, `MCP_PROTOCOL_VERSION`, `McpServerConfig`, `McpToolInfo` (client); `serveMcp`, `McpServeOptions` (server) |
 | Composition | `agentTool`, `AgentToolOptions`; `isTeam`, `runMember`, `streamMember`, `streamTeam`, `memberFailures`; `BUILTIN_PATTERNS`, `TEMPLATES`, `createTeam`, `definePattern`, `fill`, `describeMembers` |
 | Declarative | `loadConfig`, `checkConfig`, `interpolate`, `deepMerge`, `applyProfile`, `ConfigError`, `CONFIG_SCHEMA`; `createRuntime`, `loadRuntime`, `loadPlugins`; `Registry`, `createRegistry`; `parseAgentFile`, `loadAgentDir`, `withAgentFiles`, `TOOL_ALIASES`, `DEFAULT_AGENT_DIRS`; `parseFrontmatter`, `parseYaml`; `loadProject`, `DEFAULT_AGENT`, `CONFIG_FILE` |
 | Interfaces | `agent`, `team`, `tool`, `paramsSchema`; `serve`; `architect`, `architectInstructions`, `design`, `validateProject`; `INTEGRATIONS`, `addIntegration`; `validate` (JSON Schema subset); `ReinloopError`, `ProviderError`, `userMessage`, `textOf`, `toolCallsOf` |
-| Type names | Option and result types of the exports above: `OpenAICompatibleOptions`, `AnthropicOptions`, `MockTurn`, `MockStep`, `MockProvider`, `RetryOptions`, `ResponseCacheOptions`, `OtelSinkOptions`, `OtelTracer`, `OtelSpan`, `OtlpOptions`, `Factory`, `FactoryContext`, `HarnessConfig`, `AgentConfig`, `TeamConfig`, `RoleBinding`, `HostedToolConfig`, `WebConfig`, `SignalsConfig`, `Runtime`, `RuntimeOptions`, `AgentOptions`, `EasyAgent`, `EasyTeam`, `Runnable`, `Session`, `ToolExtras`, `TeamContext`, `TeamOutcome`, `RoleSpec`, `MemberInfo`, `PresetOverrides`, `ProviderPreset`, `ParsedFile`, `ProjectOptions`, `ServeOptions`, `Served`, `Integration`; config types `HttpToolConfig`, `OpenApiConfig`, `KnowledgeConfig`, `KnowledgeSourceConfig`, `GuardrailsConfig`; layer option types are listed in each layer page |
+| Type names | Option and result types of the exports above: `OpenAICompatibleOptions`, `AnthropicOptions`, `MockTurn`, `MockStep`, `MockProvider`, `RetryOptions`, `ResponseCacheOptions`, `OtelSinkOptions`, `OtelTracer`, `OtelSpan`, `OtlpOptions`, `Factory`, `FactoryContext`, `HarnessConfig`, `AgentConfig`, `TeamConfig`, `RoleBinding`, `HostedToolConfig`, `WebConfig`, `SignalsConfig`, `Runtime`, `RuntimeOptions`, `AgentOptions`, `EasyAgent`, `EasyTeam`, `Runnable`, `Session`, `ToolExtras`, `TeamContext`, `TeamOutcome`, `RoleSpec`, `MemberInfo`, `PresetOverrides`, `ProviderPreset`, `ParsedFile`, `ProjectOptions`, `ServeOptions`, `Served`, `Integration`; `IdentityConfig`, `LimitsConfig`; layer option types are listed in each layer page |
 
 ## Extension points
 
@@ -111,16 +109,16 @@ most code; the rest is the lower layers.
 | `Provider.generate(request, { signal, onText })` | one method; any model API |
 | `Middleware.beforeInput/beforeModel/afterModel/beforeTool/afterTool` | rewrite input before it is recorded, rewrite requests, deny calls, redact outputs; `holdsText` holds streamed text until `afterModel` ran; `HookContext.emit` records events; throw `RunStop` to end the run `stopped` |
 | `ModelRouter.select(req, ctx)` | pick the model per request (`routers`, agent `router`) |
-| `KnowledgeSource.search(query)` | retrieval backend (`knowledge.sources`) |
-| `IdentityVerifier`, `CredentialProvider`, `Authorizer` | inbound tokens, downstream tokens, external policy decision point (`policy.pdp`) |
-| `Guard.check(input)` | guardrail backend (`guardrails.guards`) |
-| `Evaluator.score(case, run)` | evaluation metric (`reinloop eval`) |
+| `KnowledgeSource.search(query)` | retrieval backend (`knowledgeMiddleware`) |
+| `IdentityVerifier`, `CredentialFactory`/`CredentialProvider`, `Authorizer` | inbound tokens (`identity.verifier`, `serve`), downstream tokens (`identity.credentials`), external policy decision point (`policy.pdp`) |
+| `Guard.check(input)` | guardrail backend (`guardMiddleware`) |
+| `Evaluator.score(case, run)` | evaluation metric over the stored event log (runners live in agent-layers) |
 | `CompactionStrategy.compact(messages, ctx)` | context policy |
 | `RunStore.append/load/list` | durability backend |
 | `Sink.onEvent` | observability |
 | `CacheStore.get/set` | response cache backend |
 | `PatternDefinition` | new multi-agent patterns and roles |
-| `Registry` | names every factory above for config and plugins (`routers`, `verifiers`, `credentials`, `authorizers`, `guards` included); `FactoryContext.onClose` releases what a factory opened |
+| `Registry` | names every factory above for config and plugins (layer hooks `routers`, `verifiers`, `credentials`, `authorizers` are empty until a plugin registers implementations); `FactoryContext.onClose` releases what a factory opened |
 
 ## Design rules
 

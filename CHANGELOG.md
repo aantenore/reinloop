@@ -2,34 +2,38 @@
 
 ## Unreleased
 
-Layer integrations: each platform layer has a contract in `src/types.ts`, reference adapters, a conformance check and a
-page under [docs/layers](docs/layers/README.md).
+Layer hooks. Layer implementations were first added here (OIDC verifier and token exchange, OPA and AuthZEN
+authorizers, Presidio / LLM Guard / HTTP / regex guards, MCP / HTTP / wiki knowledge sources, declarative HTTP tools and
+OpenAPI import, a rule router, evaluation with replay and the `eval` / `replay` CLI, conformance kits for them) and then
+moved to [agent-layers](https://github.com/aantenore/agent-layers) as adapters before release. reinloop keeps the
+runtime and the hooks they plug into; see [docs/layers](docs/layers/README.md).
 
-- Contracts: `Layer` (`infra`, `llm`, `harness`, `knowledge`, `tool`, `identity`, `guardrail`, `cache`, `telemetry`,
-  `eval`, `interface`), run `identity` / `credentials` in `RunOptions` and `ToolContext`, `Tool.layer`.
+- Contracts: `Layer`, `Identity`, `IdentityVerifier`, `CredentialProvider`, `CredentialFactory`, `Authorizer`
+  (`AccessQuestion` in agent-layers names), `KnowledgeSource`, `Guard`, `ModelRouter`, `Evaluator`; `Tool.layer`.
+- Run identity: `identity` / `credentials` in `RunOptions`, `ToolContext` and `HookContext`, inherited by subagents;
+  subject and kind on `run_start`, never the token.
+- Policy: rules with `when` (roles, scopes, kind); external PDP hook `policy.pdp` (`authorizer` in code, or `type`
+  resolved through `registry.authorizers`) via `authorizeCall`, with `onError`, `includeArgs`, `maxReasonChars`.
+- Identity config: `identity.verifier` / `identity.credentials` resolved through `registry.verifiers` /
+  `registry.credentials` (no built-in type; `type` is required). `reinloop serve` verifies bearer tokens with any
+  `IdentityVerifier`, isolates runs per subject and answers RFC 6750 challenges. MCP servers take per-call `auth` from
+  the run credentials; connection setup uses the factory without identity.
+- Middleware: `beforeInput` (redacted input is what is persisted), `holdsText` (no unchecked streamed text),
+  `HookContext.emit`; `RunStop` ends a run `stopped`; answers rejected in `afterModel` still count toward usage and
+  cost. `guardMiddleware` runs any `Guard` objects at four stages (persisted `guardrail` event); `knowledgeMiddleware`
+  appends cache-friendly retrieval from any `KnowledgeSource` (persisted `knowledge_retrieval` event). Registry
+  factories get `FactoryContext.onClose`.
+- Model access: `routedModel` / `withRouter`; config `routers` (resolved through `registry.routers`) and agent
+  `router`. Routed responses are priced with the selected model (`ModelResponse.pricing`, `responseCost`).
 - llm: `checkProvider` and `checkOpenAIEndpoint` conformance checks.
-- Model access: in-process routing with `ModelRouter`, `ruleRouter`, `routedModel` / `withRouter`; config `routers` and
-  agent `router`. Routed responses are priced with the selected model (`ModelResponse.pricing`, `responseCost`).
-- Knowledge: `KnowledgeSource` adapters (`mcpKnowledge`, `httpKnowledge`, `wikiKnowledge`), the `knowledge` middleware
-  (cache-friendly retrieval appended to the user message) and the `search_knowledge` tool (layer `knowledge`); config
-  `knowledge`; persisted `knowledge_retrieval` event; `checkKnowledgeSource`.
-- Tools: declarative `httpTools` and OpenAPI 3 import (`openapi`, `httpTool`, `openapiTools`), with delegated `auth`.
-- Identity: OIDC/JWT verification (`oidcVerifier`), token exchange and client credentials (`oidcCredentials`), policy
-  rules with `when` (roles, scopes, kind), external PDP (`policy.pdp`: AuthZEN, OPA) via `authorizeCall`, OIDC bearer
-  auth for `reinloop serve`, per-call delegated `auth` for MCP servers; config `identity`; conformance checks.
-- Guardrails: `Guard` adapters (`presidioGuard`, `llmGuardGuard`, `httpGuard`, `regexGuard`) behind the `guard`
-  middleware at four stages; config `guardrails`; persisted `guardrail` event; `RunStop` ends a run `stopped` from
-  middleware; `checkGuard`. Redacted input is what gets persisted (new `Middleware.beforeInput`); with an output guard,
-  streamed text is held until it is checked (`Middleware.holdsText`); blocked answers count toward usage and cost.
-- Telemetry: `agent.layer` on spans, events of other layers as span events (`EVENT_LAYERS`), `layer` on `tool_start` /
-  `tool_result`, OTLP metrics (`otlpMetricsSink`, `"metrics": true`).
-- Evaluation: `evaluate` over JSONL datasets, `expectedEvaluator`, `judgeEvaluator`, per-layer health scores from the
-  event log (`layerSignals`, `scoreLayers`), `replayRuns`; CLI `reinloop eval` and `reinloop replay`; `checkEvaluator`.
-- Middleware: `HookContext.emit` records events; registry factories get `FactoryContext.onClose`.
+- MCP: per-call tokens and static header secrets are masked in tool results, structured content and errors (also
+  JSON-escaped and before truncation); `limits.minSecretChars` sets the shortest masked secret.
+- Telemetry: `agent.layer` on spans, events of other layers as span events (`EVENT_LAYERS`, `eventLayers`), `layer` on
+  `tool_start` / `tool_result`, OTLP metrics (`otlpMetricsSink`, `"metrics": true`).
+- Config: the sections `knowledge`, `guardrails`, `httpTools` and `openapi` are rejected with a pointer to agent-layers.
 - Limits: every timeout, size, count and cap is declared once in `LIMITS` (`src/limits.ts`: default, config path,
   accepted and safe range) and is a config field plus a code option. New config fields under `tools`, `web`, `signals`,
-  `knowledge`, `mcpServers`, `httpTools`, `openapi`, `providers`, `memory`, `guardrails`, `policy.pdp`, `sinks` (otlp)
-  and new sections `serve` and `limits`. Limits take `${env:NAME}` (numbers checked after interpolation) and, where it
+  `mcpServers`, `providers`, `memory`, `policy.pdp`, `sinks` (otlp) and new sections `serve` and `limits`. Limits take `${env:NAME}` (numbers checked after interpolation) and, where it
   makes sense, `"unbounded"`; out-of-range values are rejected, and unsafe ones raise a `ReinloopConfigWarning` at load
   (`loadConfig().warnings`, `onWarning`). Defaults are unchanged. A `0` timeout is no longer accepted in the config
   (use `"unbounded"`). Docs: the Limits section of `docs/configuration.md`.

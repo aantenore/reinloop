@@ -1,6 +1,7 @@
 # Telemetry and observability
 
-Standard: OpenTelemetry (OTLP/HTTP, GenAI semantic conventions). Extension point: `Sink`. Reference: `otlpSink`, which needs no SDK and talks to any collector.
+Standard: OpenTelemetry (OTLP/HTTP, GenAI semantic conventions). Extension point: `Sink`. Built in sinks: `console`,
+`jsonl`, `otlp` (`otlpSink`, which needs no SDK and talks to any collector) and `otelSink` for an existing tracer.
 
 ## Spans
 
@@ -25,7 +26,7 @@ Event types without a span of their own are recorded as span events on the run s
 | `guardrail` | `guardrail` | `guard`, `stage`, `action`, `reason` |
 | `knowledge_retrieval` | `knowledge` | `source`, `query`, `passages` (count), `ids`, `durationMs`, `error` |
 
-Add entries with the `eventLayers` option (`otelSink`, `otlpSink`, or the config entry). Event types in neither table are ignored.
+Plugins that emit their own event types add entries with the `eventLayers` option (`otelSink`, `otlpSink`, or the config entry). Event types in neither table are ignored.
 
 ## Metrics
 

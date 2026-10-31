@@ -6,24 +6,22 @@ The model layer. reinloop talks to models through a `Provider`:
 interface Provider { name: string; generate(req: ModelRequest, ctx: { signal; onText?; onThinking? }): Promise<ModelResponse> }
 ```
 
-## Standards
+## Built in
 
 | Standard | Provider |
 |---|---|
 | OpenAI Chat Completions (de facto) | `openaiCompatible`: OpenAI, Ollama, vLLM, LM Studio, OpenRouter, Groq, LiteLLM and any gateway behind such a URL |
 | Anthropic Messages | `anthropic` |
+| none | `mockProvider`, for tests |
 
-Both are available as presets (`"<preset>/<model>"`, see [models](../models.md)). A server that speaks one of these
-protocols needs no code: point a preset or a `providers` entry at its URL.
+OpenAI-compatible and Anthropic are also presets (`"<preset>/<model>"`, see [models](../models.md)). A server that
+speaks one of these protocols needs no code: point a preset or a `providers` entry at its URL. `withRetry` and
+`withFallback` wrap any provider.
 
 ## Extension point
 
 Anything else implements `Provider` and registers a factory (`registry.providers.set(name, factory)`, usually from a
 plugin) or is passed directly as `model.provider`.
-
-## Reference implementation
-
-Ollama (MIT), through the `ollama` preset (`OLLAMA_BASE_URL`, default `http://localhost:11434/v1`).
 
 ## Conformance
 
@@ -44,9 +42,5 @@ if (failures.length) throw new Error(failures.join('\n'));
 ```
 
 `checkOpenAIEndpoint({ baseUrl, apiKey?, model, params?, headers?, fetch? })` runs the same check against a raw
-OpenAI-compatible Chat Completions URL, with its own minimal client and no reinloop provider, so any gateway or model
-server can be certified.
-
-`src/conformance/provider.ts` imports only contract types, so it can be copied out as it is.
-
-It calls the model twice, so it costs real tokens on a hosted provider.
+OpenAI-compatible Chat Completions URL, with its own minimal client, so any gateway or model server can be certified.
+Both call the model twice, so they cost real tokens on a hosted provider.

@@ -97,13 +97,14 @@ which also explains what is deliberately not built and why (for example, why sem
 
 ## Layer integrations
 
-reinloop is the harness layer of a larger agent platform. The other layers plug in through small contracts with
-reference adapters and conformance checks: model providers and routing, knowledge sources, HTTP and OpenAPI tools,
-identity (OIDC, token exchange, AuthZEN/OPA), guardrails (Presidio, LLM Guard), OpenTelemetry traces and metrics, and
-evaluation with replay. See [docs/layers/README.md](docs/layers/README.md).
-
-reinloop keeps its own copy of the agent-layers `AccessQuestion` shape (no dependency on the SDK);
-`test/access-question-schema.test.ts` checks it against the SDK schema copied in `test/fixtures/agent-layers`.
+reinloop is the harness layer of a larger agent platform. It provides the hooks; [agent-layers](https://github.com/aantenore/agent-layers)
+provides the layers. reinloop keeps the contracts (`Identity`, `IdentityVerifier`, `CredentialProvider`, `Authorizer`,
+`Guard`, `KnowledgeSource`, `ModelRouter`, `Evaluator`), the places they plug in (run identity and credentials, policy
+`when` rules and the `policy.pdp` hook, `serve` bearer verification, MCP per-call auth, `guardMiddleware`,
+`knowledgeMiddleware`, routed models, layer tags on OTLP spans and metrics) and registry entries that plugins fill.
+Implementations such as OIDC, OPA/AuthZEN, Presidio, LLM Guard, knowledge sources, HTTP/OpenAPI tools, rule routing and
+evaluation are agent-layers adapters; reinloop also runs as an agent-layers runtime (`@agent-layers/adapter-reinloop`).
+See [docs/layers/README.md](docs/layers/README.md).
 
 ## Use them anywhere
 
