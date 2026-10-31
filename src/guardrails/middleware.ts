@@ -22,7 +22,7 @@ type Outcome = { text: string; changed: boolean } | { block: { guard: string; re
  * - `tool_args`: the JSON of a call's arguments (`beforeTool`); block denies the call.
  * - `tool_result`: a tool's result (`afterTool`); block replaces it with an error for the model.
  * A block on `input` or `output` ends the run with status `stopped` and reason `guardrail:<guard>:<stage>` (see `RunStop`;
- * a blocked response is not recorded, so its usage is not counted). Guards run in order, the first block wins and
+ * a blocked response is recorded as a discarded `model_response` without its content, so its usage and cost count). Guards run in order, the first block wins and
  * redactions chain. Each non-allow verdict is recorded as a `guardrail` event (audit: guard, stage, action, reason; never the text).
  *
  * With an `output` guard the middleware sets `holdsText`: `text_delta` carries the checked text once, after the answer

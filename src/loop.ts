@@ -209,7 +209,17 @@ async function drive(
         onText: holdText ? undefined : (text) => emit('text_delta', { text }),
         onThinking: (text) => emit('thinking_delta', { text }),
       });
-      for (const mw of agent.middleware ?? []) res = (await mw.afterModel?.(res, hookCtx)) ?? res;
+      try {
+        for (const mw of agent.middleware ?? []) res = (await mw.afterModel?.(res, hookCtx)) ?? res;
+      } catch (err) {
+        // The answer was rejected (e.g. an output guard block, `RunStop`): its usage and cost are accounted, its content
+        // is neither persisted nor kept in the history.
+        emit('model_response', {
+          turn, model: res.model ?? req.model, message: { role: 'assistant', parts: [] }, usage: res.usage, stopReason: res.stopReason,
+          latencyMs: Math.round(performance.now() - t0), costUsd: res.cached ? 0 : costOf(agent.model.pricing, res.usage), discarded: true,
+        });
+        throw err;
+      }
       if (holdText) {
         const text = textOf(res.message);
         if (text) emit('text_delta', { text });

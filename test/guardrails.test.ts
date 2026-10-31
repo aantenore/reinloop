@@ -107,6 +107,24 @@ describe('guardMiddleware', () => {
     assert.equal(inputOnly.events.filter((e) => e.type === 'text_delta').length, 3, 'no output guard: tokens stream as they arrive');
   });
 
+  it('a blocked answer is accounted (usage, cost) but neither persisted nor kept in the history', async () => {
+    const store = memoryStore();
+    const block = spy('leak', () => ({ action: 'block' }), ['output']);
+    const agent = makeAgent([{ text: 'sk-live-secret', usage: { inputTokens: 100, outputTokens: 40 } }], { middleware: [guardMiddleware([block])] });
+    agent.model.pricing = { inputPerMTok: 1_000_000, outputPerMTok: 1_000_000 };
+    const res = await run(agent, 'q', { store });
+    assert.equal(res.status, 'stopped');
+    assert.equal(res.usage.inputTokens, 100);
+    assert.equal(res.usage.outputTokens, 40);
+    assert.equal(res.costUsd, 140);
+    assert.equal(res.messages.some((m) => m.role === 'assistant'), false);
+    const log = await store.load(res.runId);
+    const response = log.find((e) => e.type === 'model_response')!.data as { discarded?: boolean; message: { parts: unknown[] } };
+    assert.equal(response.discarded, true);
+    assert.deepEqual(response.message.parts, []);
+    assert.equal(JSON.stringify(log).includes('sk-live-secret'), false);
+  });
+
   it('tool_args: block denies the call, redact rewrites the arguments', async () => {
     const tool = echoTool();
     const block = spy('args', () => ({ action: 'block', reason: 'no' }), ['tool_args']);
