@@ -1,5 +1,5 @@
 import type { Guard, GuardStage } from '../types.ts';
-import { type HttpClientOptions, postGuardJson } from './contract.ts';
+import { assertPlainUrl, GuardCallError, type HttpClientOptions, postGuardJson } from './contract.ts';
 
 export interface PresidioGuardOptions extends HttpClientOptions {
   /** Presidio Analyzer base URL (`POST /analyze`). */
@@ -23,6 +23,8 @@ interface Finding { entity_type: string; start: number; end: number; score: numb
 
 /** PII detection and anonymization with Microsoft Presidio (MIT): the analyzer finds entities, the anonymizer rewrites them. */
 export function presidioGuard(opts: PresidioGuardOptions): Guard {
+  assertPlainUrl(opts.analyzerUrl, 'presidioGuard analyzerUrl');
+  assertPlainUrl(opts.anonymizerUrl, 'presidioGuard anonymizerUrl');
   const analyzer = `${opts.analyzerUrl.replace(/\/+$/, '')}/analyze`;
   const anonymizer = `${opts.anonymizerUrl.replace(/\/+$/, '')}/anonymize`;
   return {
@@ -40,7 +42,7 @@ export function presidioGuard(opts: PresidioGuardOptions): Guard {
         opts,
         ctx?.signal,
       );
-      if (!Array.isArray(found)) throw new Error('presidio analyzer returned an unexpected body');
+      if (!Array.isArray(found)) throw new GuardCallError('invalid response');
       if (!found.length) return { action: 'allow' };
       if (opts.action === 'block') return { action: 'block', reason: `PII detected: ${[...new Set(found.map((f) => f.entity_type))].join(', ')}` };
       const res = await postGuardJson(
@@ -53,7 +55,7 @@ export function presidioGuard(opts: PresidioGuardOptions): Guard {
         opts,
         ctx?.signal,
       );
-      if (typeof res?.text !== 'string') throw new Error('presidio anonymizer returned an unexpected body');
+      if (typeof res?.text !== 'string') throw new GuardCallError('invalid response');
       return { action: 'redact', text: res.text, reason: `PII redacted: ${[...new Set(found.map((f) => f.entity_type))].join(', ')}` };
     },
   };

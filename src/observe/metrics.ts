@@ -1,5 +1,5 @@
 import type { RunEvent, Sink } from '../types.ts';
-import { type Attrs, nowNanos, toAttributes } from './otlp-json.ts';
+import { type Attrs, assertPlainEndpoint, ExportStatusError, exportFailure, nowNanos, toAttributes } from './otlp-json.ts';
 
 export interface OtlpMetricsOptions {
   /** Collector base URL (e.g. http://localhost:4318) or the full `/v1/metrics` URL. */
@@ -38,6 +38,7 @@ const instrument = (name: string, unit: string, description: string, bounds?: nu
  * Never records message content, tool arguments or tokens.
  */
 export function otlpMetricsSink(opts: OtlpMetricsOptions): Sink {
+  assertPlainEndpoint(opts.endpoint, 'otlpMetricsSink');
   const url = `${opts.endpoint.replace(/\/+$/, '').replace(/\/v1\/(traces|metrics)$/, '')}/v1/metrics`;
   const post = opts.fetch ?? fetch;
   const startNanos = nowNanos();
@@ -100,10 +101,10 @@ export function otlpMetricsSink(opts: OtlpMetricsOptions): Sink {
     dirty = false;
     try {
       const res = await post(url, { method: 'POST', headers: { 'content-type': 'application/json', ...opts.headers }, body: JSON.stringify(body()) });
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`);
+      if (!res.ok) throw new ExportStatusError(res.status);
     } catch (err) {
       dirty = true;
-      if (!warned) process.emitWarning(`OTLP metrics export to ${url} failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (!warned) process.emitWarning(`OTLP metrics export to ${new URL(url).origin} failed: ${exportFailure(err)}`);
       warned = true;
     }
   };

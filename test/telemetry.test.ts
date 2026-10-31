@@ -151,3 +151,45 @@ describe('otlp metrics', () => {
     assert.ok(rx.got.some((g) => g.url === '/v1/traces'));
   });
 });
+
+describe('otlp export failures and endpoints', () => {
+  const leak = 'connect ECONNREFUSED https://admin:hunter2@internal.example/v1/traces authorization: Bearer abc123';
+  const failing: Array<[string, (u: string, i: RequestInit) => Promise<Response>]> = [
+    ['network error', async () => { throw new Error(leak); }],
+    ['HTTP 502', async () => new Response(leak, { status: 502 })],
+    ['timeout', async () => { throw new DOMException('timed out', 'TimeoutError'); }],
+  ];
+
+  it('warns with the origin and a fixed reason, never error text or the path', async () => {
+    const warnings: string[] = [];
+    const onWarning = (w: Error) => { warnings.push(w.message); };
+    process.on('warning', onWarning);
+    try {
+      for (const [, fetch] of failing) {
+        const traces = otlpSink({ endpoint: 'https://collector.example:4318/prefix', headers: { authorization: 'Bearer abc123' }, fetch, intervalMs: 60_000 });
+        await run(agent(), 'go', { sinks: [traces] });
+        await traces.close!();
+        const metrics = otlpMetricsSink({ endpoint: 'https://collector.example:4318/prefix', fetch, intervalMs: 60_000 });
+        await run(agent(), 'go', { sinks: [metrics] });
+        await metrics.close!();
+      }
+      await new Promise((r) => setImmediate(r));
+    } finally {
+      process.off('warning', onWarning);
+    }
+    const expected = failing.flatMap(([reason]) => [
+      `OTLP export to https://collector.example:4318 failed: ${reason}`,
+      `OTLP metrics export to https://collector.example:4318 failed: ${reason}`,
+    ]);
+    assert.deepEqual(warnings, expected);
+    assert.ok(warnings.every((w) => !/hunter2|abc123|ECONNREFUSED|internal\.example|prefix/.test(w)));
+  });
+
+  it('rejects endpoints with credentials, or that are not URLs', () => {
+    for (const make of [otlpSink, otlpMetricsSink]) {
+      assert.throws(() => make({ endpoint: 'https://user:pw@collector.example' }), /must not carry credentials/);
+      assert.throws(() => make({ endpoint: 'https://user@collector.example/v1/traces' }), /must not carry credentials/);
+      assert.throws(() => make({ endpoint: 'collector' }), /not a valid http\(s\) URL/);
+    }
+  });
+});

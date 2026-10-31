@@ -1,5 +1,5 @@
 import type { Guard, GuardStage } from '../types.ts';
-import { type HttpClientOptions, postGuardJson } from './contract.ts';
+import { assertPlainUrl, GuardCallError, type HttpClientOptions, postGuardJson } from './contract.ts';
 
 export interface LlmGuardOptions extends HttpClientOptions {
   /** LLM Guard API base URL (`POST /analyze/prompt`, `POST /analyze/output`). */
@@ -19,6 +19,7 @@ export interface LlmGuardOptions extends HttpClientOptions {
  * a valid one whose sanitized text differs from the input redacts.
  */
 export function llmGuardGuard(opts: LlmGuardOptions): Guard {
+  assertPlainUrl(opts.url, 'llmGuardGuard url');
   const base = opts.url.replace(/\/+$/, '');
   const headers = { ...(opts.token && { authorization: `Bearer ${opts.token}` }), ...opts.headers };
   const suppress = opts.scannersSuppress?.length ? { scanners_suppress: opts.scannersSuppress } : {};
@@ -33,7 +34,7 @@ export function llmGuardGuard(opts: LlmGuardOptions): Guard {
         { ...opts, headers },
         ctx?.signal,
       );
-      if (typeof res?.is_valid !== 'boolean') throw new Error('llm-guard returned an unexpected body');
+      if (typeof res?.is_valid !== 'boolean') throw new GuardCallError('invalid response');
       if (!res.is_valid) return { action: 'block', reason: `llm-guard: ${failingScanners(res.scanners)}` };
       const sanitized = output ? res.sanitized_output : res.sanitized_prompt;
       return typeof sanitized === 'string' && sanitized !== text ? { action: 'redact', text: sanitized, reason: 'llm-guard: sanitized' } : { action: 'allow' };
@@ -44,6 +45,8 @@ export function llmGuardGuard(opts: LlmGuardOptions): Guard {
 /** Scanners with a risk score of 0 or more (a passing scanner reports -1); all names when none qualifies, so the reason is never empty. */
 function failingScanners(scanners: unknown): string {
   const entries = Object.entries((scanners ?? {}) as Record<string, number>);
-  const failing = entries.filter(([, score]) => score >= 0).map(([name]) => name);
-  return (failing.length ? failing : entries.map(([name]) => name)).join(', ') || 'invalid';
+  // Names come from the service and end up in a reason: keep only identifier-like ones.
+  const names = (list: Array<[string, number]>) => list.map(([name]) => name).filter((n) => /^[\w.-]{1,64}$/.test(n));
+  const failing = names(entries.filter(([, score]) => score >= 0));
+  return (failing.length ? failing : names(entries)).join(', ') || 'invalid';
 }

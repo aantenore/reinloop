@@ -1,9 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import type { Layer, Sink } from '../types.ts';
-import { errorMessage } from '../util.ts';
 import { type OtelSpan, type OtelTracer, otelSink } from './otel.ts';
 import { otlpMetricsSink } from './metrics.ts';
-import { type Attrs, nowNanos, toAttributes } from './otlp-json.ts';
+import { type Attrs, assertPlainEndpoint, ExportStatusError, exportFailure, nowNanos, toAttributes } from './otlp-json.ts';
 
 export interface OtlpOptions {
   /** Collector base URL (e.g. http://localhost:4318) or the full `/v1/traces` URL. */
@@ -38,6 +37,7 @@ interface Recorded {
  * with backends that accept OTLP JSON directly; put an OpenTelemetry Collector in front of protobuf-only ones.
  */
 export function otlpSink(opts: OtlpOptions): Sink {
+  assertPlainEndpoint(opts.endpoint, 'otlpSink');
   const url = /\/v1\/traces\/?$/.test(opts.endpoint) ? opts.endpoint : `${opts.endpoint.replace(/\/+$/, '')}/v1/traces`;
   const post = opts.fetch ?? fetch;
   let pending: Recorded[] = [];
@@ -95,9 +95,9 @@ export function otlpSink(opts: OtlpOptions): Sink {
     };
     try {
       const res = await post(url, { method: 'POST', headers: { 'content-type': 'application/json', ...opts.headers }, body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`);
+      if (!res.ok) throw new ExportStatusError(res.status);
     } catch (err) {
-      if (!warned) process.emitWarning(`OTLP export to ${url} failed: ${errorMessage(err)}`);
+      if (!warned) process.emitWarning(`OTLP export to ${new URL(url).origin} failed: ${exportFailure(err)}`);
       warned = true;
     }
   };

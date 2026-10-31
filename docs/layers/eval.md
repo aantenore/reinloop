@@ -62,7 +62,7 @@ reinloop replay <runId...|--all> --agent support-v2 --model anthropic/claude-hai
 | Evaluator | What it does |
 |---|---|
 | `expectedEvaluator()` | contains / equals / regex against `expected` |
-| `judgeEvaluator({ agent })` | LLM as judge; the judge answers `{ score, reason }` (use `output: JUDGE_SCHEMA`; plain JSON text is parsed too). An unusable judge scores 0 on layer `eval`. |
+| `judgeEvaluator({ agent })` | LLM as judge; the judge answers `{ score, reason }` (use `output: JUDGE_SCHEMA`; plain JSON text is parsed too, but only when the whole reply is one object with exactly `score` 0 to 1 and `reason`). The task, reference and answer reach the judge as JSON between lines of a random per-call marker, so an answer cannot close the block or pass for the verdict. An unusable or failing judge scores 0 on layer `eval`, with a fixed reason. |
 | `layerSignals()` | one `<layer>_health` score per layer that has a signal, derived from events |
 
 ### layerSignals

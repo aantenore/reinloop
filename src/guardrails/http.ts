@@ -1,5 +1,5 @@
 import type { Guard, GuardInput, GuardStage } from '../types.ts';
-import { type HttpClientOptions, parseVerdict, postGuardJson } from './contract.ts';
+import { assertPlainUrl, type HttpClientOptions, parseVerdict, postGuardJson } from './contract.ts';
 
 export interface HttpGuardOptions extends HttpClientOptions {
   url: string;
@@ -12,6 +12,7 @@ export interface HttpGuardOptions extends HttpClientOptions {
  * Any technology can sit behind a small shim that speaks it.
  */
 export function httpGuard(opts: HttpGuardOptions): Guard {
+  assertPlainUrl(opts.url, 'httpGuard url');
   return {
     name: opts.name ?? 'http',
     ...(opts.stages && { stages: opts.stages }),

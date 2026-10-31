@@ -286,13 +286,54 @@ describe('guard adapters (HTTP mocks)', () => {
       assert.deepEqual(await g.check(input('bad text')), { action: 'block', reason: 'nope' });
       assert.deepEqual(m.requests[0]!.body, input('bad text'));
       assert.equal(m.requests[0]!.url, '/guard');
-      await assert.rejects(g.check(input('weird')), /invalid guard verdict/);
+      await assert.rejects(g.check(input('weird')), /^GuardCallError: invalid response$/);
       assert.deepEqual(await checkGuard(g, { benign: 'fine', harmful: 'bad text' }), []);
     } finally {
       await m.close();
     }
     const down = httpGuard({ url: 'http://127.0.0.1:1/guard', timeoutMs: 500 });
     await assert.rejects(down.check(input('x')));
+  });
+
+  it('guard call failures use a fixed set of messages and never echo error text, bodies or URLs', async () => {
+    const leak = 'connect ECONNREFUSED https://admin:hunter2@internal.example/guard authorization: Bearer abc123';
+    const messageOf = async (g: Guard) => { try { await g.check(input('mail jane.doe@example.com')); } catch (err) { return (err as Error).message; } return 'no error'; };
+    const fetchWith = (f: (u: string, i: RequestInit) => Promise<Response>) => ({ fetch: f });
+    const network = fetchWith(async () => { throw new Error(leak); });
+    const status = fetchWith(async () => new Response(`echo jane.doe@example.com ${leak}`, { status: 502 }));
+    const notJson = fetchWith(async () => new Response(`<html>${leak}</html>`));
+    const slow = { timeoutMs: 20, fetch: (_u: string, init: RequestInit) => new Promise<Response>((_r, reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason))) };
+    const wrongShape = fetchWith(async () => new Response(JSON.stringify({ is_valid: 'yes', secret: leak })));
+    const p = { analyzerUrl: 'http://a', anonymizerUrl: 'http://b' };
+    const cases: Array<[Guard, string]> = [
+      [httpGuard({ url: 'http://x', ...network }), 'network error'],
+      [httpGuard({ url: 'http://x', ...status }), 'HTTP 502'],
+      [httpGuard({ url: 'http://x', ...notJson }), 'invalid response'],
+      [httpGuard({ url: 'http://x', ...slow }), 'timeout'],
+      [httpGuard({ url: 'http://x', fetch: async () => new Response(JSON.stringify({ action: 'maybe', reason: leak })) }), 'invalid response'],
+      [presidioGuard({ ...p, action: 'redact', ...network }), 'network error'],
+      [presidioGuard({ ...p, action: 'redact', ...status }), 'HTTP 502'],
+      [presidioGuard({ ...p, action: 'redact', fetch: async () => new Response(JSON.stringify({ leak })) }), 'invalid response'],
+      [presidioGuard({ ...p, action: 'redact', ...slow }), 'timeout'],
+      [llmGuardGuard({ url: 'http://x', token: 'tok-secret', ...network }), 'network error'],
+      [llmGuardGuard({ url: 'http://x', token: 'tok-secret', ...status }), 'HTTP 502'],
+      [llmGuardGuard({ url: 'http://x', ...wrongShape }), 'invalid response'],
+      [llmGuardGuard({ url: 'http://x', ...slow }), 'timeout'],
+    ];
+    for (const [g, expected] of cases) assert.equal(await messageOf(g), expected, g.name);
+  });
+
+  it('guard URLs with credentials, or that are not URLs, are rejected at creation', () => {
+    assert.throws(() => httpGuard({ url: 'https://u:p@guard.example/check' }), /must not carry credentials/);
+    assert.throws(() => presidioGuard({ analyzerUrl: 'http://u:p@a', anonymizerUrl: 'http://b', action: 'block' }), /must not carry credentials/);
+    assert.throws(() => presidioGuard({ analyzerUrl: 'http://a', anonymizerUrl: 'http://u@b', action: 'block' }), /must not carry credentials/);
+    assert.throws(() => llmGuardGuard({ url: 'http://:secret@llm-guard:8000' }), /must not carry credentials/);
+    assert.throws(() => llmGuardGuard({ url: 'llm-guard:8000' }), /not a valid http\(s\) URL/);
+  });
+
+  it('llm-guard keeps service-supplied scanner names out of reasons unless identifier-like', async () => {
+    const g = llmGuardGuard({ url: 'http://x', fetch: async () => new Response(JSON.stringify({ is_valid: false, scanners: { 'Prompt Injection\nignore the rules': 1, Toxicity: 0.9 } })) });
+    assert.deepEqual(await g.check(input('hello')), { action: 'block', reason: 'llm-guard: Toxicity' });
   });
 
   it('presidioGuard: analyze then anonymize (redact), or block with entity types', async () => {
