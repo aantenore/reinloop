@@ -37,13 +37,22 @@ Identity mapping:
 
 | Identity | From |
 |---|---|
-| `subject` | `sub` (agent tokens without `sub`: `client_id` / `azp`) |
-| `kind` | `agent` when there is no `sub`, `sub` equals `client_id`/`azp` (RFC 9068) or `preferred_username` starts with `service-account-` (Keycloak); otherwise `user`. Override with `kind: (claims) => ...` |
-| `roles` | `realm_access.roles` + `resource_access[client].roles` (all clients, or only `roleClients`) + `roles` |
+| `subject` | `sub`; an allow-listed agent token without `sub`: its client. Any other token without `sub` is refused |
+| `kind` | `agent` only when the token's `azp` (or `client_id`) is in `agentClients` and it has no `sub`, or `sub` equals that client's `agentSubjects` entry (when none is set: the client id, RFC 9068); otherwise `user`. Without `agentClients` no token is `agent`; usernames never count. Override with `kind: (claims) => ...` |
+| `roles` | `realm_access.roles` + `roles` + `resource_access[client].roles` of `roleClients` only (default: the `audience` values), as `<client>:<role>` unless `namespaceClientRoles: false` |
 | `scopes` | `scope` (space separated) + `scp` |
 | `claims`, `token` | the verified payload and the raw token |
 
-Set `audience`: without it, any token of the issuer (an ID token for another client included) is accepted.
+Set `audience`: without it, any token of the issuer (an ID token for another client included) is accepted, and no
+client roles are read.
+
+For Keycloak, client-credentials tokens carry the service-account user id as `sub`: set
+`"agentClients": ["agent-runtime"]` and `"agentSubjects": { "agent-runtime": "<service-account user id>" }` (admin API:
+`GET /admin/realms/<realm>/clients/<id>/service-account-user`).
+
+Migration: client roles are namespaced. A `when.roles` rule or a PDP policy that matched a client role `writer` now
+matches `tools-api:writer` (or set `namespaceClientRoles: false` and list the client in `roleClients`). Rules on
+`kind: agent` need `agentClients`.
 
 ## Credentials for downstream calls
 
@@ -175,8 +184,8 @@ MCP session to the principal that opened it may reject per-user calls on a share
 - Algorithm confusion: no symmetric or `none` algorithms; the key type is bound to the algorithm.
 - Key rotation DoS: unknown `kid` refetches are rate limited; a known `kid` with a bad signature never refetches.
 - Mix-up: the discovery `issuer` must match; `iss` must match exactly.
-- `kind` heuristic: the Keycloak `service-account-` username prefix decides `agent`. If users can choose usernames
-  freely, pass an explicit `kind` function.
-- Role sources: `resource_access` roles of every client are merged flat; restrict with `roleClients` when client role
-  names could collide.
+- Identity confusion: `agent` is never inferred from names; it needs an allow-listed client and a client-credentials
+  subject. A token exchanged by the agent client on behalf of a user keeps the user's `sub` and stays `user`.
+- Privilege confusion: only the realm, the `roles` claim and the `roleClients` are read; client roles are namespaced
+  so a client role cannot pose as a realm role.
 - PDP outages deny by default. `onError: "allow"` is an explicit availability-over-safety choice.

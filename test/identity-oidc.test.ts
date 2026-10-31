@@ -113,14 +113,16 @@ describe('oidcVerifier', () => {
     const id = await v.verify(token);
     assert.equal(id.subject, 'alice-id');
     assert.equal(id.kind, 'user');
-    assert.deepEqual(id.roles, ['analyst', 'offline_access', 'writer', 'x', 'extra']);
+    assert.deepEqual(id.roles, ['analyst', 'offline_access', 'extra', 'tools-api:writer'], 'client roles of the audience only, namespaced');
     assert.deepEqual(id.scopes, ['openid', 'profile', 'tools.read']);
     assert.equal(id.claims?.preferred_username, 'alice');
     assert.equal(id.token, token);
     const ec = await v.verify(idp.token({}, idp.keys[1]));
     assert.equal(ec.subject, 'alice-id');
-    const restricted = await oidcVerifier({ issuer: idp.issuer, roleClients: ['tools-api'] }).verify(token);
-    assert.ok(!restricted.roles!.includes('x'));
+    const noAudience = await oidcVerifier({ issuer: idp.issuer }).verify(token);
+    assert.deepEqual(noAudience.roles, ['analyst', 'offline_access', 'extra'], 'without audience or roleClients no client is read');
+    const flat = await oidcVerifier({ issuer: idp.issuer, roleClients: ['other'], namespaceClientRoles: false }).verify(token);
+    assert.deepEqual(flat.roles, ['analyst', 'offline_access', 'extra', 'x']);
   });
 
   it('rejects bad signatures, wrong iss/aud, expired, not-yet-valid, future iat and missing exp', async () => {
@@ -192,17 +194,32 @@ describe('oidcVerifier', () => {
     assert.doesNotThrow(() => oidcVerifier({ issuer: 'http://idp.example.com/realms/x', allowHttp: true }));
   });
 
-  it('derives kind agent for client-credentials tokens', async () => {
-    const v = oidcVerifier({ issuer: idp.issuer });
-    const kc = await v.verify(idp.token({ sub: 'sa-uuid', azp: 'agent-runtime', client_id: 'agent-runtime', preferred_username: 'service-account-agent-runtime' }));
-    assert.equal(kc.kind, 'agent');
-    assert.equal(kc.subject, 'sa-uuid');
-    const rfc9068 = await v.verify(idp.token({ sub: 'agent-runtime', client_id: 'agent-runtime' }));
+  it('client roles cannot pose as realm roles', async () => {
+    const token = idp.token({ realm_access: { roles: ['viewer'] }, resource_access: { 'tools-api': { roles: ['admin'] }, evil: { roles: ['admin'] } } });
+    assert.deepEqual((await oidcVerifier({ issuer: idp.issuer, audience: 'tools-api' }).verify(token)).roles, ['viewer', 'tools-api:admin']);
+    assert.deepEqual((await oidcVerifier({ issuer: idp.issuer, audience: 'tools-api', roleClients: [] }).verify(token)).roles, ['viewer']);
+    assert.deepEqual((await oidcVerifier({ issuer: idp.issuer, roleClients: ['constructor', 'toString'] }).verify(token)).roles, ['viewer']);
+  });
+
+  it('derives kind agent only for allow-listed clients with a client-credentials subject', async () => {
+    const sa = { sub: 'sa-uuid', azp: 'agent-runtime', client_id: 'agent-runtime', preferred_username: 'service-account-agent-runtime' };
+    assert.equal((await oidcVerifier({ issuer: idp.issuer }).verify(idp.token(sa))).kind, 'user', 'no allow-list: never agent');
+    assert.equal((await oidcVerifier({ issuer: idp.issuer, agentClients: ['agent-runtime'] }).verify(idp.token(sa))).kind, 'user', 'sub is not the client');
+    const v = oidcVerifier({ issuer: idp.issuer, agentClients: ['agent-runtime'], agentSubjects: { 'agent-runtime': 'sa-uuid' } });
+    const kc = await v.verify(idp.token(sa));
+    assert.deepEqual([kc.kind, kc.subject], ['agent', 'sa-uuid']);
+    const rfc9068 = await oidcVerifier({ issuer: idp.issuer, agentClients: ['agent-runtime'] }).verify(idp.token({ sub: 'agent-runtime', client_id: 'agent-runtime' }));
     assert.equal(rfc9068.kind, 'agent');
     const noSub = await v.verify(idp.token({ sub: undefined, azp: 'agent-runtime' }));
     assert.deepEqual([noSub.kind, noSub.subject], ['agent', 'agent-runtime']);
     const exchanged = await v.verify(idp.token({ sub: 'alice-id', azp: 'agent-runtime' }));
     assert.equal(exchanged.kind, 'user');
+    const spoof = await oidcVerifier({ issuer: idp.issuer, agentClients: ['agent-runtime'] }).verify(idp.token({ sub: 'mallory', azp: 'agent-runtime', preferred_username: 'service-account-agent-runtime' }));
+    assert.equal(spoof.kind, 'user', 'usernames never make an agent');
+    assert.equal((await v.verify(idp.token({ sub: 'agent-runtime', azp: 'agent-runtime', client_id: 'other' }))).kind, 'user', 'azp and client_id disagree');
+    await assert.rejects(oidcVerifier({ issuer: idp.issuer }).verify(idp.token({ sub: undefined, azp: 'agent-runtime' })), /no subject/);
+    await assert.rejects(v.verify(idp.token({ sub: undefined, azp: 'web' })), /no subject/);
+    await assert.rejects(v.verify(idp.token({ sub: '' })), /no subject/);
     const custom = await oidcVerifier({ issuer: idp.issuer, kind: () => 'agent' }).verify(idp.token());
     assert.equal(custom.kind, 'agent');
   });
