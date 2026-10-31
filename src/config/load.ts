@@ -4,6 +4,7 @@ import type { McpServerConfig } from '../mcp/client.ts';
 import { withAgentFiles } from '../agentfile.ts';
 import { MODEL_ALIASES, PRESETS, type PresetOverrides, splitModel } from '../presets.ts';
 import { validate } from '../schema.ts';
+import type { HttpToolOptions } from '../tools/http.ts';
 import type { Budget, JsonSchema, ModelParams, PolicyConfig, Pricing, Risk } from '../types.ts';
 import type { KnowledgeConfig } from '../knowledge/config.ts';
 import { ReinloopError } from '../util.ts';
@@ -85,6 +86,10 @@ export interface HarnessConfig {
   signals?: SignalsConfig;
   /** Knowledge sources for the `knowledge` middleware (auto-retrieval) and the `search_knowledge` tool. */
   knowledge?: KnowledgeConfig;
+  /** Declarative HTTP tools by tool name, usable in agents' `tools`. */
+  httpTools?: Record<string, HttpToolConfig>;
+  /** OpenAPI 3 (JSON) sources; their operations become tools named `<source>__<operationId>`. */
+  openapi?: Record<string, OpenApiConfig>;
   profiles?: Record<string, Partial<HarnessConfig>>;
 }
 
@@ -96,6 +101,22 @@ export interface HostedToolConfig {
   description?: string;
   limitParam?: string;
   beta?: string;
+}
+
+/** An `httpTool` without its name (the key) and env. */
+export type HttpToolConfig = Omit<HttpToolOptions, 'name' | 'env'>;
+
+export interface OpenApiConfig {
+  /** Path (relative to the config) or http(s) URL of a JSON OpenAPI 3 document. */
+  spec: string;
+  /** Default: the first absolute entry of the spec's `servers`. */
+  baseUrl?: string;
+  /** Globs of operationIds to import (default: all). */
+  include?: string[];
+  auth?: { audience: string; scopes?: string[] };
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+  maxResultChars?: number;
 }
 
 export interface WebConfig {

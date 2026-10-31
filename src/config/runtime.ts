@@ -16,6 +16,7 @@ import { agentTool } from '../subagent.ts';
 import { DEFAULT_SKILL_DIRS, discoverSkills, selectSkills, skillTool, type Skill } from '../skills.ts';
 import { type Member, streamMember } from '../team.ts';
 import { memoryArtifacts, readArtifactTool } from '../tools/define.ts';
+import { declaredTools } from '../tools/declared.ts';
 import { hostedTool } from '../tools/hosted.ts';
 import type { Agent, ArtifactStore, Message, Middleware, ModelRef, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
 import { globToRegExp } from '../util.ts';
@@ -137,6 +138,8 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     return Object.entries(config.mcpServers ?? {}).find(([name, s]) => (s.prefix ?? name) === prefix && prefix !== '' && pattern.includes('__'))?.[0];
   };
 
+  const declared = declaredTools(config, env, baseDir);
+
   let skills: Promise<Skill[]> | undefined;
   const allSkills = () => {
     const dirs = config.skillsDir === undefined ? DEFAULT_SKILL_DIRS : Array.isArray(config.skillsDir) ? config.skillsDir : [config.skillsDir];
@@ -158,6 +161,11 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
         const hits = all.filter((t) => re.test(t.name));
         if (!hits.length) throw new ConfigError(`$.agents.${owner}.tools: "${pattern}" matches no tool of MCP server "${server}"`);
         for (const t of hits) byName.set(t.name, t);
+        continue;
+      }
+      const spec = await declared.openapi(pattern, owner);
+      if (spec) {
+        for (const t of spec) byName.set(t.name, t);
         continue;
       }
       const re = globToRegExp(pattern);
@@ -182,6 +190,10 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
         if (!re.test(toolName)) continue;
         matched = true;
         byName.set(toolName, hostedTool({ ...interpolate(def, env, `$.hostedTools.${toolName}`), name: toolName }));
+      }
+      for (const t of declared.http(pattern)) {
+        matched = true;
+        byName.set(t.name, t);
       }
       if (pattern === 'read_artifact' && artifacts) {
         matched = true;

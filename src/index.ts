@@ -49,13 +49,15 @@ export {
   signalTools, hackerNewsSource, githubSource, stackExchangeSource, arxivSource, parseArxivAtom, SignalRateLimitError, BUILTIN_SIGNAL_SOURCES,
   type SignalToolsOptions, type SignalSource, type SignalItem, type SignalSearchOptions, type SignalTools, type BuiltinSignalSource,
 } from './tools/signals.ts';
+export { httpTool, type HttpToolOptions, type HttpToolAuth, type HttpMethod } from './tools/http.ts';
+export { openapiTools, readOpenApiSpec, type OpenApiOptions, type OpenApiDocument } from './tools/openapi.ts';
 export { pathGlob } from './tools/node.ts';
 export { serve, type ServeOptions, type Served } from './serve.ts';
 export { serveMcp, type McpServeOptions } from './mcp/server.ts';
 export { describeMembers, type MemberInfo } from './describe.ts';
 export { architect, architectInstructions, design, validateProject } from './architect.ts';
 export { DEFAULT_BUDGET } from './policy.ts';
-export type { TeamConfig, RoleBinding, HostedToolConfig, WebConfig, SignalsConfig } from './config/load.ts';
+export type { TeamConfig, RoleBinding, HostedToolConfig, WebConfig, SignalsConfig, HttpToolConfig, OpenApiConfig } from './config/load.ts';
 export { discoverSkills, selectSkills, skillTool, DEFAULT_SKILL_DIRS, type Skill } from './skills.ts';
 export { checkProvider, checkOpenAIEndpoint, type ProviderCheckOptions, type EndpointCheckOptions } from './conformance/provider.ts';
 export { ruleRouter, type RouteCondition, type RouteRule, type RuleRouterOptions } from './rule-router.ts';
