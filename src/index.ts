@@ -70,6 +70,8 @@ export { checkProvider, checkOpenAIEndpoint, type ProviderCheckOptions, type End
 export { ruleRouter, type RouteCondition, type RouteRule, type RuleRouterOptions } from './rule-router.ts';
 export { routedModel, withRouter, type RoutedModelOptions } from './router.ts';
 export { otlpSink, type OtlpOptions } from './observe/otlp.ts';
+export { otlpMetricsSink, type OtlpMetricsOptions } from './observe/metrics.ts';
+export { EVENT_LAYERS } from './observe/layers.ts';
 export { INTEGRATIONS, addIntegration, type Integration } from './integrations.ts';
 export { retrieve, mergePassages, fitPassages, formatBlock, toPassage, hashId, KNOWLEDGE_NOTE, type RetrievalOutcome, type RetrieveOptions } from './knowledge/core.ts';
 export {

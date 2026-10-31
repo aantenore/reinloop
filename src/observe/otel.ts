@@ -1,9 +1,12 @@
-import type { RunEvent, Sink } from '../types.ts';
+import type { Layer, RunEvent, Sink } from '../types.ts';
+import { EVENT_LAYERS, eventAttributes } from './layers.ts';
 
 /** Structural subset of `@opentelemetry/api` so the kernel needs no dependency. */
 export interface OtelSpan {
   setAttribute(key: string, value: string | number | boolean): unknown;
   setStatus(status: { code: number; message?: string }): unknown;
+  /** Optional: needed to record events of other layers (see `EVENT_LAYERS`) on the run span. */
+  addEvent?(name: string, attributes?: Record<string, string | number | boolean>): unknown;
   end(): void;
 }
 export interface OtelTracer {
@@ -17,6 +20,8 @@ export interface OtelSinkOptions {
   providerName?: string;
   /** Record message content on spans (off by default: may contain sensitive data). */
   captureContent?: boolean;
+  /** Extra or overriding event type → layer entries, merged over `EVENT_LAYERS`. */
+  eventLayers?: Record<string, Layer>;
 }
 
 const ERROR = 2;
@@ -25,6 +30,7 @@ const INTERNAL = 0;
 
 /** Maps run events to spans following the OpenTelemetry GenAI semantic conventions. */
 export function otelSink(opts: OtelSinkOptions): Sink {
+  const eventLayers = { ...EVENT_LAYERS, ...opts.eventLayers };
   const runs = new Map<string, OtelSpan>();
   const open = new Map<string, OtelSpan>();
   const start = (name: string, parent: OtelSpan | undefined, attributes: Record<string, string | number | boolean>, kind = INTERNAL) =>
@@ -40,6 +46,8 @@ export function otelSink(opts: OtelSinkOptions): Sink {
             'gen_ai.operation.name': 'invoke_agent',
             'gen_ai.agent.name': ev.data.agent,
             'gen_ai.conversation.id': ev.runId,
+            'agent.layer': 'harness',
+            ...(ev.data.subject && { 'enduser.id': ev.data.subject }),
           }));
           break;
         }
@@ -47,6 +55,7 @@ export function otelSink(opts: OtelSinkOptions): Sink {
           open.set(`${ev.runId}:model`, start(`chat ${ev.data.model}`, parentOf(ev.runId), {
             'gen_ai.operation.name': 'chat',
             'gen_ai.request.model': ev.data.model,
+            'agent.layer': 'llm',
             ...(opts.providerName && { 'gen_ai.provider.name': opts.providerName }),
           }, CLIENT));
           break;
@@ -68,6 +77,7 @@ export function otelSink(opts: OtelSinkOptions): Sink {
             'gen_ai.operation.name': 'execute_tool',
             'gen_ai.tool.name': ev.data.name,
             'gen_ai.tool.call.id': ev.data.callId,
+            'agent.layer': ev.data.layer ?? 'tool',
             ...(opts.captureContent && { 'gen_ai.tool.call.arguments': JSON.stringify(ev.data.args) }),
           }));
           break;
@@ -78,6 +88,16 @@ export function otelSink(opts: OtelSinkOptions): Sink {
           open.delete(key);
           if (ev.data.isError) span.setStatus({ code: ERROR, message: ev.data.content.slice(0, 200) });
           if (opts.captureContent) span.setAttribute('gen_ai.tool.call.result', ev.data.content);
+          span.end();
+          break;
+        }
+        case 'compaction': {
+          const span = start(`compaction ${ev.data.strategy}`, parentOf(ev.runId), {
+            'agent.layer': 'harness',
+            'agent.compaction.strategy': ev.data.strategy,
+            'agent.compaction.tokens.before': ev.data.beforeTokens,
+            'agent.compaction.tokens.after': ev.data.afterTokens,
+          });
           span.end();
           break;
         }
@@ -96,6 +116,10 @@ export function otelSink(opts: OtelSinkOptions): Sink {
           if (ev.data.status !== 'completed') span.setStatus({ code: ERROR, message: `${ev.data.status}${ev.data.reason ? `: ${ev.data.reason}` : ''}` });
           span.end();
           break;
+        }
+        default: {
+          const layer = eventLayers[ev.type];
+          if (layer) runs.get(ev.runId)?.addEvent?.(ev.type, eventAttributes(layer, ev.data, opts.captureContent));
         }
       }
     },
