@@ -1,10 +1,11 @@
-import { decide, DEFAULT_BUDGET, exceededBudget } from './policy.ts';
+import { authorizeCall } from './identity/authorize.ts';
+import { DEFAULT_BUDGET, exceededBudget } from './policy.ts';
 import { validate } from './schema.ts';
 import { Channel, EPHEMERAL, pendingToolCalls, reduce, replay } from './state.ts';
 import { memoryStore } from './store/memory.ts';
 import { executeToolCalls } from './tools/executor.ts';
 import type {
-  Agent, Approver, Budget, EventMap, EventType, HookContext, Message, ModelRequest, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
+  Agent, Budget, EventMap, EventType, HookContext, Message, ModelRequest, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
   RunStore, ToolSpec, Usage,
 } from './types.ts';
 import { addUsage, errorMessage, estimateTokens, hasVisibleParts, newId, textOf, toolCallsOf, userMessage } from './util.ts';
@@ -186,7 +187,7 @@ async function drive(
         }
       }
 
-      offered ??= await allowedHostedTools(agent, specs, runId, opts.approve, emit);
+      offered ??= await allowedHostedTools(agent, specs, runId, opts, signal, emit);
       const turn = state.turns + 1;
       emit('turn_start', { turn });
       const params = raisedMaxTokens ? { ...agent.model.params, maxTokens: raisedMaxTokens } : agent.model.params;
@@ -329,14 +330,16 @@ async function allowedHostedTools(
   agent: Agent,
   specs: ToolSpec[],
   runId: string,
-  approve: Approver | undefined,
+  opts: Pick<RunOptions, 'approve' | 'identity'>,
+  signal: AbortSignal,
   emit: <T extends EventType>(type: T, data: EventMap[T]) => void,
 ): Promise<ToolSpec[]> {
+  const { approve } = opts;
   const denied = new Set<string>();
   for (const tool of agent.tools) {
     if (!tool.hosted) continue;
     const call = { type: 'tool_call' as const, id: `hosted:${tool.name}`, name: tool.name, args: {} };
-    const verdict = decide(agent.policy, call, tool);
+    const verdict = await authorizeCall(agent.policy, call, tool, { agent: agent.name, identity: opts.identity, signal });
     let allowed = verdict.decision === 'allow';
     let reason = verdict.reason;
     if (verdict.decision === 'ask') {

@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import type { Runtime } from './config/runtime.ts';
 import { describeMembers } from './describe.ts';
-import type { Approver } from './types.ts';
+import type { Approver, Identity, IdentityVerifier, RunEvent } from './types.ts';
 import { CONSOLE_HTML } from './ui.ts';
 import { errorMessage } from './util.ts';
 
@@ -13,8 +13,14 @@ export interface ServeOptions {
   port?: number;
   /** Default 127.0.0.1: exposing agents beyond localhost is an explicit choice. */
   host?: string;
-  /** When set, every /v1 request needs `Authorization: Bearer <token>`. */
+  /** When set, every /v1 request needs `Authorization: Bearer <token>` (or, with `identity`, a valid user token). */
   token?: string;
+  /**
+   * Verify `Authorization: Bearer <JWT>` and run as that identity (default: the runtime's `identity.verifier`; `false`
+   * turns it off). `required` (default true) rejects requests without a token. The static `token` stays valid as an
+   * operator credential: it runs without identity and may read every run log.
+   */
+  identity?: { verifier: IdentityVerifier; required?: boolean } | false;
   /** Serve the web console at `/` (default true). */
   ui?: boolean;
   /** Approver for "ask" decisions; without one they are denied. */
@@ -26,9 +32,11 @@ export interface Served { server: Server; url: string; close(): Promise<void> }
 
 class HttpError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  readonly headers?: Record<string, string>;
+  constructor(status: number, message: string, headers?: Record<string, string>) {
     super(message);
     this.status = status;
+    this.headers = headers;
   }
 }
 
@@ -51,14 +59,26 @@ async function readBody(req: IncomingMessage, limit: number): Promise<any> {
   }
 }
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+function send(res: ServerResponse, status: number, body: unknown, headers?: Record<string, string>): void {
   // An unread request body would desynchronise a keep-alive connection: close it instead.
-  res.writeHead(status, { 'content-type': 'application/json', ...(status === 413 && { connection: 'close' }) });
+  res.writeHead(status, { 'content-type': 'application/json', ...(status === 413 && { connection: 'close' }), ...headers });
   res.end(JSON.stringify(body));
 }
 
 const digest = (s: string) => createHash('sha256').update(s).digest();
 const sameSecret = (given: string | undefined, expected: string) => given !== undefined && timingSafeEqual(digest(given), digest(expected));
+
+/** RFC 6750 challenge; the description is the verifier's reason, which never contains the token. */
+const unauthorized = (error?: string, description?: string) =>
+  new HttpError(401, description ? `unauthorized: ${description}` : 'unauthorized', {
+    'www-authenticate': `Bearer realm="reinloop"${error ? `, error="${error}"` : ''}${description ? `, error_description="${description.replace(/["\\\r\n]/g, '')}"` : ''}`,
+  });
+
+/** Who a request acts as: the operator (static token), a verified identity, or anonymous. */
+interface Caller { operator: boolean; identity?: Identity }
+
+/** Subject of a stored run (from its first `run_start`); undefined for runs without identity. */
+const runSubject = (events: RunEvent[]) => (events.find((e) => e.type === 'run_start') as RunEvent<'run_start'> | undefined)?.data.subject;
 
 /**
  * HTTP API over a runtime:
@@ -68,6 +88,30 @@ const sameSecret = (given: string | undefined, expected: string) => given !== un
  */
 export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<Served> {
   const limit = opts.maxBodyBytes ?? 1_000_000;
+  const verifier = opts.identity === false ? undefined : (opts.identity?.verifier ?? runtime.identity?.verifier);
+  const required = opts.identity ? (opts.identity.required ?? true) : (runtime.identity?.required ?? true);
+  const authenticate = async (header: string | undefined): Promise<Caller> => {
+    if (opts.token && sameSecret(header, `Bearer ${opts.token}`)) return { operator: true };
+    if (!verifier) {
+      if (opts.token) throw unauthorized();
+      return { operator: false };
+    }
+    const bearer = /^Bearer +(\S+) *$/i.exec(header ?? '')?.[1];
+    if (!bearer) {
+      // A present but malformed header is never downgraded to an anonymous call.
+      if (header || required || opts.token) throw unauthorized(header ? 'invalid_request' : undefined);
+      return { operator: false };
+    }
+    try {
+      return { operator: false, identity: await verifier.verify(bearer) };
+    } catch (err) {
+      // The IdP being unreachable or misconfigured is not the caller's fault (still no access).
+      if (String((err as { code?: unknown }).code ?? '').startsWith('identity_')) throw new HttpError(503, 'identity provider unavailable');
+      throw unauthorized('invalid_token', errorMessage(err).slice(0, 120));
+    }
+  };
+  // With identity on, a caller sees and continues only runs started under its own subject; the operator sees all.
+  const mayAccess = (caller: Caller, events: RunEvent[]) => !verifier || caller.operator || runSubject(events) === caller.identity?.subject;
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://local');
@@ -78,12 +122,19 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
       }
       if (path === '/health') return send(res, 200, { ok: true });
       if (!path.startsWith('/v1/')) throw new HttpError(404, 'not found');
-      if (opts.token && !sameSecret(req.headers.authorization, `Bearer ${opts.token}`)) throw new HttpError(401, 'unauthorized');
+      const caller = await authenticate(req.headers.authorization);
 
       if (req.method === 'GET' && path === '/v1/agents') return send(res, 200, describeMembers(runtime));
-      if (req.method === 'GET' && path === '/v1/runs') return send(res, 200, (await runtime.store.list?.()) ?? []);
+      if (req.method === 'GET' && path === '/v1/runs') {
+        if (verifier && !caller.operator) throw new HttpError(403, 'listing runs needs the operator token');
+        return send(res, 200, (await runtime.store.list?.()) ?? []);
+      }
       const runMatch = /^\/v1\/runs\/([\w.-]+)$/.exec(path);
-      if (req.method === 'GET' && runMatch) return send(res, 200, await runtime.store.load(runMatch[1]!));
+      if (req.method === 'GET' && runMatch) {
+        const events = await runtime.store.load(runMatch[1]!);
+        if (!mayAccess(caller, events)) throw new HttpError(404, 'not found');
+        return send(res, 200, events);
+      }
 
       const start = /^\/v1\/agents\/([\w.-]+)\/runs$/.exec(path);
       if (req.method === 'POST' && start) {
@@ -92,9 +143,13 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
         const body = await readBody(req, limit);
         if (body.input !== undefined && typeof body.input !== 'string') throw new HttpError(400, '"input" must be a string');
         if (body.runId !== undefined && typeof body.runId !== 'string') throw new HttpError(400, '"runId" must be a string');
+        if (body.runId !== undefined && verifier && !caller.operator) {
+          const prior = await runtime.store.load(body.runId);
+          if (prior.length && !mayAccess(caller, prior)) throw new HttpError(404, 'not found');
+        }
         const controller = new AbortController();
         res.on('close', () => !res.writableFinished && controller.abort(new Error('client disconnected')));
-        const handle = await runtime.stream(name, body.input, { runId: body.runId, approve: opts.approve, signal: controller.signal });
+        const handle = await runtime.stream(name, body.input, { runId: body.runId, approve: opts.approve, signal: controller.signal, ...(caller.identity && { identity: caller.identity }) });
         const wantsStream = (req.headers.accept ?? '').includes('text/event-stream') || url.searchParams.get('stream') === '1';
         if (!wantsStream) {
           const result = await handle.result;
@@ -110,7 +165,7 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
     } catch (err) {
       if (res.headersSent) return res.end();
       const status = err instanceof HttpError ? err.status : 500;
-      send(res, status, { error: errorMessage(err) });
+      send(res, status, { error: errorMessage(err) }, err instanceof HttpError ? err.headers : undefined);
       if (status === 413) res.once('finish', () => req.destroy());
     }
   });

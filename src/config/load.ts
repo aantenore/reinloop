@@ -70,6 +70,8 @@ export interface HarnessConfig {
     artifacts?: 'none' | 'memory' | 'file';
   };
   policy?: PolicyConfig;
+  /** Inbound token verification and outbound credentials (`type` defaults to `oidc`). */
+  identity?: IdentityConfig;
   store?: ComponentConfig;
   sinks?: ComponentConfig[];
   agents?: Record<string, AgentConfig>;
@@ -91,6 +93,13 @@ export interface HarnessConfig {
   /** OpenAPI 3 (JSON) sources; their operations become tools named `<source>__<operationId>`. */
   openapi?: Record<string, OpenApiConfig>;
   profiles?: Record<string, Partial<HarnessConfig>>;
+}
+
+export interface IdentityConfig {
+  verifier?: { type?: string; [option: string]: unknown };
+  credentials?: { type?: string; [option: string]: unknown };
+  /** `reinloop serve`: reject /v1 requests without a valid bearer token (default true when a verifier is set). */
+  required?: boolean;
 }
 
 export interface HostedToolConfig {

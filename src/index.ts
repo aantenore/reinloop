@@ -2,7 +2,14 @@ export type * from './types.ts';
 
 export { run, stream, createHandle, createEmitter, contextTokens, costOf, OUTPUT_FEEDBACK, type RunHandle } from './loop.ts';
 export { reduce, replay, pendingToolCalls, initialState, EPHEMERAL } from './state.ts';
-export { decide, mergePolicies, exceededBudget, DEFAULT_RISK_DECISIONS } from './policy.ts';
+export { decide, matchesCondition, mergePolicies, exceededBudget, DEFAULT_RISK_DECISIONS } from './policy.ts';
+export { oidcVerifier, defaultKind, rolesOf, scopesOf, DEFAULT_ALGORITHMS, type OidcVerifierOptions } from './identity/verifier.ts';
+export { oidcCredentials, TOKEN_EXCHANGE_GRANT, ACCESS_TOKEN_TYPE, type CredentialFactory, type OidcCredentialsOptions } from './identity/credentials.ts';
+export { authorizeCall } from './identity/authorize.ts';
+export { accessRequest, authzenAuthorizer, opaAuthorizer, type HttpAuthorizerOptions } from './identity/authorizers.ts';
+export { IdentityError } from './identity/http.ts';
+export { JWS_ALGORITHMS, decodeJwt } from './identity/jwt.ts';
+export { checkAuthorizer, checkIdentityVerifier, checkCredentialProvider, type AuthorizerCases, type VerifierCases, type CredentialCases } from './conformance/identity.ts';
 export { validate } from './schema.ts';
 export { windowCompaction, summarizeCompaction, DEFAULT_SUMMARY_PROMPT } from './compaction.ts';
 export { agentTool, type AgentToolOptions } from './subagent.ts';

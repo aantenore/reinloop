@@ -203,12 +203,33 @@ export interface Tool<A = any> {
 
 export type Decision = 'allow' | 'deny' | 'ask';
 
-export interface PolicyRule { match?: string; risk?: Risk; action: Decision; reason?: string }
+/**
+ * Who a rule applies to. Every field that is set must match: `roles` and `scopes` match when the run identity has at
+ * least one of the listed values (any-of), `kind` must be equal. A rule with `when` never matches a run without identity.
+ */
+export interface PolicyCondition { roles?: string[]; scopes?: string[]; kind?: 'user' | 'agent' }
+
+export interface PolicyRule { match?: string; risk?: Risk; when?: PolicyCondition; action: Decision; reason?: string }
+
+/**
+ * External policy decision point, consulted after the local rules for calls they allow or ask about.
+ * In config files `type` names a registered authorizer factory; the runtime resolves it into `authorizer`.
+ */
+export interface PdpSettings {
+  type?: string;
+  authorizer?: Authorizer;
+  /** What a PDP failure (network, timeout, malformed answer) means. Default `deny`. */
+  onError?: Decision;
+  /** Send the tool arguments as `context.args` (default false: arguments may hold personal data). */
+  includeArgs?: boolean;
+  [option: string]: unknown;
+}
 
 export interface PolicyConfig {
   default?: Decision;
   risk?: Partial<Record<Risk, Decision>>;
   rules?: PolicyRule[];
+  pdp?: PdpSettings;
 }
 
 export interface ApprovalRequest { runId: string; agent: string; call: ToolCallPart; tool: Tool; reason: string }
