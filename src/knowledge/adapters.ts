@@ -1,10 +1,11 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import type { KnowledgeQuery, KnowledgeSource, Passage } from '../types.ts';
+import { redact, secretForms, staticSecrets } from '../tools/redact.ts';
 import { rank } from './rank.ts';
 import { DEFAULT_K, DEFAULT_TIMEOUT_MS, hashId, matchesFilter, toPassage } from './core.ts';
 
-// Adapters depend only on the contract types and Node built-ins, so they can be lifted out of the runtime as they are.
+// Adapters depend only on the contract types, Node built-ins and the small redaction helper, so they can be lifted out of the runtime.
 
 export interface ClosableSource extends KnowledgeSource { close(): Promise<void> }
 
@@ -129,13 +130,15 @@ export function httpKnowledge(opts: HttpKnowledgeOptions): KnowledgeSource {
     name,
     async search(q) {
       const timeout = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      const sent = typeof opts.headers === 'function' ? opts.headers(q) : opts.headers;
       const res = await fetch(opts.url, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json', ...(typeof opts.headers === 'function' ? opts.headers(q) : opts.headers) },
+        headers: { 'content-type': 'application/json', accept: 'application/json', ...sent },
         body: JSON.stringify({ query: q.query, ...(q.k !== undefined && { k: q.k }), ...(q.filter && { filter: q.filter }) }),
         signal: q.signal ? AbortSignal.any([q.signal, timeout]) : timeout,
       });
-      if (!res.ok) throw new Error(`knowledge HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
+      // The error body may echo the credentials (configured headers, a forwarded token); mask all of it, then cut.
+      if (!res.ok) throw new Error(`knowledge HTTP ${res.status}: ${redact(await res.text().catch(() => ''), secretForms(staticSecrets(sent))).slice(0, 300)}`);
       const body = (await res.json()) as { passages?: unknown };
       if (!Array.isArray(body?.passages)) throw new Error('knowledge HTTP: response has no "passages" array');
       return body.passages.flatMap((p) => toPassage(p, name) ?? []);

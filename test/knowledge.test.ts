@@ -100,6 +100,8 @@ describe('httpKnowledge', () => {
         res.setHeader('content-type', 'application/json');
         if (body.query === 'bad') return void res.end('{"nope":1}');
         if (body.query === 'fail') return void ((res.statusCode = 503), res.end('down'));
+        // Echoes the credentials 287 characters in, so the 300-character cut falls inside them.
+        if (body.query === 'echo') return void ((res.statusCode = 500), res.end(`${'y'.repeat(287)}${req.headers.authorization} ${req.headers['x-api-key']}`));
         res.end(JSON.stringify({ passages: [{ id: 'h1', text: 'from http', score: 0.9 }] }));
       });
     }).listen(0);
@@ -120,6 +122,14 @@ describe('httpKnowledge', () => {
     const src = httpKnowledge({ url });
     await assert.rejects(src.search({ query: 'bad' }), /no "passages" array/);
     await assert.rejects(src.search({ query: 'fail' }), /HTTP 503: down/);
+  });
+
+  it('masks configured headers and a forwarded token in error bodies, also across the truncation cut', async () => {
+    const src = httpKnowledge({ url, headers: (q) => ({ authorization: `Bearer ${q.identity?.token}`, 'x-api-key': 'key-from-env-123' }) });
+    await assert.rejects(
+      src.search({ query: 'echo', identity: { subject: 'u', kind: 'user', token: 'user-token-9' } }),
+      (err: Error) => /\[redacted\]/.test(err.message) && !/user-t|key-/.test(`${err.message}\n${err.stack}`),
+    );
   });
 });
 
