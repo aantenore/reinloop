@@ -16,7 +16,7 @@ import { type RetryOptions, withRetry } from './providers/resilient.ts';
 import { fileStore } from './store/file.ts';
 import { memoryStore } from './store/memory.ts';
 import { workspaceTools } from './tools/node.ts';
-import { ruleRouter } from './router.ts';
+import { ruleRouter } from './rule-router.ts';
 import type { CompactionStrategy, Middleware, ModelRouter, Provider, RunStore, Sink, Tool } from './types.ts';
 
 export interface FactoryContext {

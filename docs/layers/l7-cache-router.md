@@ -42,7 +42,7 @@ const router = ruleRouter({
 const routed = withRouter(agent, { router }); // or routedModel(base, opts) for the model and middleware separately
 ```
 
-`ruleRouter` is free (no model call). Rules are tried in order and the first whose conditions all hold wins:
+`ruleRouter` is free (no model call) and lives in `src/rule-router.ts`, which imports only contract types. Rules are tried in order and the first whose conditions all hold wins:
 
 | Condition | Holds when |
 |---|---|

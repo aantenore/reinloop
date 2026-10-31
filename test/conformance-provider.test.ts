@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
-import { checkProvider, mockProvider, type MockStep } from '../src/index.ts';
+import { checkOpenAIEndpoint, checkProvider, mockProvider, type MockStep } from '../src/index.ts';
 
 const ok: MockStep[] = [
   { text: 'pong' },
@@ -42,5 +44,50 @@ describe('checkProvider', () => {
     await checkProvider(provider, { model: 'qwen', params: { maxTokens: 64 } });
     assert.ok(provider.requests.every((r) => r.model === 'qwen' && r.params?.maxTokens === 64));
     assert.equal(provider.requests[1]!.tools[0]!.name, 'record_number');
+  });
+});
+
+describe('checkOpenAIEndpoint', () => {
+  /** Minimal Chat Completions server; `toolArgs` is the raw `arguments` string it answers tool requests with. */
+  async function serve(toolArgs: string, seen: Array<{ auth?: string; body: any }> = []) {
+    const server = createServer((req, res) => {
+      let raw = '';
+      req.on('data', (c) => (raw += c));
+      req.on('end', () => {
+        const body = JSON.parse(raw);
+        seen.push({ auth: req.headers.authorization, body });
+        const message = body.tools
+          ? { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'record_number', arguments: toolArgs } }] }
+          : { role: 'assistant', content: 'pong' };
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ model: body.model, choices: [{ message, finish_reason: body.tools ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 9, completion_tokens: 3 } }));
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    return { server, baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/` };
+  }
+
+  it('certifies a raw endpoint and sends the key and model', async () => {
+    const seen: Array<{ auth?: string; body: any }> = [];
+    const { server, baseUrl } = await serve('{"n":42}', seen);
+    try {
+      assert.deepEqual(await checkOpenAIEndpoint({ baseUrl, apiKey: 'k', model: 'm', params: { maxTokens: 50 } }), []);
+      assert.equal(seen.length, 2);
+      assert.ok(seen.every((r) => r.auth === 'Bearer k' && r.body.model === 'm' && r.body.max_tokens === 50));
+    } finally {
+      server.close();
+    }
+  });
+
+  it('reports malformed tool arguments and HTTP errors', async () => {
+    const { server, baseUrl } = await serve('{"n":');
+    try {
+      assert.match((await checkOpenAIEndpoint({ baseUrl, model: 'm' })).join('\n'), /arguments were not valid JSON/);
+    } finally {
+      server.close();
+    }
+    const failures = await checkOpenAIEndpoint({ baseUrl, model: 'm', fetch: async () => new Response('nope', { status: 401 }) });
+    assert.equal(failures.length, 2);
+    assert.match(failures[0]!, /HTTP 401: nope/);
   });
 });

@@ -43,4 +43,10 @@ const failures = await checkProvider(provider, { model, params: { maxTokens: 512
 if (failures.length) throw new Error(failures.join('\n'));
 ```
 
+`checkOpenAIEndpoint({ baseUrl, apiKey?, model, params?, headers?, fetch? })` runs the same check against a raw
+OpenAI-compatible Chat Completions URL, with its own minimal client and no reinloop provider, so any gateway or model
+server can be certified.
+
+`src/conformance/provider.ts` imports only contract types, so it can be copied out as it is.
+
 It calls the model twice, so it costs real tokens on a hosted provider.
