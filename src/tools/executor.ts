@@ -57,6 +57,7 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
     let result: ToolResultPart = { type: 'tool_result', callId: original.id, name: original.name, content, isError };
     for (const mw of env.agent.middleware ?? []) result = (await mw.afterTool?.(result, hookCtx)) ?? result;
     const stops = stop && !result.isError;
+    const layer = env.tools.get(original.name)?.layer;
     env.emit('tool_result', {
       callId: original.id,
       name: original.name,
@@ -64,6 +65,7 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
       isError: result.isError ?? false,
       durationMs: Math.round(performance.now() - started),
       artifact,
+      ...(layer && { layer }),
       ...(stops && { stop: true, ...('data' in stop && { data: stop.data }) }),
     });
   };
@@ -100,7 +102,7 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   const errors = validate(tool.schema, call.args, 'args');
   if (errors.length) return finish(`Invalid arguments: ${errors.join('; ')}`, true);
 
-  env.emit('tool_start', { callId: call.id, name: call.name, args: call.args });
+  env.emit('tool_start', { callId: call.id, name: call.name, args: call.args, ...(tool.layer && { layer: tool.layer }) });
   const timeoutMs = tool.timeoutMs ?? env.agent.toolSettings?.timeoutMs;
   const signal = timeoutMs ? AbortSignal.any([env.signal, AbortSignal.timeout(timeoutMs)]) : env.signal;
   try {

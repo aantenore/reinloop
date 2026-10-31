@@ -292,11 +292,11 @@ export interface EventMap {
   thinking_delta: { text: string };
   /** `discarded`: accounted for but kept out of the history (the request is repeated, e.g. with `retryMaxTokens`). */
   model_response: { turn: number; model: string; message: Message; usage: Usage; stopReason: StopReason; latencyMs: number; costUsd: number; discarded?: boolean };
-  tool_start: { callId: string; name: string; args: unknown };
+  tool_start: { callId: string; name: string; args: unknown; layer?: Layer };
   /** The model's arguments for a call were malformed JSON: repaired and run, or answered with a tool error. */
   tool_args_invalid: { callId: string; name: string; error: string; repaired: boolean };
   tool_decision: { callId: string; name: string; allowed: boolean; reason: string };
-  tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string; stop?: boolean; data?: unknown };
+  tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string; stop?: boolean; data?: unknown; layer?: Layer };
   /** A provider-hosted tool ran inside the model turn (derived from the response; not persisted). */
   hosted_tool_start: { callId: string; name: string; input: unknown };
   hosted_tool_result: { callId: string; name: string; summary: string; isError: boolean; sources?: Array<{ url: string; title?: string }> };

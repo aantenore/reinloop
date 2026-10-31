@@ -1,7 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import type { Sink } from '../types.ts';
+import type { Layer, Sink } from '../types.ts';
 import { errorMessage } from '../util.ts';
 import { type OtelSpan, type OtelTracer, otelSink } from './otel.ts';
+import { otlpMetricsSink } from './metrics.ts';
+import { type Attrs, nowNanos, toAttributes } from './otlp-json.ts';
 
 export interface OtlpOptions {
   /** Collector base URL (e.g. http://localhost:4318) or the full `/v1/traces` URL. */
@@ -11,15 +13,12 @@ export interface OtlpOptions {
   captureContent?: boolean;
   /** Export interval for finished spans (default 2000 ms). Remaining spans are sent on close. */
   intervalMs?: number;
+  /** Also export OTLP metrics (`/v1/metrics`, see `otlpMetricsSink`) from the same events. */
+  metrics?: boolean;
+  /** Extra or overriding event type → layer entries for events recorded as span events. */
+  eventLayers?: Record<string, Layer>;
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
 }
-
-type Value = { stringValue: string } | { intValue: string } | { doubleValue: number } | { boolValue: boolean };
-
-const toValue = (v: string | number | boolean): Value =>
-  typeof v === 'string' ? { stringValue: v } : typeof v === 'boolean' ? { boolValue: v } : Number.isInteger(v) ? { intValue: String(v) } : { doubleValue: v };
-
-const nowNanos = () => (BigInt(Date.now()) * 1_000_000n + BigInt(Math.floor((performance.now() % 1) * 1_000_000))).toString();
 
 interface Recorded {
   traceId: string;
@@ -29,8 +28,9 @@ interface Recorded {
   kind: number;
   startTimeUnixNano: string;
   endTimeUnixNano?: string;
-  attributes: Record<string, string | number | boolean>;
+  attributes: Attrs;
   status?: { code: number; message?: string };
+  events?: Array<{ timeUnixNano: string; name: string; attributes: Attrs }>;
 }
 
 /**
@@ -59,6 +59,8 @@ export function otlpSink(opts: OtlpOptions): Sink {
         record,
         setAttribute: (k: string, v: string | number | boolean) => void (record.attributes[k] = v),
         setStatus: (s: { code: number; message?: string }) => void (record.status = s),
+        addEvent: (name: string, attributes: Attrs = {}) =>
+          void (record.events ??= []).push({ timeUnixNano: nowNanos(), name, attributes }),
         end: () => {
           record.endTimeUnixNano = nowNanos();
           pending.push(record);
@@ -84,8 +86,9 @@ export function otlpSink(opts: OtlpOptions): Sink {
             kind: r.kind,
             startTimeUnixNano: r.startTimeUnixNano,
             endTimeUnixNano: r.endTimeUnixNano,
-            attributes: Object.entries(r.attributes).map(([key, v]) => ({ key, value: toValue(v) })),
+            attributes: toAttributes(r.attributes),
             ...(r.status && { status: r.status }),
+            ...(r.events && { events: r.events.map((e) => ({ timeUnixNano: e.timeUnixNano, name: e.name, attributes: toAttributes(e.attributes) })) }),
           })),
         }],
       }],
@@ -101,13 +104,19 @@ export function otlpSink(opts: OtlpOptions): Sink {
 
   const timer = setInterval(() => void flush(), opts.intervalMs ?? 2000);
   timer.unref();
-  const inner = otelSink({ tracer, contextWith: (span) => span, captureContent: opts.captureContent });
+  const inner = otelSink({ tracer, contextWith: (span) => span, captureContent: opts.captureContent, eventLayers: opts.eventLayers });
+  const metrics = opts.metrics
+    ? otlpMetricsSink({ endpoint: opts.endpoint, headers: opts.headers, serviceName: opts.serviceName, intervalMs: opts.intervalMs, fetch: opts.fetch })
+    : undefined;
   return {
     name: 'otlp',
-    onEvent: (ev) => inner.onEvent(ev),
+    onEvent: (ev) => {
+      inner.onEvent(ev);
+      metrics?.onEvent(ev);
+    },
     async close() {
       clearInterval(timer);
-      await flush();
+      await Promise.all([flush(), metrics?.close?.()]);
     },
   };
 }
