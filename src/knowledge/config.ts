@@ -25,6 +25,8 @@ export interface KnowledgeSourceConfig {
   /** `mcp`: constant extra tool arguments. */
   toolArgs?: Record<string, unknown>;
   timeoutMs?: number;
+  /** `http`, `mcp`: response text kept in a source error (default 300). */
+  errorBodyChars?: number;
   /** `wiki`: folder of Markdown files, relative to the config file. */
   dir?: string;
   maxPassageChars?: number;
@@ -39,9 +41,14 @@ export interface KnowledgeConfig {
   maxChars?: number;
   mode?: 'first-turn' | 'every-turn';
   timeoutMs?: number;
+  /** `search_knowledge` result size (default: `maxChars` when set, else 8000). */
+  toolMaxChars?: number;
+  maxK?: number;
+  maxQueryChars?: number;
+  maxTrackedRuns?: number;
 }
 
-export interface BuiltKnowledge extends Omit<KnowledgeMiddlewareOptions, 'sources'> { sources: KnowledgeSource[] }
+export interface BuiltKnowledge extends Omit<KnowledgeMiddlewareOptions, 'sources'> { sources: KnowledgeSource[]; toolMaxChars?: number; maxK?: number }
 
 function build(name: string, s: KnowledgeSourceConfig, ctx: FactoryContext, path: string): KnowledgeSource {
   switch (s.type) {
@@ -50,7 +57,7 @@ function build(name: string, s: KnowledgeSourceConfig, ctx: FactoryContext, path
       return wikiKnowledge({ name, dir: resolve(ctx.baseDir, s.dir), maxPassageChars: s.maxPassageChars });
     case 'http':
       if (!s.url) throw new Error(`${path}.url is required for type "http"`);
-      return httpKnowledge({ name, url: s.url, headers: s.headers, timeoutMs: s.timeoutMs });
+      return httpKnowledge({ name, url: s.url, headers: s.headers, timeoutMs: s.timeoutMs, errorBodyChars: s.errorBodyChars, minSecretChars: ctx.limits?.minSecretChars });
     case 'mcp': {
       if (!s.tool) throw new Error(`${path}.tool is required for type "mcp"`);
       let server: McpServerConfig;
@@ -63,7 +70,10 @@ function build(name: string, s: KnowledgeSourceConfig, ctx: FactoryContext, path
         server = { command, args, env, cwd, url, headers, timeoutMs };
       }
       const queryArg = s.queryArg ?? 'query';
-      const source = mcpKnowledge({ name, connect: () => McpClient.connect(name, server), tool: s.tool, args: (q) => ({ ...s.toolArgs, [queryArg]: q.query }) });
+      const minSecretChars = ctx.limits?.minSecretChars;
+      const source = mcpKnowledge({
+        name, connect: () => McpClient.connect(name, server, { minSecretChars }), tool: s.tool, args: (q) => ({ ...s.toolArgs, [queryArg]: q.query }), errorBodyChars: s.errorBodyChars,
+      });
       ctx.onClose(() => source.close());
       return source;
     }

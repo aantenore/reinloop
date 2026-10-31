@@ -1,4 +1,5 @@
 import type { ModelRef, Provider } from '../types.ts';
+import { limitDefault } from '../limits.ts';
 import { ProviderError, sleep } from '../util.ts';
 
 export interface RetryOptions {
@@ -16,9 +17,9 @@ export const DEFAULT_RETRY_ON = [0, 408, 409, 429, 500, 502, 503, 504, 529];
  * streamed text is never retried, so consumers never see duplicated output.
  */
 export function withRetry(provider: Provider, opts: RetryOptions = {}): Provider {
-  const maxAttempts = opts.maxAttempts ?? 3;
-  const base = opts.baseDelayMs ?? 500;
-  const cap = opts.maxDelayMs ?? 30_000;
+  const maxAttempts = opts.maxAttempts ?? limitDefault('provider.retry.maxAttempts');
+  const base = opts.baseDelayMs ?? limitDefault('provider.retry.baseDelayMs');
+  const cap = opts.maxDelayMs ?? limitDefault('provider.retry.maxDelayMs');
   const retryOn = new Set(opts.retryOn ?? DEFAULT_RETRY_ON);
   return {
     name: provider.name,

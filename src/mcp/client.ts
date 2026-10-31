@@ -4,6 +4,7 @@ import { readSse } from '../providers/http.ts';
 import { defineTool, safeToolName } from '../tools/define.ts';
 import { redact, scrubError, secretForms, staticSecrets } from '../tools/redact.ts';
 import type { CredentialProvider, JsonSchema, Risk, Tool } from '../types.ts';
+import { finiteTimeout, limitDefault } from '../limits.ts';
 import { globToRegExp } from '../util.ts';
 import { VERSION } from '../version.ts';
 
@@ -26,7 +27,12 @@ export interface McpServerConfig {
   readOnly?: string[];
   include?: string[];
   exclude?: string[];
+  /** Time limit of one request (default 60 s; Infinity: none). */
   timeoutMs?: number;
+  /** HTTP error body kept in error messages, after masking (default 300). */
+  errorBodyChars?: number;
+  /** Tail of a stdio server's stderr kept for error messages (default 2000). */
+  stderrChars?: number;
   /**
    * Streamable HTTP only: send `Authorization: Bearer` with a token for `audience` from the run's credentials on every
    * tool call (overrides a static `headers.authorization`). Connection setup uses the `connect` credentials, if any.
@@ -37,6 +43,15 @@ export interface McpServerConfig {
 export interface McpConnectOptions {
   /** Credentials for requests outside a run (initialize, tools/list, session close) when `auth` is set. */
   credentials?: CredentialProvider;
+  /** Shorter secrets are not masked in error text (default 4). */
+  minSecretChars?: number;
+}
+
+/** `AbortSignal.timeout` for a time limit that may be Infinity (then only `signal` applies). */
+function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal | undefined {
+  const ms = finiteTimeout(timeoutMs);
+  if (ms === undefined) return signal;
+  return signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
 }
 
 type HeaderMap = Record<string, string>;
@@ -70,7 +85,8 @@ class StdioTransport implements Transport {
   constructor(cfg: McpServerConfig, timeoutMs: number) {
     this.timeoutMs = timeoutMs;
     this.child = spawn(cfg.command!, cfg.args ?? [], { cwd: cfg.cwd, env: { ...process.env, ...cfg.env }, stdio: ['pipe', 'pipe', 'pipe'] });
-    this.child.stderr!.on('data', (d: Buffer) => (this.stderr = (this.stderr + d.toString()).slice(-2000)));
+    const stderrChars = cfg.stderrChars ?? limitDefault('mcp.stderrChars');
+    this.child.stderr!.on('data', (d: Buffer) => (this.stderr = stderrChars ? (this.stderr + d.toString()).slice(-stderrChars) : ''));
     createInterface({ input: this.child.stdout! }).on('line', (line) => this.onLine(line));
     const fail = (why: string) => {
       for (const p of this.pending.values()) p.reject(new Error(`MCP server ${why}${this.stderr ? `: ${this.stderr.trim()}` : ''}`));
@@ -107,7 +123,8 @@ class StdioTransport implements Transport {
   request(method: string, params: unknown, signal?: AbortSignal): Promise<any> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => done(new Error(`MCP ${method} timed out after ${this.timeoutMs}ms`)), this.timeoutMs);
+      const ms = finiteTimeout(this.timeoutMs);
+      const timer = ms === undefined ? undefined : setTimeout(() => done(new Error(`MCP ${method} timed out after ${ms}ms`)), ms);
       const onAbort = () => {
         this.write({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id } });
         done(new Error(`MCP ${method} aborted`));
@@ -141,11 +158,13 @@ class HttpTransport implements Transport {
   private cfg: McpServerConfig;
   private timeoutMs: number;
   private connectHeaders: () => Promise<HeaderMap | undefined>;
+  private minSecretChars?: number;
 
-  constructor(cfg: McpServerConfig, timeoutMs: number, connectHeaders: () => Promise<HeaderMap | undefined> = async () => undefined) {
+  constructor(cfg: McpServerConfig, timeoutMs: number, connectHeaders: () => Promise<HeaderMap | undefined> = async () => undefined, minSecretChars?: number) {
     this.cfg = cfg;
     this.timeoutMs = timeoutMs;
     this.connectHeaders = connectHeaders;
+    this.minSecretChars = minSecretChars;
   }
 
   setProtocol(version: string): void {
@@ -154,7 +173,7 @@ class HttpTransport implements Transport {
 
   /** Static header values and the active credential: a server error body may echo them. */
   private secrets(auth: HeaderMap | undefined): string[] {
-    return secretForms([...staticSecrets(this.cfg.headers), ...staticSecrets(auth)]);
+    return secretForms([...staticSecrets(this.cfg.headers), ...staticSecrets(auth)], this.minSecretChars);
   }
 
   private async post(body: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<{ res: Response; auth: HeaderMap | undefined }> {
@@ -169,11 +188,11 @@ class HttpTransport implements Transport {
         ...withAuth(this.cfg.headers, auth),
       },
       body: JSON.stringify(body),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
+      signal: withTimeout(signal, this.timeoutMs),
     });
     this.session = res.headers.get('mcp-session-id') ?? this.session;
     // Mask the whole body before cutting it: a secret that straddles the cut would otherwise survive in part.
-    if (!res.ok) throw new Error(`MCP HTTP ${res.status}: ${redact(await res.text().catch(() => ''), this.secrets(auth)).slice(0, 300)}`);
+    if (!res.ok) throw new Error(`MCP HTTP ${res.status}: ${redact(await res.text().catch(() => ''), this.secrets(auth)).slice(0, this.cfg.errorBodyChars ?? limitDefault('mcp.errorBodyChars'))}`);
     return { res, auth };
   }
 
@@ -225,11 +244,11 @@ export class McpClient {
   }
 
   static async connect(name: string, cfg: McpServerConfig, opts: McpConnectOptions = {}): Promise<McpClient> {
-    const timeoutMs = cfg.timeoutMs ?? 60_000;
+    const timeoutMs = cfg.timeoutMs ?? limitDefault('mcp.timeoutMs');
     if (!cfg.command === !cfg.url) throw new Error(`MCP server "${name}": set exactly one of "command" or "url"`);
     if (cfg.auth && !cfg.url) throw new Error(`MCP server "${name}": "auth" needs the streamable HTTP transport ("url")`);
     const connectHeaders = async () => (cfg.auth && opts.credentials ? bearer(await opts.credentials.token(cfg.auth.audience, { scopes: cfg.auth.scopes })) : undefined);
-    const transport = cfg.command ? new StdioTransport(cfg, timeoutMs) : new HttpTransport(cfg, timeoutMs, connectHeaders);
+    const transport = cfg.command ? new StdioTransport(cfg, timeoutMs) : new HttpTransport(cfg, timeoutMs, connectHeaders, opts.minSecretChars);
     try {
       const init = await transport.request('initialize', {
         protocolVersion: MCP_PROTOCOL_VERSION,
@@ -309,7 +328,7 @@ export async function mcpTools(name: string, cfg: McpServerConfig, opts: McpConn
           // model, in a result or in an error. Structured content is used as text only when there is none, so the same
           // masking covers it.
           const token = headers?.authorization?.replace(/^Bearer /, '');
-          const forms = secretForms([...(token ? [token] : []), ...staticSecrets(cfg.headers)]);
+          const forms = secretForms([...(token ? [token] : []), ...staticSecrets(cfg.headers)], opts.minSecretChars);
           try {
             const res = await client.callTool(info.name, args, ctx.signal, headers);
             return { ...res, content: redact(res.content, forms) };

@@ -26,6 +26,13 @@ page under [docs/layers](docs/layers/README.md).
 - Evaluation: `evaluate` over JSONL datasets, `expectedEvaluator`, `judgeEvaluator`, per-layer health scores from the
   event log (`layerSignals`, `scoreLayers`), `replayRuns`; CLI `reinloop eval` and `reinloop replay`; `checkEvaluator`.
 - Middleware: `HookContext.emit` records events; registry factories get `FactoryContext.onClose`.
+- Limits: every timeout, size, count and cap is declared once in `LIMITS` (`src/limits.ts`: default, config path,
+  accepted and safe range) and is a config field plus a code option. New config fields under `tools`, `web`, `signals`,
+  `knowledge`, `mcpServers`, `httpTools`, `openapi`, `providers`, `memory`, `guardrails`, `policy.pdp`, `sinks` (otlp)
+  and new sections `serve` and `limits`. Limits take `${env:NAME}` (numbers checked after interpolation) and, where it
+  makes sense, `"unbounded"`; out-of-range values are rejected, and unsafe ones raise a `ReinloopConfigWarning` at load
+  (`loadConfig().warnings`, `onWarning`). Defaults are unchanged. A `0` timeout is no longer accepted in the config
+  (use `"unbounded"`). Docs: the Limits section of `docs/configuration.md`.
 - Docs: `docs/architecture.md` gains a public API reference covering every export of `src/index.ts` and a complete event
   table (`tool_args_invalid`, `hosted_tool_*`); `docs/configuration.md` lists the remaining schema keys (`readOnly`,
   `limitParam`, `web.maxUses`, `web.topic`, agent `budget` / `params` / `asTool` fields, `$schema`).

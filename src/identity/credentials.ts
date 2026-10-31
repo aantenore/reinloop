@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { CredentialProvider, Identity } from '../types.ts';
-import { checkSecureUrl, discover, type FetchLike, IdentityError, requestJson } from './http.ts';
+import { checkSecureUrl, discover, type FetchLike, IDENTITY_LIMITS, IdentityError, requestJson, type ResponseLimits } from './http.ts';
 import { unverifiedExpiry } from './jwt.ts';
 
 /** Binds outbound credentials to the identity of one run (resolved at run start). */
@@ -9,7 +9,7 @@ export type CredentialFactory = (identity?: Identity) => CredentialProvider;
 export const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
 export const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token';
 
-export interface OidcCredentialsOptions {
+export interface OidcCredentialsOptions extends ResponseLimits {
   /** Issuer for discovery of `token_endpoint`; or pass `tokenEndpoint` directly. */
   issuer?: string;
   tokenEndpoint?: string;
@@ -50,16 +50,19 @@ export function oidcCredentials(opts: OidcCredentialsOptions): CredentialFactory
   else checkSecureUrl(opts.issuer!, 'issuer', opts.allowHttp);
   const fetchImpl: FetchLike = opts.fetch ?? fetch;
   const now = opts.now ?? Date.now;
-  const timeoutMs = opts.timeoutMs ?? 10_000;
-  const skewMs = (opts.refreshSkewSec ?? 30) * 1000;
-  const maxEntries = opts.maxCacheEntries ?? 1000;
+  const L = IDENTITY_LIMITS;
+  const timeoutMs = opts.timeoutMs ?? L['identity.credentials.timeoutMs'].default;
+  const skewMs = (opts.refreshSkewSec ?? L['identity.credentials.refreshSkewSec'].default) * 1000;
+  const maxEntries = opts.maxCacheEntries ?? L['identity.credentials.maxCacheEntries'].default;
+  const defaultTtlSec = opts.defaultTtlSec ?? L['identity.credentials.defaultTtlSec'].default;
+  const limits: ResponseLimits = { maxResponseBytes: opts.maxResponseBytes, errorBodyChars: opts.errorBodyChars };
   const audienceParam = opts.audienceParam ?? 'audience';
   const cache = new Map<string, Cached>();
   const inflight = new Map<string, Promise<string>>();
   let endpoint: Promise<string> | undefined = opts.tokenEndpoint ? Promise.resolve(opts.tokenEndpoint) : undefined;
 
   const tokenEndpoint = () => {
-    endpoint ??= discover(fetchImpl, opts.issuer!, timeoutMs, opts.allowHttp).then((doc) => {
+    endpoint ??= discover(fetchImpl, opts.issuer!, timeoutMs, opts.allowHttp, limits).then((doc) => {
       if (typeof doc.token_endpoint !== 'string') throw new IdentityError('identity_config', 'OIDC discovery: no "token_endpoint"');
       return checkSecureUrl(doc.token_endpoint, 'token_endpoint', opts.allowHttp).href;
     });
@@ -87,7 +90,7 @@ export function oidcCredentials(opts: OidcCredentialsOptions): CredentialFactory
       body.set('client_secret', opts.clientSecret);
     }
     const what = params.grant_type === TOKEN_EXCHANGE_GRANT ? 'token exchange' : 'client credentials';
-    const { body: res } = await requestJson(fetchImpl, await tokenEndpoint(), { method: 'POST', headers, body: body.toString(), signal, timeoutMs, what });
+    const { body: res } = await requestJson(fetchImpl, await tokenEndpoint(), { method: 'POST', headers, body: body.toString(), signal, timeoutMs, what, ...limits });
     if (typeof res?.access_token !== 'string' || !res.access_token) throw new IdentityError('identity_response', `${what}: no access_token in the response`);
     const type = typeof res.token_type === 'string' ? res.token_type.toLowerCase() : undefined;
     if (type && type !== 'bearer' && type !== 'n_a') throw new IdentityError('identity_response', `${what}: unsupported token_type "${res.token_type}"`);
@@ -121,7 +124,7 @@ export function oidcCredentials(opts: OidcCredentialsOptions): CredentialFactory
 
       const promise = (async () => {
         const { token, expiresIn } = await request(params, topts.signal);
-        const exp = expiresIn !== undefined ? now() + expiresIn * 1000 : (unverifiedExpiry(token) ?? now() / 1000 + (opts.defaultTtlSec ?? 60)) * 1000;
+        const exp = expiresIn !== undefined ? now() + expiresIn * 1000 : (unverifiedExpiry(token) ?? now() / 1000 + defaultTtlSec) * 1000;
         const expiresAt = Math.min(exp, subjectExp !== undefined ? subjectExp * 1000 : Infinity) - skewMs;
         if (expiresAt > now()) remember(key, { token, expiresAt });
         return token;

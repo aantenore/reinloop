@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Layer, Sink } from '../types.ts';
 import { type OtelSpan, type OtelTracer, otelSink } from './otel.ts';
-import { otlpMetricsSink } from './metrics.ts';
+import { otlpMetricsSink, TELEMETRY_LIMITS } from './metrics.ts';
 import { type Attrs, assertPlainEndpoint, ExportStatusError, exportFailure, nowNanos, toAttributes } from './otlp-json.ts';
 
 export interface OtlpOptions {
@@ -10,8 +10,10 @@ export interface OtlpOptions {
   headers?: Record<string, string>;
   serviceName?: string;
   captureContent?: boolean;
-  /** Export interval for finished spans (default 2000 ms). Remaining spans are sent on close. */
+  /** Export interval for finished spans (default 2000 ms; metrics too unless `metricsIntervalMs` is set). Remaining spans are sent on close. */
   intervalMs?: number;
+  /** Export interval for metrics (default: `intervalMs` when set, else 10000 ms). */
+  metricsIntervalMs?: number;
   /** Also export OTLP metrics (`/v1/metrics`, see `otlpMetricsSink`) from the same events. */
   metrics?: boolean;
   /** Extra or overriding event type → layer entries for events recorded as span events. */
@@ -102,11 +104,11 @@ export function otlpSink(opts: OtlpOptions): Sink {
     }
   };
 
-  const timer = setInterval(() => void flush(), opts.intervalMs ?? 2000);
+  const timer = setInterval(() => void flush(), opts.intervalMs ?? TELEMETRY_LIMITS['otlp.intervalMs'].default);
   timer.unref();
   const inner = otelSink({ tracer, contextWith: (span) => span, captureContent: opts.captureContent, eventLayers: opts.eventLayers });
   const metrics = opts.metrics
-    ? otlpMetricsSink({ endpoint: opts.endpoint, headers: opts.headers, serviceName: opts.serviceName, intervalMs: opts.intervalMs, fetch: opts.fetch })
+    ? otlpMetricsSink({ endpoint: opts.endpoint, headers: opts.headers, serviceName: opts.serviceName, intervalMs: opts.metricsIntervalMs ?? opts.intervalMs, fetch: opts.fetch })
     : undefined;
   return {
     name: 'otlp',

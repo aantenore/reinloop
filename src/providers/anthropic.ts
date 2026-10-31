@@ -1,5 +1,6 @@
 import { closedSchema } from '../schema.ts';
 import type { Effort, GenerateContext, HostedResultPart, Message, ModelParams, ModelResponse, Part, Provider, StopReason, ThinkingType, ToolSpec, Usage } from '../types.ts';
+import { limitDefault } from '../limits.ts';
 import { estimateTokens, ProviderError, truncate } from '../util.ts';
 import { type FetchLike, parseToolJson, postJson, readSse } from './http.ts';
 
@@ -19,7 +20,12 @@ export interface AnthropicOptions {
   cacheTtl?: '5m' | '1h';
   /** Breakpoints whose estimated prefix is shorter than this are left out (default 1024 tokens: below the API minimum). */
   cacheMinTokens?: number;
+  /** Output tokens when the request sets no `maxTokens` (default 4096). */
   defaultMaxTokens?: number;
+  /** Response text kept in an HTTP error (default 500). */
+  errorBodyChars?: number;
+  /** Response JSON kept when a response has an unexpected shape (default 300). */
+  responseExcerptChars?: number;
   /** Send `output_config.format: json_schema` when a schema is requested (default true; disable for gateways that reject it). */
   structuredOutput?: boolean;
   fetch?: FetchLike;
@@ -76,7 +82,7 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
       if (cache && tools.length && toolsTokens >= minTokens) Object.assign(tools.at(-1)!, { cache_control: mark });
       const body: Record<string, unknown> = {
         model: req.model,
-        max_tokens: p.maxTokens ?? opts.defaultMaxTokens ?? 4096,
+        max_tokens: p.maxTokens ?? opts.defaultMaxTokens ?? limitDefault('provider.defaultMaxTokens'),
         messages,
         ...(req.instructions && {
           system: cache && systemTokens >= minTokens ? [{ type: 'text', text: req.instructions, cache_control: mark }] : req.instructions,
@@ -111,9 +117,9 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
         if (current) delete (headers as Record<string, string>)[current[0]];
         (headers as Record<string, string>)['anthropic-beta'] = merged.join(',');
       }
-      const res = await postJson(fetchImpl, `${baseUrl}/v1/messages`, headers, body, ctx.signal);
+      const res = await postJson(fetchImpl, `${baseUrl}/v1/messages`, headers, body, ctx.signal, opts.errorBodyChars);
       if (stream) return readStream(res, ctx);
-      const out = fromMessage(await res.json());
+      const out = fromMessage(await res.json(), opts.responseExcerptChars);
       for (const part of out.message.parts) if (part.type === 'thinking' && part.text) ctx.onThinking?.(part.text);
       return out;
     },
@@ -159,7 +165,7 @@ export function toAnthropicMessages(messages: Message[]): AMessage[] {
   return out;
 }
 
-export const DEFAULT_CACHE_MIN_TOKENS = 1024;
+export const DEFAULT_CACHE_MIN_TOKENS = limitDefault('provider.cacheMinTokens');
 
 /** Thinking blocks cannot carry `cache_control`: the rolling breakpoint goes on the last block that can. */
 function markLastBlock(messages: AMessage[], mark: Block): void {
@@ -237,8 +243,8 @@ function toParts(blocks: any[]): Part[] {
   return parts;
 }
 
-export function fromMessage(json: any): ModelResponse {
-  if (!Array.isArray(json?.content)) throw new ProviderError(502, `unexpected response: ${JSON.stringify(json).slice(0, 300)}`);
+export function fromMessage(json: any, excerptChars: number = limitDefault('provider.responseExcerptChars')): ModelResponse {
+  if (!Array.isArray(json?.content)) throw new ProviderError(502, `unexpected response: ${JSON.stringify(json).slice(0, excerptChars)}`);
   return { message: { role: 'assistant', parts: toParts(json.content) }, usage: toUsage(json.usage), stopReason: STOP[json.stop_reason] ?? 'other', model: json.model };
 }
 

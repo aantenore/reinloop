@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import type { Runtime } from './config/runtime.ts';
 import { describeMembers } from './describe.ts';
 import type { Approver, Identity, IdentityVerifier, RunEvent } from './types.ts';
+import { limitDefault } from './limits.ts';
 import { CONSOLE_HTML } from './ui.ts';
 import { errorMessage } from './util.ts';
 
@@ -25,8 +26,21 @@ export interface ServeOptions {
   ui?: boolean;
   /** Approver for "ask" decisions; without one they are denied. */
   approve?: Approver;
+  /** Largest request body (default 1 MB, or `serve.maxBodyBytes` of the config; Infinity: none). */
   maxBodyBytes?: number;
+  /** Time to receive a whole request (default 300 s; Infinity: none). */
+  requestTimeoutMs?: number;
+  /** Time to receive the request headers (default 60 s, never above `requestTimeoutMs`; Infinity: none). */
+  headersTimeoutMs?: number;
+  /** Verifier reason kept in the WWW-Authenticate `error_description` (default 120). */
+  errorDescriptionChars?: number;
 }
+
+/** `serve` settings of the config file; options passed to `serve()` win. */
+export type ServeSettings = Pick<ServeOptions, 'maxBodyBytes' | 'requestTimeoutMs' | 'headersTimeoutMs' | 'errorDescriptionChars'>;
+
+/** Node server timeouts: Infinity (unbounded) is 0, which Node reads as "no timeout". */
+const nodeTimeout = (ms: number) => (Number.isFinite(ms) ? ms : 0);
 
 export interface Served { server: Server; url: string; close(): Promise<void> }
 
@@ -87,7 +101,11 @@ const runSubject = (events: RunEvent[]) => (events.find((e) => e.type === 'run_s
  *   GET  /v1/runs, /v1/runs/:id      stored runs and their event logs
  */
 export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<Served> {
-  const limit = opts.maxBodyBytes ?? 1_000_000;
+  const settings = runtime.serveSettings?.() ?? {};
+  const limit = opts.maxBodyBytes ?? settings.maxBodyBytes ?? limitDefault('serve.maxBodyBytes');
+  const descriptionChars = opts.errorDescriptionChars ?? settings.errorDescriptionChars ?? limitDefault('serve.errorDescriptionChars');
+  const requestTimeout = nodeTimeout(opts.requestTimeoutMs ?? settings.requestTimeoutMs ?? limitDefault('serve.requestTimeoutMs'));
+  const headersTimeout = nodeTimeout(opts.headersTimeoutMs ?? settings.headersTimeoutMs ?? limitDefault('serve.headersTimeoutMs'));
   const verifier = opts.identity === false ? undefined : (opts.identity?.verifier ?? runtime.identity?.verifier);
   const required = opts.identity ? (opts.identity.required ?? true) : (runtime.identity?.required ?? true);
   const authenticate = async (header: string | undefined): Promise<Caller> => {
@@ -107,12 +125,14 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
     } catch (err) {
       // The IdP being unreachable or misconfigured is not the caller's fault (still no access).
       if (String((err as { code?: unknown }).code ?? '').startsWith('identity_')) throw new HttpError(503, 'identity provider unavailable');
-      throw unauthorized('invalid_token', errorMessage(err).slice(0, 120));
+      throw unauthorized('invalid_token', errorMessage(err).slice(0, descriptionChars));
     }
   };
   // With identity on, a caller sees and continues only runs started under its own subject; the operator sees all.
   const mayAccess = (caller: Caller, events: RunEvent[]) => !verifier || caller.operator || runSubject(events) === caller.identity?.subject;
-  const server = createServer(async (req, res) => {
+  // As in Node: the headers timeout never exceeds the request timeout (0 turns either off).
+  const serverOptions = { requestTimeout, headersTimeout: requestTimeout && headersTimeout ? Math.min(headersTimeout, requestTimeout) : headersTimeout };
+  const server = createServer(serverOptions, async (req, res) => {
     try {
       const url = new URL(req.url ?? '/', 'http://local');
       const path = url.pathname;

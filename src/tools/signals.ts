@@ -1,4 +1,5 @@
 import type { FetchLike } from '../providers/http.ts';
+import { limitDefault } from '../limits.ts';
 import type { Tool } from '../types.ts';
 import { errorMessage, truncate } from '../util.ts';
 import { VERSION } from '../version.ts';
@@ -41,6 +42,12 @@ export interface SignalToolsOptions {
   cacheTtlMs?: number;
   /** Per-request timeout in ms (default 10000). */
   timeoutMs?: number;
+  /** Results kept by the cache (default 200). */
+  cacheMaxEntries?: number;
+  /** Response text kept in an HTTP error (default 300). */
+  errorBodyChars?: number;
+  /** Response text kept in a throttling error (default 200). */
+  rateLimitBodyChars?: number;
   /** GitHub token for higher rate limits (default env `GITHUB_TOKEN`). Sent only to api.github.com. */
   githubToken?: string;
   /** Also search GitHub issues in `search_projects` (default false; one extra request). */
@@ -161,7 +168,7 @@ export function stackExchangeSource(opts: { site?: string } = {}): SignalSource 
 }
 
 /** Minimal Atom parsing of an arXiv API response (no dependencies). */
-export function parseArxivAtom(xml: string, maxChars = 300): SignalItem[] {
+export function parseArxivAtom(xml: string, maxChars: number = limitDefault('signals.maxChars')): SignalItem[] {
   const field = (block: string, name: string) => new RegExp(`<(?:[a-z]+:)?${name}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[a-z]+:)?${name}>`, 'i').exec(block)?.[1];
   const entries = [...xml.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi)].map((m) => m[1]!);
   return entries.map((e) => {
@@ -203,7 +210,9 @@ function rateLimitDetail(res: Response): string | undefined {
   return undefined;
 }
 
-function httpGetter(fetchImpl: FetchLike, userAgent: string, timeoutMs: number, source: string, signal: AbortSignal): SignalSearchOptions['get'] {
+interface ErrorExcerpts { errorBodyChars: number; rateLimitBodyChars: number }
+
+function httpGetter(fetchImpl: FetchLike, userAgent: string, timeoutMs: number, source: string, signal: AbortSignal, excerpts: ErrorExcerpts): SignalSearchOptions['get'] {
   return async (url, init = {}) => {
     const timeout = AbortSignal.timeout(timeoutMs);
     let res: Response;
@@ -222,8 +231,8 @@ function httpGetter(fetchImpl: FetchLike, userAgent: string, timeoutMs: number, 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       // Stack Exchange reports throttling as HTTP 400 with error_name `throttle_violation`.
-      if (body.includes('throttle_violation')) throw new SignalRateLimitError(source, truncate(body, 200));
-      throw new Error(`${source}: HTTP ${res.status}: ${truncate(body, 300)}`);
+      if (body.includes('throttle_violation')) throw new SignalRateLimitError(source, truncate(body, excerpts.rateLimitBodyChars));
+      throw new Error(`${source}: HTTP ${res.status}: ${truncate(body, excerpts.errorBodyChars)}`);
     }
     return init.as === 'text' ? res.text() : res.json();
   };
@@ -262,12 +271,16 @@ export interface SignalTools {
  * Rate limits come back as tool errors so the model can move on.
  */
 export function signalTools(opts: SignalToolsOptions = {}): SignalTools {
-  const cap = opts.maxResultsCap ?? 10;
-  const maxChars = opts.maxChars ?? 300;
-  const timeoutMs = opts.timeoutMs ?? 10_000;
+  const cap = opts.maxResultsCap ?? limitDefault('signals.maxResultsCap');
+  const maxChars = opts.maxChars ?? limitDefault('signals.maxChars');
+  const timeoutMs = opts.timeoutMs ?? limitDefault('signals.timeoutMs');
+  const excerpts: ErrorExcerpts = {
+    errorBodyChars: opts.errorBodyChars ?? limitDefault('signals.errorBodyChars'),
+    rateLimitBodyChars: opts.rateLimitBodyChars ?? limitDefault('signals.rateLimitBodyChars'),
+  };
   const userAgent = opts.userAgent ?? DEFAULT_UA;
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const cache = ttlCache(opts.cacheTtlMs ?? 0);
+  const cache = ttlCache(opts.cacheTtlMs ?? limitDefault('signals.cacheTtlMs'), opts.cacheMaxEntries ?? limitDefault('signals.cacheMaxEntries'));
   const out: SignalTools = {};
   for (const spec of opts.sources ?? BUILTIN_SIGNAL_SOURCES) {
     const source = sourceFrom(spec, opts);
@@ -283,10 +296,10 @@ export function signalTools(opts: SignalToolsOptions = {}): SignalTools {
         additionalProperties: false,
       },
       run: async ({ query, max_results }, ctx) => {
-        const n = Math.min(max_results ?? opts.maxResults ?? 5, cap);
+        const n = Math.min(max_results ?? opts.maxResults ?? limitDefault('signals.maxResults'), cap);
         try {
           return await cache.get(`${source.tool}\u0000${n}\u0000${query}`, async () => {
-            const get = httpGetter(fetchImpl, userAgent, timeoutMs, source.name, ctx.signal);
+            const get = httpGetter(fetchImpl, userAgent, timeoutMs, source.name, ctx.signal, excerpts);
             const results = (await source.search(query, { maxResults: n, signal: ctx.signal, get, maxChars })).slice(0, n);
             return JSON.stringify({ untrusted: true, note: UNTRUSTED_NOTE, source: source.name, query, retrieved_at: new Date().toISOString(), results });
           });

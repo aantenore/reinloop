@@ -1,4 +1,5 @@
 import type { ArtifactStore, JsonSchema, Tool, ToolContext, ToolOutput } from '../types.ts';
+import { limitDefault } from '../limits.ts';
 import { newId } from '../util.ts';
 
 const NAME = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -38,7 +39,8 @@ export function memoryArtifacts(): ArtifactStore {
 }
 
 /** Pages through large tool outputs offloaded to an artifact store. */
-export function readArtifactTool(store: ArtifactStore): Tool<{ handle: string; offset?: number; limit?: number }> {
+export function readArtifactTool(store: ArtifactStore, opts: { defaultLimit?: number } = {}): Tool<{ handle: string; offset?: number; limit?: number }> {
+  const defaultLimit = opts.defaultLimit ?? limitDefault('tools.artifactReadChars');
   return defineTool({
     name: 'read_artifact',
     description: 'Read a slice of a stored large tool output by handle.',
@@ -48,12 +50,12 @@ export function readArtifactTool(store: ArtifactStore): Tool<{ handle: string; o
       properties: {
         handle: { type: 'string' },
         offset: { type: 'integer', minimum: 0, description: 'Start character (default 0)' },
-        limit: { type: 'integer', minimum: 1, description: 'Max characters (default 8000)' },
+        limit: { type: 'integer', minimum: 1, description: `Max characters (default ${defaultLimit})` },
       },
       required: ['handle'],
       additionalProperties: false,
     },
-    async run({ handle, offset = 0, limit = 8000 }, _ctx: ToolContext) {
+    async run({ handle, offset = 0, limit = defaultLimit }, _ctx: ToolContext) {
       const text = await store.get(handle);
       if (text === undefined) return { content: `unknown artifact ${handle}`, isError: true };
       const slice = text.slice(offset, offset + limit);

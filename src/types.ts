@@ -227,6 +227,8 @@ export interface PdpSettings {
   onError?: Decision;
   /** Send the tool arguments as `context.args` (default false: arguments may hold personal data). */
   includeArgs?: boolean;
+  /** Characters of a PDP reason or error kept in the decision (default 200). */
+  maxReasonChars?: number;
   [option: string]: unknown;
 }
 
@@ -321,6 +323,38 @@ export interface Agent {
   output?: OutputSpec;
   middleware?: Middleware[];
   toolSettings?: ToolSettings;
+  /** Empty model responses tolerated in a row before the run fails (default 2). */
+  maxEmptyResponses?: number;
+}
+
+// ---- Limits -------------------------------------------------------------------
+
+/**
+ * One configurable limit: its default, where it is set, and which values are accepted. Components declare their limits
+ * with this shape and read their defaults from it, so config validation, schema and docs share one source.
+ */
+export interface LimitSpec {
+  /** Group the limit belongs to (one docs table each). */
+  component: string;
+  /** Path in reinloop.json: `<name>` stands for any key, `[]` for any list item. */
+  path: string;
+  /** Other paths with the same meaning (e.g. an agent-level override). */
+  also?: readonly string[];
+  /** Constructor or factory option that sets it in code. */
+  option: string;
+  /** `unbounded` means no limit by default. */
+  default: number | 'unbounded';
+  min: number;
+  max?: number;
+  /** Whether the string `unbounded` (Infinity in code) is accepted. */
+  unbounded?: boolean;
+  /** Warn at config load when set to `unbounded`. */
+  warnUnbounded?: boolean;
+  /** Values outside this range are accepted with a warning at config load. */
+  safe?: readonly [number, number];
+  /** Applies only to components of these types (the nearest `type` field); a missing type matches. */
+  types?: readonly string[];
+  why: string;
 }
 
 // ---- Events / state --------------------------------------------------------

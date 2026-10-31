@@ -1,4 +1,5 @@
 import { interpolate } from '../config/load.ts';
+import { limitDefault } from '../limits.ts';
 import type { JsonSchema, Risk, Tool, ToolOutput } from '../types.ts';
 import { defineTool } from './define.ts';
 import { redact, secretForms, staticSecrets } from './redact.ts';
@@ -36,9 +37,14 @@ export interface HttpToolOptions {
   schema: JsonSchema;
   /** Default: `read` for GET and HEAD, `write` otherwise. */
   risk?: Risk;
+  /** Call time limit (default: the agent's tools.timeoutMs; Infinity: none). */
   timeoutMs?: number;
-  /** Response text cap (default 16000). */
+  /** Response text cap (default 16000; Infinity: none). */
   maxResultChars?: number;
+  /** Response text kept in an error result, after masking (default 500). */
+  errorBodyChars?: number;
+  /** Shorter secrets are not masked (default 4). */
+  minSecretChars?: number;
   /** Send `Authorization: Bearer <token>` from the run's credentials; without credentials the call fails and nothing is sent. */
   auth?: HttpToolAuth;
   env?: Env;
@@ -87,7 +93,8 @@ export function httpTool(opts: HttpToolOptions): Tool {
   const queryArgs = opts.query ?? [];
   const headerArgs = opts.headerArgs ?? [];
   const consumed = new Set([...pathArgs, ...queryArgs, ...headerArgs]);
-  const maxChars = opts.maxResultChars ?? 16_000;
+  const maxChars = opts.maxResultChars ?? limitDefault('httpTools.maxResultChars');
+  const errorChars = opts.errorBodyChars ?? limitDefault('httpTools.errorBodyChars');
   const readOnly = method === 'GET' || method === 'HEAD';
 
   return defineTool({
@@ -151,7 +158,7 @@ export function httpTool(opts: HttpToolOptions): Tool {
       }
       // A server may echo request headers back; no configured secret may reach the model. Mask the raw body, normalise
       // JSON (which decodes \u escapes), then mask again, so a secret cannot survive in any form.
-      const forms = secretForms(secrets);
+      const forms = secretForms(secrets, opts.minSecretChars);
       let text = redact(await res.text(), forms);
       const json = /json/i.test(type) && text;
       if (json) {
@@ -161,7 +168,7 @@ export function httpTool(opts: HttpToolOptions): Tool {
           // not valid JSON: keep the raw text
         }
       }
-      if (!res.ok) return error(redact(`HTTP ${res.status} ${res.statusText}`, forms).trim() + (text ? `: ${truncate(text, 500)}` : ''));
+      if (!res.ok) return error(redact(`HTTP ${res.status} ${res.statusText}`, forms).trim() + (text ? `: ${truncate(text, errorChars)}` : ''));
       if (!text) return `HTTP ${res.status} (no content)`;
       return text.length > maxChars ? `${text.slice(0, maxChars)}\n[truncated: ${text.length} chars in total]` : text;
     },

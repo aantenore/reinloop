@@ -1,3 +1,4 @@
+import { limitDefault } from '../limits.ts';
 import { errorMessage, ProviderError, truncate } from '../util.ts';
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
@@ -8,6 +9,7 @@ export async function postJson(
   headers: Record<string, string>,
   body: unknown,
   signal: AbortSignal,
+  errorBodyChars: number = limitDefault('provider.errorBodyChars'),
 ): Promise<Response> {
   let res: Response;
   try {
@@ -18,7 +20,7 @@ export async function postJson(
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new ProviderError(res.status, `HTTP ${res.status} from ${url}: ${truncate(text, 500)}`, retryAfter(res.headers));
+    throw new ProviderError(res.status, `HTTP ${res.status} from ${url}: ${truncate(text, errorBodyChars)}`, retryAfter(res.headers));
   }
   return res;
 }

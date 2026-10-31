@@ -17,11 +17,13 @@ import { DEFAULT_SKILL_DIRS, discoverSkills, selectSkills, skillTool, type Skill
 import { type Member, streamMember } from '../team.ts';
 import { memoryArtifacts, readArtifactTool } from '../tools/define.ts';
 import { declaredTools } from '../tools/declared.ts';
+import type { WorkspaceLimits } from '../tools/node.ts';
 import { hostedTool } from '../tools/hosted.ts';
 import type { CredentialFactory } from '../identity/credentials.ts';
 import type { Agent, ArtifactStore, CredentialProvider, IdentityVerifier, Message, Middleware, ModelRef, PolicyConfig, Provider, RunOptions, RunResult, RunStore, Sink, Tool } from '../types.ts';
+import type { ServeSettings } from '../serve.ts';
 import { globToRegExp } from '../util.ts';
-import { type AgentConfig, ConfigError, type Env, type HarnessConfig, checkConfig, interpolate, loadConfig } from './load.ts';
+import { type AgentConfig, ConfigError, type Env, type HarnessConfig, checkConfig, interpolate, loadConfig, resolveLimits } from './load.ts';
 
 export interface RuntimeOptions {
   registry?: Registry;
@@ -35,6 +37,8 @@ export interface Runtime {
   readonly registry: Registry;
   readonly store: RunStore;
   readonly sinks: Sink[];
+  /** `serve` section of the config, placeholders resolved (read when serving). */
+  serveSettings?(): ServeSettings;
   /** From `identity`: the inbound verifier (used by `serve`) and the per-run credentials factory. */
   readonly identity: { verifier?: IdentityVerifier; credentials?: CredentialFactory; required: boolean };
   /** Names of every runnable member (agents and teams). */
@@ -73,6 +77,12 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
   const env = opts.env ?? process.env;
   const baseDir = opts.baseDir ?? process.cwd();
   const toolCfg = interpolate(config.tools ?? {}, env, '$.tools');
+  const limits = interpolate(config.limits ?? {}, env, '$.limits');
+  const workspaceLimits: WorkspaceLimits = {
+    shellTimeoutMs: toolCfg.shellTimeoutMs, maxOutputChars: toolCfg.shellMaxOutputChars, shellExitGraceMs: toolCfg.shellExitGraceMs,
+    maxWalkFiles: toolCfg.maxWalkFiles, maxFindResults: toolCfg.maxFindResults, searchMaxResults: toolCfg.searchMaxResults,
+    searchMaxFileBytes: toolCfg.searchMaxFileBytes, searchLineChars: toolCfg.searchLineChars,
+  };
   const singletons = new Map<string, unknown>();
   const closers: Array<() => Promise<void> | void> = [];
   const ctx: FactoryContext = {
@@ -81,6 +91,8 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     config,
     workspace: resolve(baseDir, toolCfg.workspace ?? '.'),
     shellTimeoutMs: toolCfg.shellTimeoutMs,
+    workspaceLimits,
+    limits,
     once: <T>(key: string, create: () => T): T => {
       if (!singletons.has(key)) singletons.set(key, create());
       return singletons.get(key) as T;
@@ -119,8 +131,12 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     if (!spec || spec.authorizer || !spec.type) return policy;
     const key = JSON.stringify(spec);
     if (!authorizers.has(key)) {
-      const { onError, includeArgs, ...options } = spec;
-      authorizers.set(key, make('authorizer', registry.authorizers, options as { type: string }, `${path}.pdp`).then((authorizer) => ({ type: spec.type, onError, includeArgs, authorizer })));
+      const { onError, includeArgs, maxReasonChars: rawReason, ...options } = spec;
+      const maxReasonChars = rawReason === undefined ? undefined : interpolate(rawReason, env, `${path}.pdp.maxReasonChars`, spec.type);
+      authorizers.set(
+        key,
+        make('authorizer', registry.authorizers, options as { type: string }, `${path}.pdp`).then((authorizer) => ({ type: spec.type, onError, includeArgs, maxReasonChars, authorizer })),
+      );
     }
     return { ...policy, pdp: await authorizers.get(key)! };
   };
@@ -156,7 +172,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
   const serverTools = (server: string) => {
     if (!mcp.has(server)) {
       const cfg = interpolate(config.mcpServers![server]!, env, `$.mcpServers.${server}`);
-      mcp.set(server, (async () => mcpTools(server, cfg, { credentials: cfg.auth ? await mcpConnectCredentials() : undefined }))());
+      mcp.set(server, (async () => mcpTools(server, cfg, { credentials: cfg.auth ? await mcpConnectCredentials() : undefined, minSecretChars: limits.minSecretChars }))());
     }
     return mcp.get(server)!.then((s) => s.tools);
   };
@@ -166,7 +182,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     return Object.entries(config.mcpServers ?? {}).find(([name, s]) => (s.prefix ?? name) === prefix && prefix !== '' && pattern.includes('__'))?.[0];
   };
 
-  const declared = declaredTools(config, env, baseDir);
+  const declared = declaredTools(config, env, baseDir, { minSecretChars: limits.minSecretChars });
 
   let skills: Promise<Skill[]> | undefined;
   const allSkills = () => {
@@ -225,7 +241,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       }
       if (pattern === 'read_artifact' && artifacts) {
         matched = true;
-        byName.set('read_artifact', readArtifactTool(artifacts));
+        byName.set('read_artifact', readArtifactTool(artifacts, { defaultLimit: toolCfg.artifactReadChars }));
       }
       if (!matched) throw new ConfigError(`$.agents.${owner}.tools: "${pattern}" matches no registered tool, agent or team`);
     }
@@ -246,14 +262,14 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       routing.push(routed.middleware);
     }
     if (responseCache && a.responseCache !== false) {
-      const { ttlMs, namespace } = config.responseCache as { ttlMs?: number; namespace?: string };
+      const { ttlMs, namespace } = resolveLimits(config.responseCache as { ttlMs?: number; namespace?: string }, env, '$.responseCache');
       model.provider = withResponseCache(model.provider, responseCache, { ttlMs, namespace });
     }
     const tools = await resolveTools(name, a.tools ?? [], stack);
     if (a.skills?.length) {
       try {
         const chosen = selectSkills(await allSkills(), a.skills);
-        if (chosen.length) tools.push(skillTool(chosen));
+        if (chosen.length) tools.push(skillTool(chosen, { maxFileBytes: toolCfg.skillMaxFileBytes, descriptionChars: toolCfg.skillDescriptionChars }));
       } catch (err) {
         throw new ConfigError(`$.agents.${name}.skills: ${(err as Error).message}`);
       }
@@ -272,7 +288,9 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       instructions,
       tools,
       policy: await withPdp(mergePolicies(config.policy, a.policy), a.policy?.pdp ? `$.agents.${name}.policy` : '$.policy'),
-      budget: a.budget,
+      // Without a budget the default one applies; `limits.maxTurns` replaces its turn limit.
+      budget: a.budget ?? (limits.maxTurns !== undefined ? { maxTurns: limits.maxTurns } : undefined),
+      ...(limits.maxEmptyResponses !== undefined && { maxEmptyResponses: limits.maxEmptyResponses }),
       compaction: a.compaction && {
         strategy: await make('compaction strategy', registry.compaction, a.compaction, `$.agents.${name}.compaction`),
         thresholdTokens: a.compaction.thresholdTokens,
@@ -305,7 +323,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       roles[role] = Array.isArray(binding) ? members : members[0]!;
     }
     try {
-      return createTeam(name, pattern, t.pattern, roles, t.options, t.description);
+      return createTeam(name, pattern, t.pattern, roles, t.options && resolveLimits(t.options, env, `$.teams.${name}.options`), t.description);
     } catch (err) {
       throw new ConfigError((err as Error).message);
     }
@@ -350,6 +368,7 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
     store,
     sinks,
     identity: { verifier, credentials, required: idCfg.required ?? true },
+    serveSettings: () => interpolate(config.serve ?? {}, env, '$.serve'),
     names,
     agent: pick,
     stream: start,

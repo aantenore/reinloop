@@ -1,3 +1,4 @@
+import { limitDefault } from './limits.ts';
 import { validate } from './schema.ts';
 import { agentTool } from './subagent.ts';
 import { safeToolName } from './tools/define.ts';
@@ -165,17 +166,17 @@ export const BUILTIN_PATTERNS: Record<string, PatternDefinition> = {
     options: {
       type: 'object',
       additionalProperties: false,
-      properties: { maxRounds: { type: 'integer', minimum: 1 }, template: templateOpt, reviseTemplate: templateOpt },
+      properties: { maxRounds: { type: 'integer', minimum: 1 }, judgeRetries: { type: 'integer', minimum: 0 }, template: templateOpt, reviseTemplate: templateOpt },
     },
     build: ({ generator, evaluator }, o) => {
       const judge: Agent = {
         ...(evaluator as Agent),
         output: {
           schema: { type: 'object', properties: { pass: { type: 'boolean' }, feedback: { type: 'string' } }, required: ['pass', 'feedback'] },
-          retries: 1,
+          retries: o.judgeRetries ?? limitDefault('team.judgeRetries'),
         },
       };
-      const maxRounds = o.maxRounds ?? 3;
+      const maxRounds = o.maxRounds ?? limitDefault('team.maxRounds');
       const continuing = !isTeam(generator);
       return async (input, ctx) => {
         const failures: MemberFailure[] = []; // partial failures inside completed generator runs, across rounds

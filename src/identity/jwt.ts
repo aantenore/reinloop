@@ -1,5 +1,5 @@
 import { constants, createPublicKey, type KeyObject, verify as cryptoVerify } from 'node:crypto';
-import { IdentityError } from './http.ts';
+import { IDENTITY_LIMITS, IdentityError } from './http.ts';
 
 /** A JSON Web Key as published in a JWKS (RFC 7517). Only public members are used. */
 export interface Jwk { kty: string; kid?: string; use?: string; alg?: string; key_ops?: string[]; crv?: string; [member: string]: unknown }
@@ -28,7 +28,7 @@ export const JWS_ALGORITHMS: Record<string, AlgSpec> = {
 };
 
 /** Largest compact JWT accepted, in characters. */
-export const MAX_TOKEN_CHARS = 16_384;
+export const MAX_TOKEN_CHARS: number = IDENTITY_LIMITS['identity.verifier.maxTokenChars'].default;
 const MIN_RSA_BITS = 2048;
 const B64URL = /^[A-Za-z0-9_-]+$/;
 
@@ -46,8 +46,8 @@ function parseJson(segment: string, what: string): Record<string, unknown> {
 }
 
 /** Splits and decodes a compact JWS without verifying it. */
-export function decodeJwt(token: string): DecodedJwt {
-  if (typeof token !== 'string' || !token || token.length > MAX_TOKEN_CHARS) throw invalid('malformed token');
+export function decodeJwt(token: string, maxChars: number = MAX_TOKEN_CHARS): DecodedJwt {
+  if (typeof token !== 'string' || !token || token.length > maxChars) throw invalid('malformed token');
   const parts = token.split('.');
   if (parts.length !== 3 || !parts.every((p, i) => B64URL.test(p) || (i === 2 && p === ''))) throw invalid('malformed token');
   const header = parseJson(parts[0]!, 'header');

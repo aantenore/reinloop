@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { type CacheStore, fileCache, memoryCache } from './cache.ts';
 import { summarizeCompaction, windowCompaction } from './compaction.ts';
-import { type Env, type HarnessConfig, interpolate } from './config/load.ts';
+import { type Env, type HarnessConfig, interpolate, type LimitsConfig, resolveLimits } from './config/load.ts';
 import { resolveModel } from './presets.ts';
 import { signalTools } from './tools/signals.ts';
 import { webTools } from './tools/web.ts';
@@ -20,7 +20,7 @@ import { openaiCompatible } from './providers/openai.ts';
 import { type RetryOptions, withRetry } from './providers/resilient.ts';
 import { fileStore } from './store/file.ts';
 import { memoryStore } from './store/memory.ts';
-import { workspaceTools } from './tools/node.ts';
+import { type WorkspaceLimits, workspaceTools } from './tools/node.ts';
 import { ruleRouter } from './rule-router.ts';
 import { registerGuardrails } from './guardrails/register.ts';
 import type { Authorizer, CompactionStrategy, Guard, IdentityVerifier, Middleware, ModelRouter, Provider, RunStore, Sink, Tool } from './types.ts';
@@ -31,6 +31,10 @@ export interface FactoryContext {
   /** Resolved workspace root for filesystem/shell tools. */
   workspace: string;
   shellTimeoutMs?: number;
+  /** Limits of the workspace tools from the `tools` section, placeholders resolved. */
+  workspaceLimits?: WorkspaceLimits;
+  /** The `limits` section, placeholders resolved. */
+  limits?: LimitsConfig;
   config: HarnessConfig;
   /** Per-runtime singleton, e.g. a store shared by several tools. */
   once<T>(key: string, create: () => T): T;
@@ -84,7 +88,7 @@ export function createRegistry(): Registry {
   r.stores.set('file', (o, ctx) => fileStore(resolve(ctx.baseDir, o.dir ?? '.reinloop/runs')));
 
   r.sinks.set('console', (o) => consoleSink({ level: o.level }));
-  r.sinks.set('otlp', (o) => otlpSink({ endpoint: o.endpoint ?? 'http://localhost:4318', headers: o.headers, serviceName: o.serviceName, captureContent: o.captureContent, intervalMs: o.intervalMs, metrics: o.metrics, eventLayers: o.eventLayers }));
+  r.sinks.set('otlp', (o) => otlpSink({ endpoint: o.endpoint ?? 'http://localhost:4318', headers: o.headers, serviceName: o.serviceName, captureContent: o.captureContent, intervalMs: o.intervalMs, metricsIntervalMs: o.metricsIntervalMs, metrics: o.metrics, eventLayers: o.eventLayers }));
   r.sinks.set('jsonl', (o, ctx) => jsonlSink(resolve(ctx.baseDir, o.dir ?? '.reinloop/traces'), { includeDeltas: o.includeDeltas }));
 
   r.compaction.set('window', (o) => windowCompaction(o));
@@ -100,13 +104,13 @@ export function createRegistry(): Registry {
   r.authorizers.set('authzen', (o) => authzenAuthorizer(o as Parameters<typeof authzenAuthorizer>[0]));
 
   for (const name of ['read_file', 'list_dir', 'write_file', 'edit_file', 'find_files', 'search_files', 'shell']) {
-    r.tools.set(name, (_o, ctx) => workspaceTools({ root: ctx.workspace, shellTimeoutMs: ctx.shellTimeoutMs })[name]!);
+    r.tools.set(name, (_o, ctx) => workspaceTools({ ...ctx.workspaceLimits, root: ctx.workspace, shellTimeoutMs: ctx.shellTimeoutMs })[name]!);
   }
   const notes = (ctx: FactoryContext) =>
     ctx.once('memory', () => {
-      const m = ctx.config.memory ?? {};
+      const m = resolveLimits(ctx.config.memory ?? {}, ctx.env, '$.memory');
       const store = m.type === 'memory' ? memoryNotes() : fileNotes(resolve(ctx.baseDir, m.dir ?? '.reinloop/memory'));
-      return memoryTools({ store, scope: m.scope, namespace: m.namespace });
+      return memoryTools({ store, scope: m.scope, namespace: m.namespace, recallLimit: m.recallLimit });
     });
   r.tools.set('remember', (_o, ctx) => notes(ctx).remember);
   r.tools.set('recall', (_o, ctx) => notes(ctx).recall);
@@ -135,6 +139,8 @@ export function createRegistry(): Registry {
         cacheTtlMs: w.cacheTtlMs,
         fetchPolicy: w.fetchPolicy,
         maxUrlLength: w.maxUrlLength,
+        cacheMaxEntries: w.cacheMaxEntries,
+        maxTrackedRuns: w.maxTrackedRuns,
       });
     });
   r.tools.set('web_search', (_o, ctx) => web(ctx).web_search);
@@ -158,8 +164,8 @@ export function createRegistry(): Registry {
   const knowledge = (ctx: FactoryContext) => ctx.once('knowledge', () => knowledgeFromConfig(ctx));
   r.middleware.set('knowledge', (_o, ctx) => knowledgeMiddleware(knowledge(ctx)));
   r.tools.set('search_knowledge', (_o, ctx) => {
-    const { sources, k, maxChars, timeoutMs } = knowledge(ctx);
-    return knowledgeTool(sources, { k, maxChars, timeoutMs });
+    const { sources, k, maxChars, toolMaxChars, maxK, timeoutMs } = knowledge(ctx);
+    return knowledgeTool(sources, { k, maxChars: toolMaxChars ?? maxChars, maxK, timeoutMs });
   });
   registerGuardrails(r);
   return r;

@@ -1,5 +1,6 @@
 import { type FetchLike, postJson } from '../providers/http.ts';
 import type { ModelRef, Tool } from '../types.ts';
+import { limitDefault } from '../limits.ts';
 import { truncate, userMessage } from '../util.ts';
 import { defineTool } from './define.ts';
 import { hostedTool } from './hosted.ts';
@@ -83,7 +84,7 @@ export interface AnthropicWebOptions {
  * with the cited passages as content. Search only: no `web_fetch`.
  */
 export function anthropicWebProvider(opts: AnthropicWebOptions): WebProvider {
-  const tool = hostedTool({ provider: 'anthropic', type: opts.type ?? 'web_search_20250305', name: 'web_search', params: { max_uses: opts.maxUses ?? 1, ...opts.params } });
+  const tool = hostedTool({ provider: 'anthropic', type: opts.type ?? 'web_search_20250305', name: 'web_search', params: { max_uses: opts.maxUses ?? limitDefault('web.maxUses'), ...opts.params } });
   return {
     name: 'anthropic-native',
     async search(query, { maxResults, signal }) {
@@ -135,6 +136,10 @@ export interface WebToolsOptions {
   fetchPolicy?: 'search-results' | 'any' | 'off';
   /** Longest URL `web_fetch` accepts, in characters (default 512). Long URLs can carry exfiltrated data. */
   maxUrlLength?: number;
+  /** Results kept by the cache (default 200). */
+  cacheMaxEntries?: number;
+  /** Runs whose search results `web_fetch` remembers (default 200; oldest are forgotten). */
+  maxTrackedRuns?: number;
 }
 
 export type FetchPolicy = NonNullable<WebToolsOptions['fetchPolicy']>;
@@ -163,7 +168,7 @@ function blockedHost(rawHost: string): string | undefined {
  * Normalizes a URL for `web_fetch` (fragment stripped, canonical form) and applies the checks that hold in every
  * policy. Returns the normalized URL or the refusal reason.
  */
-export function checkFetchUrl(input: string, maxUrlLength = 512): { url: string } | { error: string } {
+export function checkFetchUrl(input: string, maxUrlLength: number = limitDefault('web.maxUrlLength')): { url: string } | { error: string } {
   if (input.length > maxUrlLength) return { error: `URL too long (${input.length} > ${maxUrlLength} characters)` };
   let u: URL;
   try {
@@ -181,7 +186,7 @@ export function checkFetchUrl(input: string, maxUrlLength = 512): { url: string 
 }
 
 /** Per-run record of the URLs `web_search` returned (bounded: oldest runs are forgotten). */
-function runAllowlist(maxRuns = 200) {
+function runAllowlist(maxRuns: number = limitDefault('web.maxTrackedRuns')) {
   const runs = new Map<string, Set<string>>();
   return {
     add(runId: string, url: string) {
@@ -211,7 +216,7 @@ function providerFrom(opts: WebToolsOptions): WebProvider {
 }
 
 /** Small in-memory TTL cache of tool outputs (ttlMs <= 0: off). */
-export function ttlCache(ttlMs: number, maxEntries = 200) {
+export function ttlCache(ttlMs: number, maxEntries: number = limitDefault('web.cacheMaxEntries')) {
   const items = new Map<string, { expires: number; value: string }>();
   return {
     async get(key: string, compute: () => Promise<string>): Promise<string> {
@@ -233,13 +238,13 @@ export function ttlCache(ttlMs: number, maxEntries = 200) {
  */
 export function webTools(opts: WebToolsOptions): { web_search: Tool; web_fetch?: Tool } {
   const provider = providerFrom(opts);
-  const cap = opts.maxResultsCap ?? 10;
-  const maxChars = opts.maxChars ?? 1000;
-  const maxFetchChars = opts.maxFetchChars ?? 8000;
-  const cache = ttlCache(opts.cacheTtlMs ?? 0);
+  const cap = opts.maxResultsCap ?? limitDefault('web.maxResultsCap');
+  const maxChars = opts.maxChars ?? limitDefault('web.maxChars');
+  const maxFetchChars = opts.maxFetchChars ?? limitDefault('web.maxFetchChars');
+  const cache = ttlCache(opts.cacheTtlMs ?? limitDefault('web.cacheTtlMs'), opts.cacheMaxEntries);
   const fetchPolicy = opts.fetchPolicy ?? 'search-results';
-  const maxUrlLength = opts.maxUrlLength ?? 512;
-  const allowed = runAllowlist();
+  const maxUrlLength = opts.maxUrlLength ?? limitDefault('web.maxUrlLength');
+  const allowed = runAllowlist(opts.maxTrackedRuns);
 
   /** Records the URLs of a search result (also a cached one) as fetchable in this run. */
   const remember = async (runId: string, out: Promise<string>): Promise<string> => {
@@ -264,7 +269,7 @@ export function webTools(opts: WebToolsOptions): { web_search: Tool; web_fetch?:
       additionalProperties: false,
     },
     run: ({ query, max_results }, ctx) => {
-      const n = Math.min(max_results ?? opts.maxResults ?? 5, cap);
+      const n = Math.min(max_results ?? opts.maxResults ?? limitDefault('web.maxResults'), cap);
       return remember(ctx.runId, cache.get(`search\u0000${n}\u0000${query}`, async () => {
         const results = (await provider.search(query, { maxResults: n, signal: ctx.signal })).slice(0, n);
         return JSON.stringify({

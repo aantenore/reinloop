@@ -2,9 +2,7 @@ import { decide, type PolicyVerdict } from '../policy.ts';
 import type { AccessDecision, Identity, PolicyConfig, Tool, ToolCallPart } from '../types.ts';
 import { errorMessage, truncate } from '../util.ts';
 import { accessRequest } from './authorizers.ts';
-import { IdentityError } from './http.ts';
-
-const MAX_REASON = 200;
+import { IDENTITY_LIMITS, IdentityError } from './http.ts';
 
 /**
  * Local rules first (a local `deny` is final); calls they allow or ask about then go to the PDP when one is set.
@@ -20,6 +18,7 @@ export async function authorizeCall(
   const local = decide(policy, call, tool, ctx.identity);
   const pdp = policy?.pdp;
   if (local.decision === 'deny' || !pdp) return local;
+  const maxReason = typeof pdp.maxReasonChars === 'number' ? pdp.maxReasonChars : IDENTITY_LIMITS['pdp.maxReasonChars'].default;
   let decision: AccessDecision;
   try {
     if (!pdp.authorizer || typeof pdp.authorizer.evaluate !== 'function') throw new IdentityError('identity_config', `authorizer "${pdp.type ?? '?'}" was not resolved`);
@@ -28,9 +27,9 @@ export async function authorizeCall(
   } catch (err) {
     if (ctx.signal?.aborted) throw err;
     const onError = pdp.onError ?? 'deny';
-    const why = `pdp error (${onError}): ${truncate(errorMessage(err), MAX_REASON)}`;
+    const why = `pdp error (${onError}): ${truncate(errorMessage(err), maxReason)}`;
     return onError === 'allow' ? { decision: local.decision, reason: `${local.reason}; ${why}` } : { decision: onError === 'ask' ? 'ask' : 'deny', reason: why };
   }
-  if (!decision.decision) return { decision: 'deny', reason: `pdp: ${truncate(decision.reason ?? 'denied', MAX_REASON)}` };
+  if (!decision.decision) return { decision: 'deny', reason: `pdp: ${truncate(decision.reason ?? 'denied', maxReason)}` };
   return { decision: local.decision, reason: `${local.reason}; pdp: allowed` };
 }

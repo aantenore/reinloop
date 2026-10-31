@@ -1,6 +1,7 @@
 import { authorizeCall } from '../identity/authorize.ts';
 import { validate } from '../schema.ts';
 import type { Agent, Approver, CredentialProvider, HookContext, Identity, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
+import { finiteTimeout, limitDefault } from '../limits.ts';
 import { errorMessage, truncate } from '../util.ts';
 import { normalizeOutput } from './define.ts';
 
@@ -18,8 +19,8 @@ export interface ExecEnv {
   credentials?: CredentialProvider;
 }
 
-export const DEFAULT_CONCURRENCY = 8;
-export const DEFAULT_MAX_RESULT_CHARS = 32_000;
+export const DEFAULT_CONCURRENCY = limitDefault('tools.concurrency');
+export const DEFAULT_MAX_RESULT_CHARS = limitDefault('tools.maxResultChars');
 
 /**
  * Executes tool calls: consecutive non-exclusive calls run in parallel (bounded),
@@ -103,7 +104,8 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   if (errors.length) return finish(`Invalid arguments: ${errors.join('; ')}`, true);
 
   env.emit('tool_start', { callId: call.id, name: call.name, args: call.args, ...(tool.layer && { layer: tool.layer }) });
-  const timeoutMs = tool.timeoutMs ?? env.agent.toolSettings?.timeoutMs;
+  // A tool's own timeout wins; Infinity (unbounded) and 0 mean no timer.
+  const timeoutMs = finiteTimeout(tool.timeoutMs ?? env.agent.toolSettings?.timeoutMs);
   const signal = timeoutMs ? AbortSignal.any([env.signal, AbortSignal.timeout(timeoutMs)]) : env.signal;
   try {
     const out = normalizeOutput(

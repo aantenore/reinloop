@@ -1,4 +1,5 @@
 import type { CompactionStrategy, Message } from './types.ts';
+import { limitDefault } from './limits.ts';
 import { textOf, userMessage } from './util.ts';
 
 /**
@@ -20,8 +21,8 @@ export interface WindowOptions {
 
 /** Drops the middle of the conversation, keeping the task (first messages) and the recent tail. */
 export function windowCompaction(opts: WindowOptions = {}): CompactionStrategy {
-  const keepFirst = opts.keepFirst ?? 1;
-  const keepLast = opts.keepLast ?? 20;
+  const keepFirst = opts.keepFirst ?? limitDefault('compaction.window.keepFirst');
+  const keepLast = opts.keepLast ?? limitDefault('compaction.window.keepLast');
   const note = opts.note ?? '[{count} earlier messages omitted to fit the context window]';
   return {
     name: 'window',
@@ -44,24 +45,27 @@ export interface SummarizeOptions {
   keepLast?: number;
   prompt?: string;
   maxTokens?: number;
+  /** Characters of each tool result in the transcript sent for summary (default 2000). */
+  toolResultChars?: number;
 }
 
 /** Replaces older messages with a model-written summary; the recent tail is kept verbatim. */
 export function summarizeCompaction(opts: SummarizeOptions = {}): CompactionStrategy {
-  const keepLast = opts.keepLast ?? 10;
+  const keepLast = opts.keepLast ?? limitDefault('compaction.summarize.keepLast');
+  const toolChars = opts.toolResultChars ?? limitDefault('compaction.summarize.toolResultChars');
   return {
     name: 'summarize',
     async compact(messages, ctx) {
       const start = tailStart(messages, keepLast);
       if (start <= 0) return messages;
-      const transcript = messages.slice(0, start).map(render).join('\n');
+      const transcript = messages.slice(0, start).map((m) => render(m, toolChars)).join('\n');
       const res = await ctx.model.provider.generate(
         {
           model: ctx.model.model,
           instructions: opts.prompt ?? DEFAULT_SUMMARY_PROMPT,
           messages: [userMessage(transcript)],
           tools: [],
-          params: { ...ctx.model.params, maxTokens: opts.maxTokens ?? 2048 },
+          params: { ...ctx.model.params, maxTokens: opts.maxTokens ?? limitDefault('compaction.summarize.maxTokens') },
         },
         { signal: ctx.signal },
       );
@@ -71,7 +75,7 @@ export function summarizeCompaction(opts: SummarizeOptions = {}): CompactionStra
   };
 }
 
-function render(m: Message): string {
+function render(m: Message, toolChars: number): string {
   return m.parts
     .map((p) => {
       if (p.type === 'text') return `${m.role}: ${p.text}`;
@@ -79,7 +83,7 @@ function render(m: Message): string {
       if (p.type === 'thinking') return '';
       if (p.type === 'hosted_call') return `assistant used ${p.name}(${JSON.stringify(p.input)})`;
       if (p.type === 'hosted_result') return `${p.name}${p.isError ? ' (error)' : ''}: ${p.summary ?? ''}`;
-      return `tool ${p.name}${p.isError ? ' (error)' : ''}: ${p.content.slice(0, 2000)}`;
+      return `tool ${p.name}${p.isError ? ' (error)' : ''}: ${p.content.slice(0, toolChars)}`;
     })
     .filter(Boolean)
     .join('\n');

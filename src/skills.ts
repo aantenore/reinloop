@@ -4,6 +4,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { parseFrontmatter } from './frontmatter.ts';
 import { defineTool } from './tools/define.ts';
 import { resolveInside } from './tools/node.ts';
+import { limitDefault } from './limits.ts';
 import type { Tool } from './types.ts';
 import { expandHome, globToRegExp, truncate } from './util.ts';
 
@@ -62,9 +63,11 @@ async function listFiles(dir: string, base = dir, out: string[] = []): Promise<s
  * One tool for all of an agent's skills (progressive disclosure): its description lists only names and
  * descriptions; calling it loads SKILL.md and the file list, and `file` loads a bundled resource.
  */
-export function skillTool(skills: Skill[]): Tool<{ name: string; file?: string }> {
+export function skillTool(skills: Skill[], opts: { maxFileBytes?: number; descriptionChars?: number } = {}): Tool<{ name: string; file?: string }> {
   const byName = new Map(skills.map((s) => [s.name, s]));
-  const index = skills.map((s) => `- ${s.name}: ${truncate(s.description.replace(/\s+/g, ' '), 300)}`).join('\n');
+  const maxFileBytes = opts.maxFileBytes ?? limitDefault('tools.skillMaxFileBytes');
+  const descriptionChars = opts.descriptionChars ?? limitDefault('tools.skillDescriptionChars');
+  const index = skills.map((s) => `- ${s.name}: ${truncate(s.description.replace(/\s+/g, ' '), descriptionChars)}`).join('\n');
   return defineTool({
     name: 'skill',
     description: `Load a skill: expert instructions and resources for a kind of task. Before a task that matches a skill, load it and follow it.\n\nAvailable skills:\n${index}`,
@@ -82,7 +85,7 @@ export function skillTool(skills: Skill[]): Tool<{ name: string; file?: string }
       const skill = byName.get(name)!;
       if (file) {
         const path = await resolveInside(skill.dir, file);
-        if ((await stat(path)).size > 1_000_000) return { content: `${file} is larger than 1 MB`, isError: true };
+        if ((await stat(path)).size > maxFileBytes) return { content: `${file} is larger than ${maxFileBytes % 1_000_000 ? `${maxFileBytes} bytes` : `${maxFileBytes / 1_000_000} MB`}`, isError: true };
         return readFile(path, 'utf8');
       }
       const { body } = parseFrontmatter(await readFile(join(skill.dir, 'SKILL.md'), 'utf8'));

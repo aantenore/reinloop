@@ -7,6 +7,8 @@ import { validate } from '../schema.ts';
 import type { HttpToolOptions } from '../tools/http.ts';
 import type { Budget, JsonSchema, ModelParams, PolicyConfig, Pricing, Risk } from '../types.ts';
 import type { KnowledgeConfig } from '../knowledge/config.ts';
+import { checkLimit, forEachLimit, limitAt, limitRange, limitWarning } from '../limits.ts';
+import type { ServeSettings } from '../serve.ts';
 import { ReinloopError } from '../util.ts';
 import { CONFIG_SCHEMA } from './schema.ts';
 
@@ -61,12 +63,26 @@ export interface HarnessConfig {
   /** Per-model price overrides (USD per million tokens), keyed by model id and merged over the built-in table. */
   pricing?: Record<string, Partial<Pricing>>;
   mcpServers?: Record<string, McpServerConfig>;
+  /**
+   * Workspace root and execution limits. In JSON, every limit also takes `${env:NAME}` and, where allowed, `"unbounded"`
+   * (Infinity in code); see `LIMITS`.
+   */
   tools?: {
     workspace?: string;
     concurrency?: number;
     timeoutMs?: number;
     maxResultChars?: number;
     shellTimeoutMs?: number;
+    shellMaxOutputChars?: number;
+    shellExitGraceMs?: number;
+    maxWalkFiles?: number;
+    maxFindResults?: number;
+    searchMaxResults?: number;
+    searchMaxFileBytes?: number;
+    searchLineChars?: number;
+    artifactReadChars?: number;
+    skillMaxFileBytes?: number;
+    skillDescriptionChars?: number;
     artifacts?: 'none' | 'memory' | 'file';
   };
   policy?: PolicyConfig;
@@ -76,10 +92,10 @@ export interface HarnessConfig {
   sinks?: ComponentConfig[];
   agents?: Record<string, AgentConfig>;
   teams?: Record<string, TeamConfig>;
-  responseCache?: ComponentConfig & { ttlMs?: number; namespace?: string };
+  responseCache?: ComponentConfig & { ttlMs?: number; namespace?: string; maxEntries?: number };
   /** In-process model routers by name (e.g. `{ "type": "rule", "rules": [...], "default": "..." }`), used by agents' `router`. */
   routers?: Record<string, ComponentConfig>;
-  memory?: { type?: 'file' | 'memory'; dir?: string; scope?: 'shared' | 'agent'; namespace?: string };
+  memory?: { type?: 'file' | 'memory'; dir?: string; scope?: 'shared' | 'agent'; namespace?: string; recallLimit?: number };
   /** Provider-hosted tools by tool name (e.g. Anthropic `web_search_20250305`), usable in agents' `tools`. */
   hostedTools?: Record<string, HostedToolConfig>;
   /** Settings of the built-in `web_search` / `web_fetch` tools. */
@@ -94,7 +110,20 @@ export interface HarnessConfig {
   openapi?: Record<string, OpenApiConfig>;
   /** Guards behind the `guard` middleware (agents opt in with `middleware: [guard]`). */
   guardrails?: GuardrailsConfig;
+  /** Limits of `reinloop serve` (options passed to `serve()` win). */
+  serve?: ServeSettings;
+  /** Cross-cutting limits: run loop and redaction. */
+  limits?: LimitsConfig;
   profiles?: Record<string, Partial<HarnessConfig>>;
+}
+
+export interface LimitsConfig {
+  /** Turns of an agent that sets no `budget` (default 50; `"unbounded"` allowed, with a warning). */
+  maxTurns?: number;
+  /** Empty model responses in a row before a run fails (default 2). */
+  maxEmptyResponses?: number;
+  /** Shorter secrets are not masked in echoed error text (default 4). */
+  minSecretChars?: number;
 }
 
 export interface IdentityConfig {
@@ -110,6 +139,8 @@ export interface GuardrailsConfig {
   /** A guard that throws: `block` (default) or `allow`. */
   onError?: 'block' | 'allow';
   name?: string;
+  /** Characters of a guard reason kept in events and run results (default 200). */
+  maxReasonChars?: number;
 }
 
 export interface HostedToolConfig {
@@ -136,6 +167,11 @@ export interface OpenApiConfig {
   headers?: Record<string, string>;
   timeoutMs?: number;
   maxResultChars?: number;
+  errorBodyChars?: number;
+  /** Time limit for downloading a spec given as a URL (default 30 s). */
+  specTimeoutMs?: number;
+  maxRefDepth?: number;
+  descriptionChars?: number;
 }
 
 export interface WebConfig {
@@ -152,6 +188,8 @@ export interface WebConfig {
   cacheTtlMs?: number;
   fetchPolicy?: 'search-results' | 'any' | 'off';
   maxUrlLength?: number;
+  cacheMaxEntries?: number;
+  maxTrackedRuns?: number;
   searchDepth?: 'basic' | 'advanced';
   topic?: 'general' | 'news';
   includeDomains?: string[];
@@ -165,7 +203,10 @@ export interface SignalsConfig {
   maxResultsCap?: number;
   maxChars?: number;
   cacheTtlMs?: number;
+  cacheMaxEntries?: number;
   timeoutMs?: number;
+  errorBodyChars?: number;
+  rateLimitBodyChars?: number;
   /** GitHub token (default env GITHUB_TOKEN); use `${env:NAME}` rather than a literal. */
   githubToken?: string;
   githubIssues?: boolean;
@@ -194,21 +235,83 @@ export function deepMerge<T>(base: T, over: unknown): T {
 
 const PLACEHOLDER = /\$\{env:([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 
-/** Replaces `${env:NAME}` and `${env:NAME:-default}` in every string of `value`. */
-export function interpolate<T>(value: T, env: Env, path = '$'): T {
+/**
+ * Replaces `${env:NAME}` and `${env:NAME:-default}` in every string of `value`. A string at a limit path (see `LIMITS`)
+ * becomes a number afterwards: digits are parsed and `"unbounded"` becomes Infinity, then the range is checked. `owner` is
+ * the `type` of the enclosing component, for limits that apply to some component types only.
+ */
+export function interpolate<T>(value: T, env: Env, path = '$', owner?: string): T {
   if (typeof value === 'string') {
-    return value.replace(PLACEHOLDER, (_, name: string, fallback: string | undefined) => {
+    const out = value.replace(PLACEHOLDER, (_, name: string, fallback: string | undefined) => {
       const v = env[name];
       if (v !== undefined && v !== '') return v;
       if (fallback !== undefined) return fallback;
       throw new ConfigError(`${path}: environment variable ${name} is not set`);
-    }) as T;
+    });
+    const limit = path.startsWith('$.') ? limitAt(path, owner) : undefined;
+    if (!limit) return out as T;
+    const checked = checkLimit(limit.spec, out);
+    // The resolved text of a placeholder is not echoed: an environment value is not always meant to be printed.
+    if ('error' in checked) throw new ConfigError(`${path}: ${out === value ? checked.error : `the value of ${value} ${checked.error}`}`);
+    return checked.value as T;
   }
-  if (Array.isArray(value)) return value.map((v, i) => interpolate(v, env, `${path}[${i}]`)) as T;
+  if (Array.isArray(value)) return value.map((v, i) => interpolate(v, env, `${path}[${i}]`, owner)) as T;
   if (isObject(value)) {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, interpolate(v, env, `${path}.${k}`)])) as T;
+    const type = typeof value.type === 'string' ? value.type : owner;
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, interpolate(v, env, `${path}.${k}`, type)])) as T;
   }
   return value;
+}
+
+/** Like `interpolate`, but only for limit fields (see `LIMITS`): every other value is returned as it is. */
+export function resolveLimits<T>(value: T, env: Env, path = '$', owner?: string): T {
+  if (typeof value === 'string') return path.startsWith('$.') && limitAt(path, owner) ? interpolate(value, env, path, owner) : value;
+  if (Array.isArray(value)) return value.map((v, i) => resolveLimits(v, env, `${path}[${i}]`, owner)) as T;
+  if (isObject(value)) {
+    const type = typeof value.type === 'string' ? value.type : owner;
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, resolveLimits(v, env, `${path}.${k}`, type)])) as T;
+  }
+  return value;
+}
+
+const unresolvable = (s: string, env: Env) => [...s.matchAll(PLACEHOLDER)].some(([, name, fallback]) => (env[name!] === undefined || env[name!] === '') && fallback === undefined);
+
+/**
+ * Range checks of every limit in `config`. Without `env`, placeholders are accepted as they are (they are checked when
+ * the component is built); with `env`, they are resolved where the variables are set and checked too. Warnings flag
+ * unsafe values: `"unbounded"` where that turns off a protection, and values outside the safe range.
+ */
+export function checkLimits(config: HarnessConfig, env?: Env): { errors: Array<{ path: string; message: string }>; warnings: string[] } {
+  const errors: Array<{ path: string; message: string }> = [];
+  const warnings: string[] = [];
+  forEachLimit(config, (path, raw, spec, owner) => {
+    let value = raw;
+    if (typeof raw === 'string' && raw.includes('${')) {
+      if (!env || unresolvable(raw, env)) return;
+      try {
+        value = interpolate(raw, env, path, owner);
+      } catch (err) {
+        errors.push({ path, message: (err as Error).message });
+        return;
+      }
+    } else if (typeof raw === 'string' && raw !== 'unbounded') {
+      errors.push({ path, message: `${path}: must be a number, ${spec.unbounded ? '"unbounded", ' : ''}or a \${env:NAME} placeholder (accepted: ${limitRange(spec)})` });
+      return;
+    }
+    const checked = checkLimit(spec, value);
+    if ('error' in checked) {
+      errors.push({ path, message: `${path}: ${checked.error}` });
+      return;
+    }
+    const warning = limitWarning(spec, checked.value, path);
+    if (warning) warnings.push(warning);
+  });
+  return { errors, warnings };
+}
+
+/** Load-time warnings for unsafe limit values (`"unbounded"` protections, values outside the safe range). */
+export function limitWarnings(config: HarnessConfig, env: Env = process.env): string[] {
+  return checkLimits(config, env).warnings;
 }
 
 async function readLayered(path: string, seen: string[]): Promise<Record<string, unknown>> {
@@ -237,7 +340,10 @@ export function applyProfile(config: HarnessConfig, profile: string | undefined)
 
 /** Structural (JSON Schema) and referential checks. Returns the list of problems. */
 export function checkConfig(config: HarnessConfig): string[] {
-  const errors = validate(CONFIG_SCHEMA, config);
+  // Limit fields get precise messages from their descriptor; the schema's generic "does not match" for them is dropped.
+  const limits = checkLimits(config).errors;
+  const limitPaths = new Set(limits.map((e) => e.path));
+  const errors = [...validate(CONFIG_SCHEMA, config).filter((e) => !limitPaths.has(e.slice(0, e.indexOf(': ')))), ...limits.map((e) => e.message)];
   if (errors.length) return errors;
   const providers = config.providers ?? {};
   const models = config.models ?? {};
@@ -279,10 +385,26 @@ export function checkConfig(config: HarnessConfig): string[] {
   return errors;
 }
 
-export interface LoadedConfig { config: HarnessConfig; path: string; baseDir: string }
+export interface LoadedConfig {
+  config: HarnessConfig;
+  path: string;
+  baseDir: string;
+  /** Unsafe limit values found at load (also emitted as process warnings unless `onWarning` is given). */
+  warnings: string[];
+}
+
+export interface LoadConfigOptions {
+  profile?: string;
+  env?: Env;
+  agentsDir?: string[];
+  /** Receives each load-time warning; default `process.emitWarning` (type `ReinloopConfigWarning`). */
+  onWarning?: (message: string) => void;
+}
+
+const emitConfigWarning = (message: string) => process.emitWarning(message, { type: 'ReinloopConfigWarning', code: 'REINLOOP_UNSAFE_LIMIT' });
 
 /** Reads a JSON config with `extends` layering and an optional profile overlay, then validates it. */
-export async function loadConfig(path: string, opts: { profile?: string; env?: Env; agentsDir?: string[] } = {}): Promise<LoadedConfig> {
+export async function loadConfig(path: string, opts: LoadConfigOptions = {}): Promise<LoadedConfig> {
   const abs = resolve(path);
   const env = opts.env ?? process.env;
   const layered = (await readLayered(abs, [])) as unknown as HarnessConfig;
@@ -294,6 +416,10 @@ export async function loadConfig(path: string, opts: { profile?: string; env?: E
     throw new ConfigError((err as Error).message);
   }
   const errors = checkConfig(config);
+  // Placeholders whose variables are set are resolved and range-checked now; unset ones fail when their component is built.
+  const limits = checkLimits(config, env);
+  for (const e of limits.errors) if (!errors.includes(e.message)) errors.push(e.message);
   if (errors.length) throw new ConfigError(`invalid config ${abs}:\n  ${errors.join('\n  ')}`);
-  return { config, path: abs, baseDir: dirname(abs) };
+  for (const w of limits.warnings) (opts.onWarning ?? emitConfigWarning)(w);
+  return { config, path: abs, baseDir: dirname(abs), warnings: limits.warnings };
 }

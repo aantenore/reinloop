@@ -1,5 +1,6 @@
 import type { GenerateContext, ModelRequest, ModelResponse, Part, Provider, StopReason, Usage } from '../types.ts';
 import { ProviderError, textOf } from '../util.ts';
+import { limitDefault } from '../limits.ts';
 import { type FetchLike, parseArgs, postJson, readSse } from './http.ts';
 
 export interface OpenAICompatibleOptions {
@@ -15,6 +16,10 @@ export interface OpenAICompatibleOptions {
    * `'without-tools'` for servers whose constrained decoding would block tool calls, e.g. local grammar-based ones).
    */
   structuredOutput?: boolean | 'without-tools';
+  /** Response text kept in an HTTP error (default 500). */
+  errorBodyChars?: number;
+  /** Response JSON kept when a response has an unexpected shape (default 300). */
+  responseExcerptChars?: number;
   fetch?: FetchLike;
 }
 
@@ -46,8 +51,8 @@ export function openaiCompatible(opts: OpenAICompatibleOptions = {}): Provider {
         ...p.extra,
       };
       const headers = { ...(opts.apiKey && { authorization: `Bearer ${opts.apiKey}` }), ...opts.headers };
-      const res = await postJson(fetchImpl, `${baseUrl}/chat/completions`, headers, body, ctx.signal);
-      return stream ? readStream(res, ctx) : fromCompletion(await res.json());
+      const res = await postJson(fetchImpl, `${baseUrl}/chat/completions`, headers, body, ctx.signal, opts.errorBodyChars);
+      return stream ? readStream(res, ctx) : fromCompletion(await res.json(), opts.responseExcerptChars);
     },
   };
 }
@@ -87,9 +92,9 @@ function toUsage(u: any): Usage {
   };
 }
 
-export function fromCompletion(json: any): ModelResponse {
+export function fromCompletion(json: any, excerptChars: number = limitDefault('provider.responseExcerptChars')): ModelResponse {
   const choice = json?.choices?.[0];
-  if (!choice) throw new ProviderError(502, `no choices in response: ${JSON.stringify(json).slice(0, 300)}`);
+  if (!choice) throw new ProviderError(502, `no choices in response: ${JSON.stringify(json).slice(0, excerptChars)}`);
   const msg = choice.message ?? {};
   const parts: Part[] = [];
   if (typeof msg.content === 'string' && msg.content) parts.push({ type: 'text', text: msg.content });

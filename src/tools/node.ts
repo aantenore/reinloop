@@ -1,14 +1,33 @@
 import { spawn } from 'node:child_process';
 import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { limitDefault } from '../limits.ts';
 import type { Tool } from '../types.ts';
 import { defineTool } from './define.ts';
 
-export interface WorkspaceOptions {
+export interface WorkspaceOptions extends WorkspaceLimits {
   /** Root directory the tools are confined to. */
   root: string;
+}
+
+/** Limits of the workspace tools (defaults in `LIMITS`, config section `tools`). */
+export interface WorkspaceLimits {
+  /** Shell command time limit (default 120 s; Infinity: none). */
   shellTimeoutMs?: number;
+  /** Shell output collected (default 100000 characters). */
   maxOutputChars?: number;
+  /** Wait for output after the shell exits (default 200 ms). */
+  shellExitGraceMs?: number;
+  /** Files visited by find_files and search_files (default 20000). */
+  maxWalkFiles?: number;
+  /** Paths returned by find_files (default 500). */
+  maxFindResults?: number;
+  /** Matches returned by search_files without `maxResults` (default 200). */
+  searchMaxResults?: number;
+  /** Larger files are skipped by search_files (default 1 MB). */
+  searchMaxFileBytes?: number;
+  /** Characters kept of each matching line (default 300). */
+  searchLineChars?: number;
 }
 
 /** Resolves `path` inside `root`, following symlinks of the existing prefix to block escapes. */
@@ -64,7 +83,13 @@ async function walk(root: string, dir: string, out: string[], limit: number): Pr
 
 export function workspaceTools(opts: WorkspaceOptions): Record<string, Tool> {
   const root = opts.root;
-  const maxOut = opts.maxOutputChars ?? 100_000;
+  const maxOut = opts.maxOutputChars ?? limitDefault('tools.shellMaxOutputChars');
+  const maxWalk = opts.maxWalkFiles ?? limitDefault('tools.maxWalkFiles');
+  const maxFind = opts.maxFindResults ?? limitDefault('tools.maxFindResults');
+  const searchDefault = opts.searchMaxResults ?? limitDefault('tools.searchMaxResults');
+  const searchMaxBytes = opts.searchMaxFileBytes ?? limitDefault('tools.searchMaxFileBytes');
+  const lineChars = opts.searchLineChars ?? limitDefault('tools.searchLineChars');
+  const exitGrace = opts.shellExitGraceMs ?? limitDefault('tools.shellExitGraceMs');
   return {
     read_file: defineTool<{ path: string }>({
       name: 'read_file',
@@ -132,9 +157,9 @@ export function workspaceTools(opts: WorkspaceOptions): Record<string, Tool> {
       async run({ pattern, path = '.' }) {
         const base = await resolveInside(root, path);
         const files: string[] = [];
-        await walk(base, base, files, 20_000);
+        await walk(base, base, files, maxWalk);
         const re = pathGlob(pattern);
-        const hits = files.filter((f) => re.test(f)).slice(0, 500);
+        const hits = files.filter((f) => re.test(f)).slice(0, maxFind);
         return hits.length ? hits.join('\n') : 'no files match';
       },
     }),
@@ -148,10 +173,10 @@ export function workspaceTools(opts: WorkspaceOptions): Record<string, Tool> {
         required: ['pattern'],
         additionalProperties: false,
       },
-      async run({ pattern, glob = '**', path = '.', maxResults = 200 }) {
+      async run({ pattern, glob = '**', path = '.', maxResults = searchDefault }) {
         const base = await resolveInside(root, path);
         const files: string[] = [];
-        await walk(base, base, files, 20_000);
+        await walk(base, base, files, maxWalk);
         const re = new RegExp(pattern);
         const include = pathGlob(glob);
         const out: string[] = [];
@@ -159,11 +184,11 @@ export function workspaceTools(opts: WorkspaceOptions): Record<string, Tool> {
           if (out.length >= maxResults) break;
           if (!include.test(f)) continue;
           const full = join(base, f);
-          if ((await stat(full)).size > 1_000_000) continue;
+          if ((await stat(full)).size > searchMaxBytes) continue;
           const text = await readFile(full, 'utf8');
           if (text.includes('\u0000')) continue; // binary
           text.split('\n').forEach((line, i) => {
-            if (out.length < maxResults && re.test(line)) out.push(`${f}:${i + 1}: ${line.slice(0, 300)}`);
+            if (out.length < maxResults && re.test(line)) out.push(`${f}:${i + 1}: ${line.slice(0, lineChars)}`);
           });
         }
         return out.length ? out.join('\n') : 'no matches';
@@ -174,7 +199,7 @@ export function workspaceTools(opts: WorkspaceOptions): Record<string, Tool> {
       description: 'Run a shell command in the workspace root. Returns exit code, stdout and stderr.',
       risk: 'exec',
       exclusive: true,
-      timeoutMs: opts.shellTimeoutMs ?? 120_000,
+      timeoutMs: opts.shellTimeoutMs ?? limitDefault('tools.shellTimeoutMs'),
       schema: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'], additionalProperties: false },
       run({ command }, ctx) {
         return new Promise((resolvePromise, reject) => {
@@ -212,7 +237,7 @@ export function workspaceTools(opts: WorkspaceOptions): Record<string, Tool> {
           });
           child.on('close', finish);
           // Background processes may keep the pipes open after the shell exits: do not wait for them.
-          child.on('exit', (code) => setTimeout(() => finish(code), 200).unref());
+          child.on('exit', (code) => setTimeout(() => finish(code), exitGrace).unref());
         });
       },
     }),

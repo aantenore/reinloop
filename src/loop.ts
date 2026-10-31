@@ -1,4 +1,5 @@
 import { authorizeCall } from './identity/authorize.ts';
+import { limitDefault } from './limits.ts';
 import { DEFAULT_BUDGET, exceededBudget } from './policy.ts';
 import { validate } from './schema.ts';
 import { Channel, EPHEMERAL, pendingToolCalls, reduce, replay } from './state.ts';
@@ -18,7 +19,7 @@ export interface RunHandle extends AsyncIterable<RunEvent> {
 }
 
 /** Consecutive empty model answers retried before the run fails. */
-export const MAX_EMPTY_RESPONSES = 2;
+export const MAX_EMPTY_RESPONSES = limitDefault('limits.maxEmptyResponses');
 
 /** Feedback sent to the model when a structured final answer fails validation. */
 export const OUTPUT_FEEDBACK = (schema: unknown, problems: string) =>
@@ -93,7 +94,7 @@ async function drive(
   let end: { status: RunStatus; reason?: string } | undefined;
   let data: unknown;
   let stopOutput: string | undefined;
-  let outputRetries = agent.output?.retries ?? 1;
+  let outputRetries = agent.output?.retries ?? limitDefault('agent.output.retries');
   let lastStop: string | undefined;
   let emptyStreak = 0;
   let raisedMaxTokens: number | undefined;
@@ -256,7 +257,7 @@ async function drive(
       emptyStreak = visible ? 0 : emptyStreak + 1;
       if (!visible && res.stopReason === 'max_tokens') end = { status: 'stopped', reason: 'max_tokens' };
       else if (!visible && res.stopReason === 'refusal') end = { status: 'failed', reason: 'refusal' };
-      else if (emptyStreak > MAX_EMPTY_RESPONSES) end = { status: 'failed', reason: `model returned ${emptyStreak} empty responses in a row` };
+      else if (emptyStreak > (agent.maxEmptyResponses ?? MAX_EMPTY_RESPONSES)) end = { status: 'failed', reason: `model returned ${emptyStreak} empty responses in a row` };
     }
   } catch (err) {
     if (err instanceof RunStop && !storeFailure.signal.aborted) stopOutput = err.output; // middleware asked to end the run

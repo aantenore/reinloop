@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { rank } from '../knowledge/rank.ts';
+import { limitDefault } from '../limits.ts';
 import type { Tool } from '../types.ts';
 import { defineTool } from './define.ts';
 
@@ -50,6 +51,8 @@ export interface MemoryToolsOptions {
   /** `shared`: one notebook for all agents; `agent`: one per agent. */
   scope?: 'shared' | 'agent';
   namespace?: string;
+  /** Notes `recall` returns when the model gives no limit (default 8). */
+  recallLimit?: number;
 }
 
 /** `remember` / `recall`: long-term notes that survive sessions. */
@@ -80,7 +83,7 @@ export function memoryTools(opts: MemoryToolsOptions): { remember: Tool; recall:
         required: ['query'],
         additionalProperties: false,
       },
-      async run({ query, limit = 8 }, ctx) {
+      async run({ query, limit = opts.recallLimit ?? limitDefault('memory.recallLimit') }, ctx) {
         const space = ns(ctx.agent);
         const hits = opts.store.search
           ? (await opts.store.search(space, query, limit)).slice(0, limit)

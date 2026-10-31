@@ -3,7 +3,9 @@ import { join, relative, sep } from 'node:path';
 import type { KnowledgeQuery, KnowledgeSource, Passage } from '../types.ts';
 import { redact, secretForms, staticSecrets } from '../tools/redact.ts';
 import { rank } from './rank.ts';
-import { DEFAULT_K, DEFAULT_TIMEOUT_MS, hashId, matchesFilter, toPassage } from './core.ts';
+import { DEFAULT_K, hashId, KNOWLEDGE_LIMITS, matchesFilter, toPassage } from './core.ts';
+
+const ERROR_BODY_CHARS: number = KNOWLEDGE_LIMITS['knowledge.source.errorBodyChars'].default;
 
 // Adapters depend only on the contract types, Node built-ins and the small redaction helper, so they can be lifted out of the runtime.
 
@@ -30,6 +32,8 @@ export interface McpKnowledgeOptions {
   args?: (q: KnowledgeQuery) => Record<string, unknown>;
   /** Turns the tool result into passages (default: {@link parseMcpResult}). */
   parse?: (result: { content: string; isError: boolean }, q: KnowledgeQuery) => Passage[];
+  /** Tool error text kept in the source error (default 300). */
+  errorBodyChars?: number;
 }
 
 const ENTRY = /<entry>\s*<content>([\s\S]*?)<\/content>\s*<metadata>([\s\S]*?)<\/metadata>\s*<\/entry>/g;
@@ -100,7 +104,7 @@ export function mcpKnowledge(opts: McpKnowledgeOptions): ClosableSource {
     async search(q) {
       const client = await caller();
       const res = await client.callTool(opts.tool, opts.args ? opts.args(q) : { query: q.query }, q.signal);
-      if (res.isError) throw new Error(`MCP tool ${opts.tool} failed: ${res.content.slice(0, 300)}`);
+      if (res.isError) throw new Error(`MCP tool ${opts.tool} failed: ${res.content.slice(0, opts.errorBodyChars ?? ERROR_BODY_CHARS)}`);
       const passages = opts.parse ? opts.parse(res, q) : parseMcpResult(res, name);
       return passages.filter((p) => matchesFilter(p.metadata, q.filter)).slice(0, q.k ?? passages.length);
     },
@@ -120,7 +124,12 @@ export interface HttpKnowledgeOptions {
   url: string;
   /** Static headers, or a function of the query (e.g. to forward `identity.token` as a bearer token). */
   headers?: Record<string, string> | ((q: KnowledgeQuery) => Record<string, string>);
+  /** Request time limit (default 10 s). */
   timeoutMs?: number;
+  /** Response text kept in an HTTP error, after masking (default 300). */
+  errorBodyChars?: number;
+  /** Shorter header values are not masked in error text (default 4). */
+  minSecretChars?: number;
 }
 
 /** Retrieval through `POST url` with `{ query, k, filter }` returning `{ passages: Passage[] }`. */
@@ -129,7 +138,7 @@ export function httpKnowledge(opts: HttpKnowledgeOptions): KnowledgeSource {
   return {
     name,
     async search(q) {
-      const timeout = AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+      const timeout = AbortSignal.timeout(opts.timeoutMs ?? KNOWLEDGE_LIMITS['knowledge.source.timeoutMs'].default);
       const sent = typeof opts.headers === 'function' ? opts.headers(q) : opts.headers;
       const res = await fetch(opts.url, {
         method: 'POST',
@@ -138,7 +147,7 @@ export function httpKnowledge(opts: HttpKnowledgeOptions): KnowledgeSource {
         signal: q.signal ? AbortSignal.any([q.signal, timeout]) : timeout,
       });
       // The error body may echo the credentials (configured headers, a forwarded token); mask all of it, then cut.
-      if (!res.ok) throw new Error(`knowledge HTTP ${res.status}: ${redact(await res.text().catch(() => ''), secretForms(staticSecrets(sent))).slice(0, 300)}`);
+      if (!res.ok) throw new Error(`knowledge HTTP ${res.status}: ${redact(await res.text().catch(() => ''), secretForms(staticSecrets(sent), opts.minSecretChars)).slice(0, opts.errorBodyChars ?? ERROR_BODY_CHARS)}`);
       const body = (await res.json()) as { passages?: unknown };
       if (!Array.isArray(body?.passages)) throw new Error('knowledge HTTP: response has no "passages" array');
       return body.passages.flatMap((p) => toPassage(p, name) ?? []);
@@ -171,7 +180,7 @@ async function markdownFiles(dir: string): Promise<string[]> {
 }
 
 /** Splits Markdown into sections by heading (headings inside code fences are ignored); a section keeps its heading path. */
-export function splitMarkdown(text: string, file: string, maxChars = 1500): Passage[] {
+export function splitMarkdown(text: string, file: string, maxChars: number = KNOWLEDGE_LIMITS['knowledge.source.maxPassageChars'].default): Passage[] {
   const out: Passage[] = [];
   const path: string[] = [];
   let body: string[] = [];

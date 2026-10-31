@@ -1,16 +1,15 @@
 import { RunStop } from '../stop.ts';
 import type { Guard, GuardStage, GuardVerdict, HookContext, Message, Middleware, Part } from '../types.ts';
 import { errorMessage, truncate } from '../util.ts';
-import { GUARD_STAGES, parseVerdict } from './contract.ts';
+import { GUARD_LIMITS, GUARD_STAGES, parseVerdict } from './contract.ts';
 
 export interface GuardMiddlewareOptions {
   /** What a guard that throws (service down, bad answer) means: `block` (default, fail closed) or `allow` (fail open). */
   onError?: 'block' | 'allow';
   name?: string;
+  /** Longest `reason` kept in events and run results (default 200). */
+  maxReasonChars?: number;
 }
-
-/** Longest `reason` kept in events and run results. */
-const MAX_REASON = 200;
 
 type Outcome = { text: string; changed: boolean } | { block: { guard: string; reason?: string } };
 
@@ -30,6 +29,7 @@ type Outcome = { text: string; changed: boolean } | { block: { guard: string; re
  */
 export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = {}): Middleware {
   const failOpen = opts.onError === 'allow';
+  const maxReason = opts.maxReasonChars ?? GUARD_LIMITS['guardrails.maxReasonChars'].default;
   // Each user message checked so far -> what the model sees (or the block); redacted messages map to themselves.
   const checked = new WeakMap<Message, Message | { blocked: string }>();
 
@@ -41,12 +41,12 @@ export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = 
       try {
         verdict = parseVerdict(await guard.check({ stage, text, agent: ctx.agent, runId: ctx.runId, ...(tool && { tool }), ...(ctx.identity && { subject: ctx.identity.subject }) }));
       } catch (err) {
-        const reason = truncate(`guard error: ${errorMessage(err)}`, MAX_REASON);
+        const reason = truncate(`guard error: ${errorMessage(err)}`, maxReason);
         ctx.emit?.('guardrail', { guard: guard.name, stage, action: failOpen ? 'allow' : 'block', reason });
         if (failOpen) continue;
         return { block: { guard: guard.name, reason } };
       }
-      const reason = verdict.reason === undefined ? undefined : truncate(verdict.reason, MAX_REASON);
+      const reason = verdict.reason === undefined ? undefined : truncate(verdict.reason, maxReason);
       if (verdict.action !== 'allow') ctx.emit?.('guardrail', { guard: guard.name, stage, action: verdict.action, ...(reason && { reason }) });
       if (verdict.action === 'block') return { block: { guard: guard.name, ...(reason && { reason }) } };
       if (verdict.action === 'redact') text = verdict.text!;

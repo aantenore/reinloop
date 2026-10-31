@@ -331,8 +331,49 @@
             }
           },
           "timeoutMs": {
-            "type": "integer",
-            "minimum": 0
+            "description": "Time limit of one MCP request (connect, list, call). Default 60000.",
+            "default": 60000,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "const": "unbounded"
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
+          },
+          "errorBodyChars": {
+            "description": "Response text kept in an HTTP error (secrets are masked first). Default 300.",
+            "default": 300,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
+          },
+          "stderrChars": {
+            "description": "Tail of a stdio server stderr kept for error messages. Default 2000.",
+            "default": 2000,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
           },
           "auth": {
             "type": "object",
@@ -363,20 +404,212 @@
           "type": "string"
         },
         "concurrency": {
-          "type": "integer",
-          "minimum": 1
+          "description": "Tool calls of one turn that run in parallel. Default 8.",
+          "default": 8,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "timeoutMs": {
-          "type": "integer",
-          "minimum": 0
+          "description": "Time limit of one tool call (tools may set their own). Default unbounded.",
+          "default": "unbounded",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "const": "unbounded"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "maxResultChars": {
-          "type": "integer",
-          "minimum": 100
+          "description": "Tool output kept in the conversation; the rest goes to an artifact or is cut. Default 32000.",
+          "default": 32000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100
+            },
+            {
+              "const": "unbounded"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "shellTimeoutMs": {
-          "type": "integer",
-          "minimum": 0
+          "description": "Time limit of one shell command; the whole process group is killed. Default 120000.",
+          "default": 120000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "const": "unbounded"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "shellMaxOutputChars": {
+          "description": "Shell output collected in memory. Default 100000.",
+          "default": 100000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100
+            },
+            {
+              "const": "unbounded"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "shellExitGraceMs": {
+          "description": "Wait for output after the shell exits while background processes keep the pipes open. Default 200.",
+          "default": 200,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "maxWalkFiles": {
+          "description": "Files visited by find_files and search_files. Default 20000.",
+          "default": 20000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "maxFindResults": {
+          "description": "Paths returned by find_files. Default 500.",
+          "default": 500,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "searchMaxResults": {
+          "description": "Matches returned by search_files when the model does not ask for a number. Default 200.",
+          "default": 200,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "searchMaxFileBytes": {
+          "description": "Larger files are skipped by search_files. Default 1000000.",
+          "default": 1000000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "searchLineChars": {
+          "description": "Characters kept of each matching line. Default 300.",
+          "default": 300,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 20
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "artifactReadChars": {
+          "description": "Characters read_artifact returns when the model gives no limit. Default 8000.",
+          "default": 8000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "skillMaxFileBytes": {
+          "description": "Largest skill resource file the skill tool loads. Default 1000000.",
+          "default": 1000000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "skillDescriptionChars": {
+          "description": "Characters of each skill description listed in the tool description. Default 300.",
+          "default": 300,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 20
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "artifacts": {
           "enum": [
@@ -508,6 +741,20 @@
               "additionalProperties": {
                 "type": "string"
               }
+            },
+            "maxReasonChars": {
+              "description": "Characters of a PDP reason or error kept in the decision. Default 200.",
+              "default": 200,
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 20
+                },
+                {
+                  "type": "string",
+                  "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                }
+              ]
             }
           }
         }
@@ -782,6 +1029,20 @@
                     "additionalProperties": {
                       "type": "string"
                     }
+                  },
+                  "maxReasonChars": {
+                    "description": "Characters of a PDP reason or error kept in the decision. Default 200.",
+                    "default": 200,
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 20
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                      }
+                    ]
                   }
                 }
               }
@@ -862,8 +1123,18 @@
                 }
               },
               "retries": {
-                "type": "integer",
-                "minimum": 0
+                "description": "Extra model calls when the final answer does not match output.schema. Default 1.",
+                "default": 1,
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                  }
+                ]
               }
             }
           },
@@ -1152,6 +1423,20 @@
                               "additionalProperties": {
                                 "type": "string"
                               }
+                            },
+                            "maxReasonChars": {
+                              "description": "Characters of a PDP reason or error kept in the decision. Default 200.",
+                              "default": 200,
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 20
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                                }
+                              ]
                             }
                           }
                         }
@@ -1232,8 +1517,18 @@
                           }
                         },
                         "retries": {
-                          "type": "integer",
-                          "minimum": 0
+                          "description": "Extra model calls when the final answer does not match output.schema. Default 1.",
+                          "default": 1,
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                            }
+                          ]
                         }
                       }
                     },
@@ -1505,6 +1800,20 @@
                                     "additionalProperties": {
                                       "type": "string"
                                     }
+                                  },
+                                  "maxReasonChars": {
+                                    "description": "Characters of a PDP reason or error kept in the decision. Default 200.",
+                                    "default": 200,
+                                    "anyOf": [
+                                      {
+                                        "type": "integer",
+                                        "minimum": 20
+                                      },
+                                      {
+                                        "type": "string",
+                                        "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                                      }
+                                    ]
                                   }
                                 }
                               }
@@ -1585,8 +1894,18 @@
                                 }
                               },
                               "retries": {
-                                "type": "integer",
-                                "minimum": 0
+                                "description": "Extra model calls when the final answer does not match output.schema. Default 1.",
+                                "default": 1,
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                                  }
+                                ]
                               }
                             }
                           },
@@ -1656,8 +1975,21 @@
           "type": "string"
         },
         "ttlMs": {
-          "type": "integer",
-          "minimum": 0
+          "description": "How long a cached response is replayed. Default unbounded.",
+          "default": "unbounded",
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "const": "unbounded"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "namespace": {
           "type": "string"
@@ -1685,6 +2017,20 @@
         },
         "namespace": {
           "type": "string"
+        },
+        "recallLimit": {
+          "description": "Notes recall returns when the model gives no limit. Default 8.",
+          "default": 8,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         }
       }
     },
@@ -1743,28 +2089,116 @@
           "type": "string"
         },
         "maxUses": {
-          "type": "integer",
-          "minimum": 1
+          "description": "Hosted searches per query (anthropic-native). Default 1.",
+          "default": 1,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "maxResults": {
-          "type": "integer",
-          "minimum": 1
+          "description": "Results per search when the model does not ask (capped by maxResultsCap). Default 5.",
+          "default": 5,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "maxResultsCap": {
-          "type": "integer",
-          "minimum": 1
+          "description": "Most results the model may ask for. Default 10.",
+          "default": 10,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "maxChars": {
-          "type": "integer",
-          "minimum": 50
+          "description": "Characters kept per search snippet. Default 1000.",
+          "default": 1000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 50
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "maxFetchChars": {
-          "type": "integer",
-          "minimum": 100
+          "description": "Characters kept of a fetched page. Default 8000.",
+          "default": 8000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "cacheTtlMs": {
-          "type": "integer",
-          "minimum": 0
+          "description": "In-memory result cache lifetime (0: off). Default 0.",
+          "default": 0,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "cacheMaxEntries": {
+          "description": "Results kept in the cache. Default 200.",
+          "default": 200,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "maxTrackedRuns": {
+          "description": "Runs whose search results web_fetch remembers (oldest are forgotten). Default 200.",
+          "default": 200,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "fetchPolicy": {
           "enum": [
@@ -1774,8 +2208,18 @@
           ]
         },
         "maxUrlLength": {
-          "type": "integer",
-          "minimum": 16
+          "description": "Longest URL web_fetch accepts; long URLs can carry exfiltrated data. Default 512.",
+          "default": 512,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 16
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "searchDepth": {
           "enum": [
@@ -1819,24 +2263,116 @@
           }
         },
         "maxResults": {
-          "type": "integer",
-          "minimum": 1
+          "description": "Results per search when the model does not ask (capped by maxResultsCap). Default 5.",
+          "default": 5,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "maxResultsCap": {
-          "type": "integer",
-          "minimum": 1
+          "description": "Most results the model may ask for. Default 10.",
+          "default": 10,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "maxChars": {
-          "type": "integer",
-          "minimum": 20
+          "description": "Characters kept per title or description. Default 300.",
+          "default": 300,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 20
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "cacheTtlMs": {
-          "type": "integer",
-          "minimum": 0
+          "description": "In-memory result cache lifetime (0: off). Default 0.",
+          "default": 0,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "cacheMaxEntries": {
+          "description": "Results kept in the cache. Default 200.",
+          "default": 200,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "timeoutMs": {
-          "type": "integer",
-          "minimum": 100
+          "description": "Time limit of one request to a public API. Default 10000.",
+          "default": 10000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "errorBodyChars": {
+          "description": "Response text kept in an HTTP error. Default 300.",
+          "default": 300,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "rateLimitBodyChars": {
+          "description": "Response text kept in a throttling error. Default 200.",
+          "default": 200,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "githubToken": {
           "type": "string"
@@ -1925,27 +2461,109 @@
               "toolArgs": {
                 "type": "object"
               },
-              "timeoutMs": {
-                "type": "integer",
-                "minimum": 0
-              },
               "dir": {
                 "type": "string"
               },
+              "timeoutMs": {
+                "description": "Time limit of one request to an http source. Default 10000.",
+                "default": 10000,
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                  }
+                ]
+              },
+              "errorBodyChars": {
+                "description": "Response text kept in a source error (secrets are masked first). Default 300.",
+                "default": 300,
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                  }
+                ]
+              },
               "maxPassageChars": {
-                "type": "integer",
-                "minimum": 100
+                "description": "Size of the passages a wiki page is split into. Default 1500.",
+                "default": 1500,
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 100
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+                  }
+                ]
               }
             }
           }
         },
         "k": {
-          "type": "integer",
-          "minimum": 1
+          "description": "Passages per retrieval. Default 4.",
+          "default": 4,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "maxK": {
+          "description": "Most passages search_knowledge may ask for. Default 10.",
+          "default": 10,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "maxChars": {
-          "type": "integer",
-          "minimum": 100
+          "description": "Passage text appended to the user message by the middleware (search_knowledge too, unless toolMaxChars is set). Default 6000.",
+          "default": 6000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "toolMaxChars": {
+          "description": "Passage text of one search_knowledge result (default: maxChars when set). Default 8000.",
+          "default": 8000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         },
         "mode": {
           "enum": [
@@ -1954,8 +2572,46 @@
           ]
         },
         "timeoutMs": {
-          "type": "integer",
-          "minimum": 100
+          "description": "Per-source time limit; a slow source is skipped, the run goes on. Default 10000.",
+          "default": 10000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 100
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "maxQueryChars": {
+          "description": "Characters of the user text sent as the query. Default 1000.",
+          "default": 1000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 10
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "maxTrackedRuns": {
+          "description": "Runs whose retrieved blocks are kept in memory (a forgotten run costs one re-query). Default 64.",
+          "default": 64,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         }
       }
     },
@@ -2039,12 +2695,52 @@
             ]
           },
           "timeoutMs": {
-            "type": "integer",
-            "minimum": 0
+            "description": "Time limit of one call; without it tools.timeoutMs applies, \"unbounded\" overrides that. Default unbounded.",
+            "default": "unbounded",
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "const": "unbounded"
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
           },
           "maxResultChars": {
-            "type": "integer",
-            "minimum": 100
+            "description": "Response text returned to the model. Default 16000.",
+            "default": 16000,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 100
+              },
+              {
+                "const": "unbounded"
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
+          },
+          "errorBodyChars": {
+            "description": "Response text kept in an error result (secrets are masked first). Default 500.",
+            "default": 500,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
           },
           "auth": {
             "type": "object",
@@ -2113,12 +2809,94 @@
             }
           },
           "timeoutMs": {
-            "type": "integer",
-            "minimum": 0
+            "description": "Time limit of one call; without it tools.timeoutMs applies, \"unbounded\" overrides that. Default unbounded.",
+            "default": "unbounded",
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "const": "unbounded"
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
           },
           "maxResultChars": {
-            "type": "integer",
-            "minimum": 100
+            "description": "Response text returned to the model. Default 16000.",
+            "default": 16000,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 100
+              },
+              {
+                "const": "unbounded"
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
+          },
+          "errorBodyChars": {
+            "description": "Response text kept in an error result (secrets are masked first). Default 500.",
+            "default": 500,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
+          },
+          "specTimeoutMs": {
+            "description": "Time limit for downloading a spec given as a URL. Default 30000.",
+            "default": 30000,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
+          },
+          "maxRefDepth": {
+            "description": "Nested $ref levels inlined; deeper ones become an open schema. Default 24.",
+            "default": 24,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
+          },
+          "descriptionChars": {
+            "description": "Characters of an operation summary used as the tool description. Default 1000.",
+            "default": 1000,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 50
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
           }
         }
       }
@@ -2152,6 +2930,142 @@
         },
         "name": {
           "type": "string"
+        },
+        "maxReasonChars": {
+          "description": "Characters of a guard reason kept in events and run results. Default 200.",
+          "default": 200,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 20
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        }
+      }
+    },
+    "serve": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxBodyBytes": {
+          "description": "Largest request body; bigger ones get 413 and the connection is closed. Default 1000000.",
+          "default": 1000000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "const": "unbounded"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "requestTimeoutMs": {
+          "description": "Time to receive a whole request (Node default); slow clients cannot hold sockets. Default 300000.",
+          "default": 300000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "const": "unbounded"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "headersTimeoutMs": {
+          "description": "Time to receive the request headers (Node default; never above requestTimeoutMs). Default 60000.",
+          "default": 60000,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "const": "unbounded"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "errorDescriptionChars": {
+          "description": "Verifier reason kept in the WWW-Authenticate error_description. Default 120.",
+          "default": 120,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxTurns": {
+          "description": "Turns of an agent that sets no budget; with \"unbounded\" a looping agent never stops. Default 50.",
+          "default": 50,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "const": "unbounded"
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "maxEmptyResponses": {
+          "description": "Empty model responses in a row before the run fails. Default 2.",
+          "default": 2,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
+        },
+        "minSecretChars": {
+          "description": "Shorter secrets are not masked in echoed error text (they would mangle ordinary text). Default 4.",
+          "default": 4,
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "string",
+              "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+            }
+          ]
         }
       }
     },

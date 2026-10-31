@@ -182,7 +182,7 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case 'validate': {
-      if (values.config) await loadConfig(values.config, { profile: values.profile });
+      if (values.config) await loadConfig(values.config, { profile: values.profile, onWarning: () => {} }); // project() reports the warnings
       const rt = await project();
       try {
         for (const name of rt.names()) await rt.agent(name);

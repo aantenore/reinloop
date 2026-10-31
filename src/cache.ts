@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { limitDefault } from './limits.ts';
 import type { ModelResponse, Provider } from './types.ts';
 import { textOf } from './util.ts';
 
@@ -9,7 +10,7 @@ export interface CacheStore {
   set(key: string, value: string, ttlMs?: number): Promise<void>;
 }
 
-export function memoryCache(maxEntries = 1000): CacheStore {
+export function memoryCache(maxEntries: number = limitDefault('responseCache.maxEntries')): CacheStore {
   const items = new Map<string, { value: string; expires: number }>();
   return {
     async get(key) {

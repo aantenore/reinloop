@@ -1,8 +1,8 @@
 import type { Identity, IdentityVerifier } from '../types.ts';
-import { checkSecureUrl, discover, type FetchLike, IdentityError, requestJson } from './http.ts';
+import { checkSecureUrl, discover, type FetchLike, IDENTITY_LIMITS, IdentityError, requestJson, type ResponseLimits } from './http.ts';
 import { candidateKeys, checkAlgorithm, decodeJwt, importKey, type Jwk, verifySignature } from './jwt.ts';
 
-export interface OidcVerifierOptions {
+export interface OidcVerifierOptions extends ResponseLimits {
   /** Expected `iss`, exactly as the provider publishes it (also the discovery base URL). */
   issuer: string;
   /** Accepted `aud` value(s). Strongly recommended: without it any token of the issuer is accepted, ID tokens included. */
@@ -13,8 +13,12 @@ export interface OidcVerifierOptions {
   clockSkewSec?: number;
   /** Accepted asymmetric algorithms (default RS256, ES256). `none` and `HS*` are always refused. */
   algorithms?: string[];
-  /** Reject tokens issued longer ago than this (`iat`), in seconds. Off by default. */
+  /** Reject tokens issued longer ago than this (`iat`), in seconds. Off by default (`Infinity` is off too). */
   maxTokenAgeSec?: number;
+  /** Longest bearer token parsed (default 16384 characters). */
+  maxTokenChars?: number;
+  /** Keys tried for a token without `kid` (default 5). */
+  maxKeyCandidates?: number;
   /** Minimum interval between JWKS fetches triggered by an unknown `kid` or a failed fetch (default 30 s). */
   jwksMinRefreshMs?: number;
   /** JWKS cache lifetime (default 10 min). */
@@ -109,10 +113,15 @@ export function oidcVerifier(opts: OidcVerifierOptions): IdentityVerifier & { re
   const algorithms = opts.algorithms ?? DEFAULT_ALGORITHMS;
   for (const alg of algorithms) checkAlgorithm(alg, algorithms);
   const audiences = opts.audience === undefined ? undefined : strings(opts.audience);
-  const skew = opts.clockSkewSec ?? 60;
-  const minRefresh = opts.jwksMinRefreshMs ?? 30_000;
-  const maxAge = opts.jwksMaxAgeMs ?? 600_000;
-  const timeoutMs = opts.timeoutMs ?? 5000;
+  const L = IDENTITY_LIMITS;
+  const skew = opts.clockSkewSec ?? L['identity.verifier.clockSkewSec'].default;
+  const minRefresh = opts.jwksMinRefreshMs ?? L['identity.verifier.jwksMinRefreshMs'].default;
+  const maxAge = opts.jwksMaxAgeMs ?? L['identity.verifier.jwksMaxAgeMs'].default;
+  const timeoutMs = opts.timeoutMs ?? L['identity.verifier.timeoutMs'].default;
+  const tokenMaxAge = opts.maxTokenAgeSec === Number.POSITIVE_INFINITY ? undefined : opts.maxTokenAgeSec;
+  const maxTokenChars = opts.maxTokenChars ?? L['identity.verifier.maxTokenChars'].default;
+  const maxCandidates = opts.maxKeyCandidates ?? L['identity.verifier.maxKeyCandidates'].default;
+  const limits: ResponseLimits = { maxResponseBytes: opts.maxResponseBytes, errorBodyChars: opts.errorBodyChars };
   const fetchImpl: FetchLike = opts.fetch ?? fetch;
   const now = opts.now ?? Date.now;
   const agents: AgentClients = { ...(opts.agentClients && { agentClients: [...opts.agentClients] }), ...(opts.agentSubjects && { agentSubjects: { ...opts.agentSubjects } }) };
@@ -129,11 +138,11 @@ export function oidcVerifier(opts: OidcVerifierOptions): IdentityVerifier & { re
 
   const load = async () => {
     if (!jwksUri) {
-      const doc = await discover(fetchImpl, opts.issuer, timeoutMs, opts.allowHttp);
+      const doc = await discover(fetchImpl, opts.issuer, timeoutMs, opts.allowHttp, limits);
       if (typeof doc.jwks_uri !== 'string') throw new IdentityError('identity_config', 'OIDC discovery: no "jwks_uri"');
       jwksUri = checkSecureUrl(doc.jwks_uri, 'jwks_uri', opts.allowHttp).href;
     }
-    const { body } = await requestJson(fetchImpl, jwksUri, { method: 'GET', headers: { accept: 'application/json' }, timeoutMs, what: 'JWKS' });
+    const { body } = await requestJson(fetchImpl, jwksUri, { method: 'GET', headers: { accept: 'application/json' }, timeoutMs, what: 'JWKS', ...limits });
     if (!Array.isArray(body?.keys)) throw new IdentityError('identity_response', 'JWKS: no "keys" array');
     keys = body.keys;
     fetchedAt = now();
@@ -164,7 +173,7 @@ export function oidcVerifier(opts: OidcVerifierOptions): IdentityVerifier & { re
   return {
     refresh,
     async verify(token, _vopts) {
-      const jwt = decodeJwt(token);
+      const jwt = decodeJwt(token, maxTokenChars);
       const alg = jwt.header.alg;
       checkAlgorithm(alg, algorithms);
       if (jwt.header.crit !== undefined) throw invalid('token uses unsupported critical header parameters');
@@ -174,7 +183,7 @@ export function oidcVerifier(opts: OidcVerifierOptions): IdentityVerifier & { re
       if (!candidates.length && kid !== undefined) candidates = candidateKeys(await getKeys(true), alg, kid);
       if (!candidates.length) throw invalid('no signing key matches the token');
       // Without a `kid` a few same-type keys are tried; a known `kid` never triggers a refetch on a bad signature.
-      if (!candidates.slice(0, 5).some((k) => verifySignature(jwt, importKey(k, alg)))) throw invalid('invalid token signature');
+      if (!candidates.slice(0, maxCandidates).some((k) => verifySignature(jwt, importKey(k, alg)))) throw invalid('invalid token signature');
 
       const c = jwt.payload;
       const t = now() / 1000;
@@ -188,8 +197,8 @@ export function oidcVerifier(opts: OidcVerifierOptions): IdentityVerifier & { re
       if (c.nbf !== undefined && (typeof c.nbf !== 'number' || t + skew < c.nbf)) throw invalid('token not yet valid');
       if (c.iat !== undefined) {
         if (typeof c.iat !== 'number' || c.iat > t + skew) throw invalid('token "iat" is in the future');
-        if (opts.maxTokenAgeSec !== undefined && t - c.iat > opts.maxTokenAgeSec + skew) throw invalid('token too old');
-      } else if (opts.maxTokenAgeSec !== undefined) throw invalid('token has no "iat"');
+        if (tokenMaxAge !== undefined && t - c.iat > tokenMaxAge + skew) throw invalid('token too old');
+      } else if (tokenMaxAge !== undefined) throw invalid('token has no "iat"');
 
       const kind = kindOf(c);
       if (kind !== 'user' && kind !== 'agent') throw invalid('token kind cannot be determined');

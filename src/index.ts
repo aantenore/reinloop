@@ -31,7 +31,11 @@ export { otelSink, type OtelSinkOptions, type OtelTracer, type OtelSpan } from '
 export { McpClient, mcpTools, MCP_PROTOCOL_VERSION, type McpServerConfig, type McpToolInfo } from './mcp/client.ts';
 
 export { Registry, createRegistry, type Factory, type FactoryContext } from './registry.ts';
-export { loadConfig, checkConfig, interpolate, deepMerge, applyProfile, ConfigError, type HarnessConfig, type AgentConfig } from './config/load.ts';
+export {
+  loadConfig, checkConfig, checkLimits, limitWarnings, interpolate, resolveLimits, deepMerge, applyProfile, ConfigError,
+  type HarnessConfig, type AgentConfig, type LimitsConfig, type LoadConfigOptions, type LoadedConfig,
+} from './config/load.ts';
+export { LIMITS, UNBOUNDED, limitDefault, checkLimit, type LimitName, type LimitSpec } from './limits.ts';
 export { createRuntime, loadRuntime, loadPlugins, type Runtime, type RuntimeOptions } from './config/runtime.ts';
 export { CONFIG_SCHEMA } from './config/schema.ts';
 
@@ -59,7 +63,7 @@ export {
 export { httpTool, type HttpToolOptions, type HttpToolAuth, type HttpMethod } from './tools/http.ts';
 export { openapiTools, readOpenApiSpec, type OpenApiOptions, type OpenApiDocument } from './tools/openapi.ts';
 export { pathGlob } from './tools/node.ts';
-export { serve, type ServeOptions, type Served } from './serve.ts';
+export { serve, type ServeOptions, type ServeSettings, type Served } from './serve.ts';
 export { serveMcp, type McpServeOptions } from './mcp/server.ts';
 export { describeMembers, type MemberInfo } from './describe.ts';
 export { architect, architectInstructions, design, validateProject } from './architect.ts';

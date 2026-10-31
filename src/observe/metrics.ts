@@ -1,4 +1,4 @@
-import type { RunEvent, Sink } from '../types.ts';
+import type { LimitSpec, RunEvent, Sink } from '../types.ts';
 import { type Attrs, assertPlainEndpoint, ExportStatusError, exportFailure, nowNanos, toAttributes } from './otlp-json.ts';
 
 export interface OtlpMetricsOptions {
@@ -12,6 +12,18 @@ export interface OtlpMetricsOptions {
 }
 
 // Bucket boundaries recommended by the OpenTelemetry GenAI semantic conventions.
+/** Export intervals of the OTLP sinks. */
+export const TELEMETRY_LIMITS = {
+  'otlp.intervalMs': {
+    component: 'Telemetry', path: 'sinks[].intervalMs', option: 'otlpSink({ intervalMs })', default: 2000, min: 100, safe: [500, 60_000], types: ['otlp'],
+    why: 'How often buffered spans are exported (metrics too, unless metricsIntervalMs is set)',
+  },
+  'otlp.metricsIntervalMs': {
+    component: 'Telemetry', path: 'sinks[].metricsIntervalMs', option: 'otlpSink({ metricsIntervalMs }), otlpMetricsSink({ intervalMs })', default: 10_000, min: 100,
+    safe: [1000, 300_000], types: ['otlp'], why: 'How often metrics are exported',
+  },
+} as const satisfies Record<string, LimitSpec>;
+
 const TOKEN_BOUNDS = [1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864];
 const DURATION_BOUNDS = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92];
 
@@ -110,7 +122,7 @@ export function otlpMetricsSink(opts: OtlpMetricsOptions): Sink {
   };
   const flush = () => (chain = chain.then(send));
 
-  const timer = setInterval(() => void flush(), opts.intervalMs ?? 10_000);
+  const timer = setInterval(() => void flush(), opts.intervalMs ?? TELEMETRY_LIMITS['otlp.metricsIntervalMs'].default);
   timer.unref();
 
   return {

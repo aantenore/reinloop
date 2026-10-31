@@ -1,4 +1,4 @@
-import { ConfigError, type Env, type HarnessConfig, interpolate } from '../config/load.ts';
+import { ConfigError, type Env, type HarnessConfig, interpolate, resolveLimits } from '../config/load.ts';
 import type { Tool } from '../types.ts';
 import { errorMessage, globToRegExp } from '../util.ts';
 import { httpTool } from './http.ts';
@@ -15,7 +15,7 @@ export interface DeclaredTools {
 }
 
 /** Tools declared in the config (`httpTools`, `openapi`), built once and shared. */
-export function declaredTools(config: HarnessConfig, env: Env, baseDir: string): DeclaredTools {
+export function declaredTools(config: HarnessConfig, env: Env, baseDir: string, limits: { minSecretChars?: number } = {}): DeclaredTools {
   const http = new Map<string, Tool>();
   const specs = new Map<string, Promise<Tool[]>>();
   const sources = Object.keys(config.openapi ?? {});
@@ -26,13 +26,15 @@ export function declaredTools(config: HarnessConfig, env: Env, baseDir: string):
       specs.set(
         name,
         (async () => {
-          const def = config.openapi![name]!;
           try {
-            const { spec, url } = await readOpenApiSpec(interpolate(def.spec, env, `${path}.spec`), baseDir);
+            // Limit fields may be `${env:...}` or "unbounded"; other strings are resolved where they are used.
+            const def = resolveLimits(config.openapi![name]!, env, path);
+            const { spec, url } = await readOpenApiSpec(interpolate(def.spec, env, `${path}.spec`), baseDir, { timeoutMs: def.specTimeoutMs });
             const baseUrl = def.baseUrl === undefined ? specBaseUrl(spec, url) : interpolate(def.baseUrl, env, `${path}.baseUrl`);
             return openapiTools(spec, {
               prefix: name, baseUrl, include: def.include, auth: def.auth, headers: def.headers,
-              timeoutMs: def.timeoutMs, maxResultChars: def.maxResultChars, env,
+              timeoutMs: def.timeoutMs, maxResultChars: def.maxResultChars, errorBodyChars: def.errorBodyChars, maxRefDepth: def.maxRefDepth,
+              descriptionChars: def.descriptionChars, minSecretChars: limits.minSecretChars, env,
             });
           } catch (err) {
             if (err instanceof ConfigError) throw err;
@@ -53,7 +55,7 @@ export function declaredTools(config: HarnessConfig, env: Env, baseDir: string):
         if (!re.test(name)) continue;
         if (!http.has(name)) {
           try {
-            http.set(name, httpTool({ ...def, name, env }));
+            http.set(name, httpTool({ ...resolveLimits(def, env, `$.httpTools.${name}`), name, env, minSecretChars: limits.minSecretChars }));
           } catch (err) {
             throw new ConfigError(`$.httpTools.${name}: ${errorMessage(err)}`);
           }

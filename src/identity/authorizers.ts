@@ -1,9 +1,9 @@
 import type { AccessRequest, Authorizer, Identity, Tool, ToolCallPart } from '../types.ts';
-import { checkSecureUrl, type FetchLike, IdentityError, requestJson } from './http.ts';
+import { checkSecureUrl, type FetchLike, IDENTITY_LIMITS, IdentityError, requestJson, type ResponseLimits } from './http.ts';
 
 // Self-contained: contract types and node built-ins only, so a gateway outside the agent can reuse these adapters.
 
-export interface HttpAuthorizerOptions {
+export interface HttpAuthorizerOptions extends ResponseLimits {
   url: string;
   /** Extra request headers (e.g. a PDP API key via `${env:...}` in config files). */
   headers?: Record<string, string>;
@@ -34,7 +34,9 @@ export function authzenAuthorizer(opts: HttpAuthorizerOptions): Authorizer {
         headers: { 'content-type': 'application/json', accept: 'application/json', ...opts.headers },
         body: JSON.stringify(req),
         signal: eopts?.signal,
-        timeoutMs: opts.timeoutMs ?? 5000,
+        timeoutMs: opts.timeoutMs ?? IDENTITY_LIMITS['pdp.timeoutMs'].default,
+        maxResponseBytes: opts.maxResponseBytes,
+        errorBodyChars: opts.errorBodyChars,
         what: 'AuthZEN',
       });
       if (typeof body?.decision !== 'boolean') throw new IdentityError('pdp_response', 'AuthZEN: response has no boolean "decision"');
@@ -62,7 +64,9 @@ export function opaAuthorizer(opts: HttpAuthorizerOptions & { path?: string }): 
         headers: { 'content-type': 'application/json', accept: 'application/json', ...opts.headers },
         body: JSON.stringify({ input: req }),
         signal: eopts?.signal,
-        timeoutMs: opts.timeoutMs ?? 5000,
+        timeoutMs: opts.timeoutMs ?? IDENTITY_LIMITS['pdp.timeoutMs'].default,
+        maxResponseBytes: opts.maxResponseBytes,
+        errorBodyChars: opts.errorBodyChars,
         what: 'OPA',
       });
       const result = body?.result;

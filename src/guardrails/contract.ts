@@ -1,10 +1,22 @@
 // Shared by the guard adapters. Self-contained on purpose: contract types and node built-ins only, so the adapters
 // can be lifted out of this package unchanged.
-import type { GuardStage, GuardVerdict } from '../types.ts';
+import type { GuardStage, GuardVerdict, LimitSpec } from '../types.ts';
 
 export const GUARD_STAGES: readonly GuardStage[] = ['input', 'output', 'tool_args', 'tool_result'];
 const ACTIONS: ReadonlySet<string> = new Set(['allow', 'block', 'redact']);
-export const DEFAULT_GUARD_TIMEOUT_MS = 10_000;
+/** Limits of the guard adapters and the `guard` middleware. */
+export const GUARD_LIMITS = {
+  'guardrails.timeoutMs': {
+    component: 'Guardrails', path: 'guardrails.guards[].timeoutMs', option: 'httpGuard / presidioGuard / llmGuardGuard({ timeoutMs })', default: 10_000, min: 1,
+    safe: [100, 60_000], types: ['http', 'presidio', 'llm-guard'], why: 'Time limit of one guard call; a timeout is handled by onError',
+  },
+  'guardrails.maxReasonChars': {
+    component: 'Guardrails', path: 'guardrails.maxReasonChars', option: 'guardMiddleware(guards, { maxReasonChars })', default: 200, min: 20,
+    why: 'Characters of a guard reason kept in events and run results',
+  },
+} as const satisfies Record<string, LimitSpec>;
+
+export const DEFAULT_GUARD_TIMEOUT_MS: number = GUARD_LIMITS['guardrails.timeoutMs'].default;
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 

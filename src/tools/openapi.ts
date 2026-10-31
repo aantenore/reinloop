@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { limitDefault } from '../limits.ts';
 import type { JsonSchema, Risk, Tool } from '../types.ts';
 import { safeToolName } from './define.ts';
 import { type HttpMethod, httpTool, type HttpToolAuth } from './http.ts';
@@ -26,13 +27,20 @@ export interface OpenApiOptions {
   headers?: Record<string, string>;
   timeoutMs?: number;
   maxResultChars?: number;
+  /** Response text kept in an error result (default 500). */
+  errorBodyChars?: number;
+  /** Shorter secrets are not masked (default 4). */
+  minSecretChars?: number;
+  /** Nested `$ref` levels inlined (default 24). */
+  maxRefDepth?: number;
+  /** Characters of the operation summary used as tool description (default 1000). */
+  descriptionChars?: number;
   env?: Env;
 }
 
 const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head'] as const;
 /** Headers OpenAPI defines as handled by the transport, not as parameters. */
 const RESERVED_HEADERS = new Set(['accept', 'content-type', 'authorization']);
-const MAX_DEPTH = 24;
 
 function pointer(spec: OpenApiDocument, ref: string): unknown {
   if (!ref.startsWith('#/')) throw new Error(`unsupported $ref "${ref}" (only local "#/..." references are resolved)`);
@@ -45,16 +53,16 @@ function pointer(spec: OpenApiDocument, ref: string): unknown {
 }
 
 /** Inlines local `$ref`s; a reference that points back into itself is cut to an unconstrained schema. */
-function deref(spec: OpenApiDocument, node: unknown, stack: string[] = []): any {
-  if (Array.isArray(node)) return node.map((n) => deref(spec, n, stack));
+function deref(spec: OpenApiDocument, node: unknown, stack: string[] = [], maxDepth: number = limitDefault('openapi.maxRefDepth')): any {
+  if (Array.isArray(node)) return node.map((n) => deref(spec, n, stack, maxDepth));
   if (typeof node !== 'object' || node === null) return node;
   const obj = node as Record<string, unknown>;
   if (typeof obj.$ref === 'string') {
-    if (stack.includes(obj.$ref) || stack.length > MAX_DEPTH) return {};
-    return deref(spec, pointer(spec, obj.$ref), [...stack, obj.$ref]);
+    if (stack.includes(obj.$ref) || stack.length > maxDepth) return {};
+    return deref(spec, pointer(spec, obj.$ref), [...stack, obj.$ref], maxDepth);
   }
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(obj)) out[k] = deref(spec, v, stack);
+  for (const [k, v] of Object.entries(obj)) out[k] = deref(spec, v, stack, maxDepth);
   // OpenAPI 3.0 `nullable` -> JSON Schema type union.
   if (out.nullable === true && typeof out.type === 'string') out.type = [out.type, 'null'];
   delete out.nullable;
@@ -84,7 +92,7 @@ export function openapiTools(spec: OpenApiDocument, opts: OpenApiOptions = {}): 
   const used = new Set<string>();
 
   for (const [path, rawItem] of Object.entries<any>(spec.paths ?? {})) {
-    const item = deref(spec, rawItem);
+    const item = deref(spec, rawItem, [], opts.maxRefDepth);
     for (const method of HTTP_METHODS) {
       const op = item[method];
       if (!op) continue;
@@ -130,7 +138,7 @@ export function openapiTools(spec: OpenApiDocument, opts: OpenApiOptions = {}): 
       tools.push(
         httpTool({
           name,
-          description: truncate(description, 1000),
+          description: truncate(description, opts.descriptionChars ?? limitDefault('openapi.descriptionChars')),
           method: method.toUpperCase() as HttpMethod,
           url: `${base}${path}`,
           query,
@@ -142,6 +150,8 @@ export function openapiTools(spec: OpenApiDocument, opts: OpenApiOptions = {}): 
           risk: opts.risk ? opts.risk(method.toUpperCase()) : method === 'get' || method === 'head' ? 'read' : 'write',
           timeoutMs: opts.timeoutMs,
           maxResultChars: opts.maxResultChars,
+          errorBodyChars: opts.errorBodyChars,
+          minSecretChars: opts.minSecretChars,
           auth: opts.auth,
           env: opts.env,
         }),
@@ -154,11 +164,11 @@ export function openapiTools(spec: OpenApiDocument, opts: OpenApiOptions = {}): 
 export interface LoadedOpenApi { spec: OpenApiDocument; url?: string }
 
 /** Reads an OpenAPI 3 document from a file path (relative to `baseDir`) or an http(s) URL. JSON only. */
-export async function readOpenApiSpec(source: string, baseDir: string = process.cwd()): Promise<LoadedOpenApi> {
+export async function readOpenApiSpec(source: string, baseDir: string = process.cwd(), opts: { timeoutMs?: number } = {}): Promise<LoadedOpenApi> {
   const isUrl = /^https?:\/\//i.test(source);
   let text: string;
   if (isUrl) {
-    const res = await fetch(source, { signal: AbortSignal.timeout(30_000) });
+    const res = await fetch(source, { signal: AbortSignal.timeout(opts.timeoutMs ?? limitDefault('openapi.specTimeoutMs')) });
     if (!res.ok) throw new Error(`cannot fetch OpenAPI spec ${source}: HTTP ${res.status}`);
     text = await res.text();
   } else {

@@ -22,7 +22,7 @@ export function registerGuardrails(r: Registry): void {
     ctx.once('guardrails', async () => {
       const cfg = ctx.config.guardrails;
       if (!cfg) throw new ConfigError('middleware "guard" needs a top-level "guardrails" config ({ guards: [...] })');
-      const { guards: specs, onError, name } = interpolate(cfg, ctx.env, '$.guardrails');
+      const { guards: specs, onError, name, maxReasonChars } = interpolate(cfg, ctx.env, '$.guardrails');
       const guards: Guard[] = await Promise.all(
         specs.map((spec, i) => {
           const factory = r.guards.get(spec.type);
@@ -31,7 +31,7 @@ export function registerGuardrails(r: Registry): void {
           return factory(options, ctx);
         }),
       );
-      return guardMiddleware(guards, { onError, name });
+      return guardMiddleware(guards, { onError, name, maxReasonChars });
     }),
   );
 }

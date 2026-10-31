@@ -1,8 +1,10 @@
 import type { Budget, Decision, Identity, PolicyCondition, PolicyConfig, Risk, RunState, Tool, ToolCallPart } from './types.ts';
+import { limitDefault } from './limits.ts';
 import { globToRegExp } from './util.ts';
 
 /** Applied when an agent sets no budget, so a confused model cannot loop forever. */
-export const DEFAULT_BUDGET: Budget = { maxTurns: 50 };
+/** Budget of an agent that sets none. */
+export const DEFAULT_BUDGET: Budget = { maxTurns: limitDefault('limits.maxTurns') };
 
 export const DEFAULT_RISK_DECISIONS: Record<Risk, Decision> = { read: 'allow', write: 'ask', exec: 'ask' };
 
