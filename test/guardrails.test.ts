@@ -73,6 +73,25 @@ describe('guardMiddleware', () => {
     assert.equal(blocked.output, '');
   });
 
+  it('with an output guard, text_delta carries only the checked text, once the answer is complete', async () => {
+    const redact = spy('pii', (i) => ({ action: 'redact', text: i.text.replace(EMAIL, '<EMAIL>') }), ['output']);
+    const sink = collectSink();
+    await run(makeAgent([{ text: `write to ${EMAIL} today` }], { middleware: [guardMiddleware([redact])] }), 'q', { sinks: [sink] });
+    const deltas = sink.events.filter((e) => e.type === 'text_delta').map((e) => (e.data as { text: string }).text);
+    assert.deepEqual(deltas, ['write to <EMAIL> today']);
+    const types = sink.events.map((e) => e.type);
+    assert.ok(types.indexOf('text_delta') < types.indexOf('model_response'));
+
+    const block = spy('leak', () => ({ action: 'block' }), ['output']);
+    const blocked = collectSink();
+    await run(makeAgent([{ text: 'sk-secret value' }], { middleware: [guardMiddleware([block])] }), 'q', { sinks: [blocked] });
+    assert.equal(blocked.events.some((e) => e.type === 'text_delta'), false, 'nothing of a blocked answer is streamed');
+
+    const inputOnly = collectSink();
+    await run(makeAgent([{ text: 'a b c' }], { middleware: [guardMiddleware([spy('in', () => allow, ['input'])])] }), 'q', { sinks: [inputOnly] });
+    assert.equal(inputOnly.events.filter((e) => e.type === 'text_delta').length, 3, 'no output guard: tokens stream as they arrive');
+  });
+
   it('tool_args: block denies the call, redact rewrites the arguments', async () => {
     const tool = echoTool();
     const block = spy('args', () => ({ action: 'block', reason: 'no' }), ['tool_args']);

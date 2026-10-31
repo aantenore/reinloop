@@ -277,6 +277,12 @@ export interface HookContext {
 
 export interface Middleware {
   name?: string;
+  /**
+   * Set by middleware whose `afterModel` rewrites or blocks the answer text (e.g. output guardrails). The loop then holds
+   * `text_delta` events until every `afterModel` has run and emits the final text as one delta, so no unchecked text is
+   * streamed. Trade-off: no incremental streaming; the text arrives together with the complete answer.
+   */
+  holdsText?: boolean;
   beforeModel?(req: ModelRequest, ctx: HookContext): ModelRequest | void | Promise<ModelRequest | void>;
   afterModel?(res: ModelResponse, ctx: HookContext): ModelResponse | void | Promise<ModelResponse | void>;
   beforeTool?(call: ToolCallPart, ctx: HookContext): ToolCallPart | { deny: string } | void | Promise<ToolCallPart | { deny: string } | void>;

@@ -24,8 +24,8 @@ type Outcome = { text: string; changed: boolean } | { block: { guard: string; re
  * a blocked response is not recorded, so its usage is not counted). Guards run in order, the first block wins and
  * redactions chain. Each non-allow verdict is recorded as a `guardrail` event (audit: guard, stage, action, reason; never the text).
  *
- * Text already streamed through `text_delta` before `afterModel` runs is not redacted: consume `model_response` or the
- * run result when output must be clean.
+ * With an `output` guard the middleware sets `holdsText`: `text_delta` carries the checked text once, after the answer
+ * is complete, instead of streaming the raw tokens (no streamed text bypasses the guard; streaming latency is lost).
  */
 export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = {}): Middleware {
   const failOpen = opts.onError === 'allow';
@@ -70,6 +70,7 @@ export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = 
 
   return {
     name: opts.name ?? 'guardrails',
+    holdsText: guards.some((g) => (g.stages ?? GUARD_STAGES).includes('output')),
 
     async beforeModel(req, ctx) {
       let changed = false;

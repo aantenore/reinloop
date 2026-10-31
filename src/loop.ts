@@ -82,6 +82,8 @@ async function drive(
   const specs: ToolSpec[] = agent.tools.map((t) => ({ name: t.name, description: t.description, schema: t.schema, ...(t.hosted && { hosted: t.hosted }) }));
   let offered: ToolSpec[] | undefined; // tool specs after the hosted-tool policy check, done once per run
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
+  // Middleware that rewrites or blocks answer text: stream it only once every afterModel has run.
+  const holdText = (agent.middleware ?? []).some((mw) => mw.holdsText);
 
   const storeFailure = new AbortController();
   signal = AbortSignal.any([signal, storeFailure.signal]);
@@ -201,10 +203,14 @@ async function drive(
       const t0 = performance.now();
       let res = await agent.model.provider.generate(req, {
         signal,
-        onText: (text) => emit('text_delta', { text }),
+        onText: holdText ? undefined : (text) => emit('text_delta', { text }),
         onThinking: (text) => emit('thinking_delta', { text }),
       });
       for (const mw of agent.middleware ?? []) res = (await mw.afterModel?.(res, hookCtx)) ?? res;
+      if (holdText) {
+        const text = textOf(res.message);
+        if (text) emit('text_delta', { text });
+      }
       for (const part of res.message.parts) if (part.type === 'tool_call' && !part.id) part.id = `call_${newId().slice(0, 12)}`;
       lastStop = res.stopReason;
       // Opt-in: one repeat with a higher limit after a max_tokens stop that produced no tool calls.
