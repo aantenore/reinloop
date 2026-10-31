@@ -91,3 +91,9 @@ export { regexGuard, REGEX_PATTERNS, luhn, ibanValid, type RegexGuardOptions, ty
 export { registerGuardrails } from './guardrails/register.ts';
 export { checkGuard, type GuardCheckOptions } from './conformance/guardrails.ts';
 export type { GuardrailsConfig } from './config/load.ts';
+
+export { evaluate, summarize, type EvaluateOptions } from './eval/evaluate.ts';
+export { expectedEvaluator, judgeEvaluator, layerSignals, scoreLayers, JUDGE_SCHEMA, type ExpectedOptions, type JudgeOptions, type JudgeRunner, type SignalEvent } from './eval/evaluators.ts';
+export { replayRuns, withOverrides, inputSegments, type ReplayOptions, type ReplayOverrides, type ReplayRow } from './eval/replay.ts';
+export { LAYERS, parseDataset, toJsonl, caseProblems, scoreProblems, type EvalResult } from './eval/contract.ts';
+export { checkEvaluator, type EvalFixture, type EvaluatorCheckOptions } from './conformance/eval.ts';
