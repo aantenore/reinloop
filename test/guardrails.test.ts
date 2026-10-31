@@ -43,6 +43,21 @@ describe('guardMiddleware', () => {
     assert.match(JSON.stringify(agent.provider.requests[1]!.messages), /<EMAIL>/);
   });
 
+  it('input redaction is what is persisted and returned: the raw input is never recorded', async () => {
+    const store = memoryStore();
+    const g = spy('pii', (i) => (i.text.includes(EMAIL) ? { action: 'redact', text: i.text.replace(EMAIL, '<EMAIL>') } : allow), ['input']);
+    const agent = makeAgent([{ text: 'noted' }, { text: 'again' }], { middleware: [guardMiddleware([g])] });
+    const res = await run(agent, `mail me at ${EMAIL}`, { store });
+    const persisted = JSON.stringify(await store.load(res.runId));
+    assert.equal(persisted.includes(EMAIL), false);
+    assert.match(persisted, /mail me at <EMAIL>/);
+    assert.equal(JSON.stringify(res.messages).includes(EMAIL), false);
+    // A continued session loads the stored history, which is already redacted.
+    const next = await run(agent, `and ${EMAIL} too`, { store, runId: res.runId });
+    assert.equal(JSON.stringify(await store.load(next.runId)).includes(EMAIL), false);
+    assert.equal(JSON.stringify(agent.provider.requests).includes(EMAIL), false);
+  });
+
   it('input block stops the run before the model is called, with the guardrail reason', async () => {
     const g = spy('inj', () => ({ action: 'block', reason: 'PromptInjection' }));
     const sink = collectSink();

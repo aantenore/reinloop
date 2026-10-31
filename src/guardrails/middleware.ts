@@ -16,7 +16,8 @@ type Outcome = { text: string; changed: boolean } | { block: { guard: string; re
 
 /**
  * Runs guards at the four checkpoints of a run:
- * - `input`: new user text before each model call (`beforeModel`); redaction changes what the model sees.
+ * - `input`: new user text before it is recorded (`beforeInput`; `beforeModel` for older history); redaction changes
+ *   what is persisted and what the model sees.
  * - `output`: assistant text after each model call (`afterModel`); redaction changes what is persisted and returned.
  * - `tool_args`: the JSON of a call's arguments (`beforeTool`); block denies the call.
  * - `tool_result`: a tool's result (`afterTool`); block replaces it with an error for the model.
@@ -29,8 +30,8 @@ type Outcome = { text: string; changed: boolean } | { block: { guard: string; re
  */
 export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = {}): Middleware {
   const failOpen = opts.onError === 'allow';
-  // What the model sees for each user message already checked: history is rebuilt from the original messages every turn.
-  const checked = new WeakMap<Message, Message>();
+  // Each user message checked so far -> what the model sees (or the block); redacted messages map to themselves.
+  const checked = new WeakMap<Message, Message | { blocked: string }>();
 
   async function scan(ctx: HookContext, stage: GuardStage, original: string, tool?: string): Promise<Outcome> {
     let text = original;
@@ -53,13 +54,13 @@ export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = 
     return { text, changed: text !== original };
   }
 
-  /** Applies `scan` to every text part; a block ends the run. */
-  async function scanParts(ctx: HookContext, stage: 'input' | 'output', parts: Part[]): Promise<Part[] | undefined> {
+  /** Applies `scan` to every text part; the first block is returned instead of the parts. */
+  async function scanParts(ctx: HookContext, stage: 'input' | 'output', parts: Part[]): Promise<Part[] | undefined | { blocked: string }> {
     let out: Part[] | undefined;
     for (const [i, part] of parts.entries()) {
       if (part.type !== 'text') continue;
       const res = await scan(ctx, stage, part.text);
-      if ('block' in res) throw new RunStop(`guardrail:${res.block.guard}:${stage}`, '');
+      if ('block' in res) return { blocked: `guardrail:${res.block.guard}:${stage}` };
       if (!res.changed) continue;
       out ??= [...parts];
       const { citations: _stale, ...rest } = part; // offsets no longer match the rewritten text
@@ -68,20 +69,38 @@ export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = 
     return out;
   }
 
+  /** The user message as the model may see it, or the block reason; checked once per message object. */
+  async function checkInput(ctx: HookContext, message: Message): Promise<Message | { blocked: string }> {
+    let seen = checked.get(message);
+    if (!seen) {
+      const parts = await scanParts(ctx, 'input', message.parts);
+      seen = parts && 'blocked' in parts ? parts : parts ? { ...message, parts } : message;
+      checked.set(message, seen);
+      if (!('blocked' in seen)) checked.set(seen, seen);
+    }
+    return seen;
+  }
+
   return {
     name: opts.name ?? 'guardrails',
     holdsText: guards.some((g) => (g.stages ?? GUARD_STAGES).includes('output')),
 
+    // Redacted input is what gets persisted: the raw text is never recorded. A blocked input is recorded as received
+    // (the audit trail of what was refused) and the run stops before the model call.
+    async beforeInput(message, ctx) {
+      if (message.role !== 'user') return undefined;
+      const seen = await checkInput(ctx, message);
+      return 'blocked' in seen || seen === message ? undefined : seen;
+    },
+
+    // Fallback for user messages that did not pass `beforeInput` (history recorded before the guard was added, or
+    // loaded from the store on resume): checked here, in the request only.
     async beforeModel(req, ctx) {
       let changed = false;
       const messages: Message[] = [];
       for (const message of req.messages) {
-        let seen = message.role === 'user' ? checked.get(message) : message;
-        if (!seen) {
-          const parts = await scanParts(ctx, 'input', message.parts);
-          seen = parts ? { ...message, parts } : message;
-          checked.set(message, seen);
-        }
+        const seen = message.role === 'user' ? await checkInput(ctx, message) : message;
+        if ('blocked' in seen) throw new RunStop(seen.blocked, '');
         changed ||= seen !== message;
         messages.push(seen);
       }
@@ -90,6 +109,7 @@ export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = 
 
     async afterModel(res, ctx) {
       const parts = await scanParts(ctx, 'output', res.message.parts);
+      if (parts && 'blocked' in parts) throw new RunStop(parts.blocked, '');
       return parts ? { ...res, message: { ...res.message, parts } } : undefined;
     },
 

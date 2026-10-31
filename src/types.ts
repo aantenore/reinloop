@@ -283,6 +283,11 @@ export interface Middleware {
    * streamed. Trade-off: no incremental streaming; the text arrives together with the complete answer.
    */
   holdsText?: boolean;
+  /**
+   * New input messages of a run, before they are recorded: the returned message is what is persisted and what the model
+   * sees (e.g. redacted input). Throwing ends the run like any middleware error (`RunStop`: status `stopped`).
+   */
+  beforeInput?(message: Message, ctx: HookContext): Message | void | Promise<Message | void>;
   beforeModel?(req: ModelRequest, ctx: HookContext): ModelRequest | void | Promise<ModelRequest | void>;
   afterModel?(res: ModelResponse, ctx: HookContext): ModelResponse | void | Promise<ModelResponse | void>;
   beforeTool?(call: ToolCallPart, ctx: HookContext): ToolCallPart | { deny: string } | void | Promise<ToolCallPart | { deny: string } | void>;

@@ -102,9 +102,12 @@ async function drive(
     agent: agent.name, resumed: prior.length > 0, parentRunId: opts.parentRunId,
     ...(opts.identity && { subject: opts.identity.subject, identityKind: opts.identity.kind }),
   });
-  for (const message of normalizeInput(input)) emit('message', { message, source: 'input' });
 
   try {
+    for (let message of normalizeInput(input)) {
+      for (const mw of agent.middleware ?? []) message = (await mw.beforeInput?.(message, hookCtx)) ?? message;
+      emit('message', { message, source: 'input' });
+    }
     while (!end) {
       signal.throwIfAborted();
 
