@@ -1,10 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import type { Env } from '../config/load.ts';
 import type { JsonSchema, Risk, Tool } from '../types.ts';
-import { globToRegExp, truncate } from '../util.ts';
 import { safeToolName } from './define.ts';
 import { type HttpMethod, httpTool, type HttpToolAuth } from './http.ts';
+
+type Env = Record<string, string | undefined>;
+
+const truncate = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max)}…`);
+const globToRegExp = (glob: string) => new RegExp(`^${glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
 
 export type OpenApiDocument = { openapi?: string; [key: string]: any };
 

@@ -1,7 +1,8 @@
-import { type Env, interpolate } from '../config/load.ts';
+import { interpolate } from '../config/load.ts';
 import type { JsonSchema, Risk, Tool, ToolOutput } from '../types.ts';
-import { errorMessage, truncate } from '../util.ts';
 import { defineTool } from './define.ts';
+
+type Env = Record<string, string | undefined>;
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
 
@@ -42,6 +43,8 @@ export interface HttpToolOptions {
   env?: Env;
 }
 
+const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+const truncate = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max)}…`);
 const error = (content: string): ToolOutput => ({ content, isError: true });
 
 function plain(value: unknown): string {
