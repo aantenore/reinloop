@@ -1,9 +1,10 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { McpClient, type McpServerConfig } from '../mcp/client.ts';
-import { type Note, rank } from '../tools/memory.ts';
 import type { KnowledgeQuery, KnowledgeSource, Passage } from '../types.ts';
+import { rank } from './rank.ts';
 import { DEFAULT_K, DEFAULT_TIMEOUT_MS, hashId, matchesFilter, toPassage } from './core.ts';
+
+// Adapters depend only on the contract types and Node built-ins, so they can be lifted out of the runtime as they are.
 
 export interface ClosableSource extends KnowledgeSource { close(): Promise<void> }
 
@@ -20,8 +21,8 @@ export interface McpKnowledgeOptions {
   name?: string;
   /** An already connected client (not closed by this source)... */
   client?: McpCaller;
-  /** ...or a server to connect to on first use (stdio `command` or HTTP `url`); `close()` ends it. */
-  server?: McpServerConfig;
+  /** ...or a function that connects on first use (e.g. `() => McpClient.connect(name, config)`); `close()` ends that client. */
+  connect?: () => Promise<McpCaller>;
   /** MCP tool that retrieves passages, e.g. `qdrant-find`. */
   tool: string;
   /** Tool arguments for a query (default `{ query }`). */
@@ -79,12 +80,12 @@ export function parseMcpResult(result: { content: string; isError: boolean }, so
 
 /** Retrieval through an MCP tool (standard: MCP tools). The default parser covers mcp-server-qdrant. */
 export function mcpKnowledge(opts: McpKnowledgeOptions): ClosableSource {
-  if (!opts.client === !opts.server) throw new Error('mcpKnowledge: set exactly one of "client" or "server"');
+  if (!opts.client === !opts.connect) throw new Error('mcpKnowledge: set exactly one of "client" or "connect"');
   const name = opts.name ?? opts.tool;
   let connecting: Promise<McpCaller> | undefined;
   const caller = (): Promise<McpCaller> => {
     if (opts.client) return Promise.resolve(opts.client);
-    connecting ??= McpClient.connect(name, opts.server!);
+    connecting ??= opts.connect!();
     connecting.catch(() => (connecting = undefined)); // retry the connection on the next query
     return connecting;
   };
@@ -98,7 +99,7 @@ export function mcpKnowledge(opts: McpKnowledgeOptions): ClosableSource {
       return passages.filter((p) => matchesFilter(p.metadata, q.filter)).slice(0, q.k ?? passages.length);
     },
     async close() {
-      if (!opts.server || !connecting) return;
+      if (!opts.connect || !connecting) return;
       const pending = connecting;
       connecting = undefined;
       await (await pending.catch(() => undefined))?.close?.();
@@ -217,7 +218,7 @@ export function wikiKnowledge(opts: WikiKnowledgeOptions): KnowledgeSource {
         passages.push(...splitMarkdown(await readFile(file, 'utf8'), rel, opts.maxPassageChars));
       }
       const pool = passages.filter((p) => matchesFilter(p.metadata, q.filter));
-      const notes = new Map<Note, Passage>(pool.map((p) => [{ text: p.text, tags: [p.id], agent: name, ts: 0 }, p]));
+      const notes = new Map<{ text: string; tags: string[] }, Passage>(pool.map((p) => [{ text: p.text, tags: [p.id] }, p]));
       return rank([...notes.keys()], q.query, q.k ?? DEFAULT_K).map((n) => notes.get(n)!);
     },
   };

@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import type { McpServerConfig } from '../mcp/client.ts';
+import { McpClient, type McpServerConfig } from '../mcp/client.ts';
 import type { FactoryContext } from '../registry.ts';
 import type { KnowledgeSource } from '../types.ts';
 import { interpolate } from '../config/load.ts';
@@ -29,6 +29,8 @@ export interface KnowledgeSourceConfig {
   dir?: string;
   maxPassageChars?: number;
 }
+
+// Runtime wiring: turns `config.knowledge` into sources. The adapters themselves do not know about the runtime.
 
 /** Settings of the `knowledge` middleware (auto-retrieval) and the `search_knowledge` tool. */
 export interface KnowledgeConfig {
@@ -61,7 +63,7 @@ function build(name: string, s: KnowledgeSourceConfig, ctx: FactoryContext, path
         server = { command, args, env, cwd, url, headers, timeoutMs };
       }
       const queryArg = s.queryArg ?? 'query';
-      const source = mcpKnowledge({ name, server, tool: s.tool, args: (q) => ({ ...s.toolArgs, [queryArg]: q.query }) });
+      const source = mcpKnowledge({ name, connect: () => McpClient.connect(name, server), tool: s.tool, args: (q) => ({ ...s.toolArgs, [queryArg]: q.query }) });
       ctx.onClose(() => source.close());
       return source;
     }

@@ -26,17 +26,24 @@ there; `identity.token` is never logged by reinloop.
 
 | Adapter | Reaches | Notes |
 |---|---|---|
-| `mcpKnowledge({ client \| server, tool, args?, parse? })` | any MCP tool that returns text | Default `args`: `{ query }`. Default parser: JSON array or `{ passages \| results \| ... }`, the `<entry>` output of mcp-server-qdrant (`metadata.id` becomes the passage id), else the text as one passage. `server` connects on first use; call `close()` when done. |
+| `mcpKnowledge({ client \| connect, tool, args?, parse? })` | any MCP tool that returns text | Default `args`: `{ query }`. Default parser: JSON array or `{ passages \| results \| ... }`, the `<entry>` output of mcp-server-qdrant (`metadata.id` becomes the passage id), else the text as one passage. `connect` (e.g. `() => McpClient.connect(name, config)`) is called on first use; `close()` closes that client. |
 | `httpKnowledge({ url, headers? })` | `POST url` with `{ query, k, filter }` returning `{ passages }` | `headers` may be a function of the query, e.g. `(q) => ({ authorization: 'Bearer ' + q.identity?.token })`. Identity is never forwarded unless you do it. |
 | `wikiKnowledge({ dir })` | a folder of Markdown pages | Split by heading, ranked by keyword overlap (the same ranking as `recall`). Passage ids are `path.md#heading-slug`. Files are read per search; use a vector source for large corpora. |
 | your object | anything | Implement `KnowledgeSource` and run `checkKnowledgeSource`. |
 
 ```ts
 const sources = [
-  mcpKnowledge({ name: 'docs', server: { command: 'uvx', args: ['--python', '3.12', 'mcp-server-qdrant'], env: { QDRANT_URL: '...', COLLECTION_NAME: 'docs' } }, tool: 'qdrant-find' }),
+  mcpKnowledge({
+    name: 'docs', tool: 'qdrant-find',
+    connect: () => McpClient.connect('qdrant', { command: 'uvx', args: ['--python', '3.12', 'mcp-server-qdrant'], env: { QDRANT_URL: '...', COLLECTION_NAME: 'docs' } }),
+  }),
   wikiKnowledge({ name: 'wiki', dir: './wiki' }),
 ];
 ```
+
+The adapters (`src/knowledge/adapters.ts`, `core.ts`, `rank.ts`) depend only on the contract types and Node built-ins;
+the middleware, tool, registry entries and config loading are separate small files, so the adapters can be reused
+outside this runtime.
 
 ## Using sources
 

@@ -70,7 +70,7 @@ describe('mcpKnowledge', () => {
     await assert.rejects(mcpKnowledge({ client, tool: 'boom' }).search({ query: 'q' }), /boom failed: nope/);
   });
 
-  it('requires exactly one of client and server', () => {
+  it('requires exactly one of client and connect', () => {
     assert.throws(() => mcpKnowledge({ tool: 't' }), /exactly one/);
   });
 });

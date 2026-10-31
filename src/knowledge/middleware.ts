@@ -1,7 +1,6 @@
 import { defineTool } from '../tools/define.ts';
 import type { KnowledgeSource, Message, Middleware, Tool } from '../types.ts';
-import { truncate } from '../util.ts';
-import { DEFAULT_K, DEFAULT_TIMEOUT_MS, fitPassages, formatBlock, KNOWLEDGE_NOTE, mergePassages, retrieve } from './core.ts';
+import { DEFAULT_K, DEFAULT_TIMEOUT_MS, fitPassages, formatBlock, KNOWLEDGE_NOTE, mergePassages, retrieve, truncate } from './core.ts';
 
 export interface KnowledgeMiddlewareOptions {
   sources: KnowledgeSource[];
