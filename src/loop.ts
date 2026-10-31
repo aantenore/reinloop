@@ -6,7 +6,7 @@ import { RunStop } from './stop.ts';
 import { memoryStore } from './store/memory.ts';
 import { executeToolCalls } from './tools/executor.ts';
 import type {
-  Agent, Budget, EventMap, EventType, HookContext, Message, ModelRequest, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
+  Agent, Budget, EventMap, EventType, HookContext, Message, ModelRequest, ModelResponse, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
   RunStore, ToolSpec, Usage,
 } from './types.ts';
 import { addUsage, errorMessage, estimateTokens, hasVisibleParts, newId, textOf, toolCallsOf, userMessage } from './util.ts';
@@ -216,7 +216,7 @@ async function drive(
         // is neither persisted nor kept in the history.
         emit('model_response', {
           turn, model: res.model ?? req.model, message: { role: 'assistant', parts: [] }, usage: res.usage, stopReason: res.stopReason,
-          latencyMs: Math.round(performance.now() - t0), costUsd: res.cached ? 0 : costOf(agent.model.pricing, res.usage), discarded: true,
+          latencyMs: Math.round(performance.now() - t0), costUsd: responseCost(agent, res), discarded: true,
         });
         throw err;
       }
@@ -237,7 +237,7 @@ async function drive(
         usage: res.usage,
         stopReason: res.stopReason,
         latencyMs: Math.round(performance.now() - t0),
-        costUsd: res.cached ? 0 : costOf(agent.model.pricing, res.usage),
+        costUsd: responseCost(agent, res),
         ...(discarded && { discarded: true }),
       });
       for (const part of res.message.parts) {
@@ -323,6 +323,12 @@ export function contextTokens(state: RunState, agent: Agent, specs: ToolSpec[]):
     return state.lastUsage.inputTokens + state.lastUsage.outputTokens + estimateTokens(state.messages.slice(state.lastUsageAt));
   }
   return estimateTokens(agent.instructions ?? '') + estimateTokens(specs) + estimateTokens(state.messages);
+}
+
+/** Cost of one model response: zero when cached; priced with the serving model's pricing when the response names one. */
+export function responseCost(agent: Agent, res: ModelResponse): number {
+  if (res.cached) return 0;
+  return costOf('pricing' in res ? res.pricing : agent.model.pricing, res.usage);
 }
 
 export function costOf(pricing: Pricing | undefined, usage: Usage): number {

@@ -43,6 +43,24 @@ describe('ruleRouter', () => {
 });
 
 describe('routedModel', () => {
+  it('prices each response with the selected model, not the agent model', async () => {
+    const base = mockProvider([{ text: 'cheap', usage: { inputTokens: 1000, outputTokens: 1000 } }], { name: 'base' });
+    const other = mockProvider([{ text: 'pricey', usage: { inputTokens: 1000, outputTokens: 1000 } }], { name: 'other' });
+    const refs = { 'other/big': { provider: other, model: 'big', pricing: { inputPerMTok: 10, outputPerMTok: 30 } } };
+    let pick = 'other/big';
+    const agent = withRouter(
+      { name: 'a', model: { provider: base, model: 'small', pricing: { inputPerMTok: 1, outputPerMTok: 2 } }, tools: [], middleware: [] },
+      { router: { select: () => pick }, resolve: (spec) => refs[spec as keyof typeof refs] },
+    );
+    const routed = await run(agent, 'hi');
+    assert.equal(routed.output, 'pricey');
+    assert.ok(Math.abs(routed.costUsd - 0.04) < 1e-12, `selected model pricing: ${routed.costUsd}`);
+    pick = 'small';
+    const stayed = await run(agent, 'hi');
+    assert.equal(stayed.output, 'cheap');
+    assert.ok(Math.abs(stayed.costUsd - 0.003) < 1e-12, `agent model pricing: ${stayed.costUsd}`);
+  });
+
   it('routes across providers and shows the choice in the events', async () => {
     const base = mockProvider([{ text: 'from base' }], { name: 'base' });
     const other = mockProvider([{ text: 'from other' }], { name: 'other' });

@@ -72,10 +72,10 @@ agent file accepts `router:` in its frontmatter.
 
 ### Observability
 
-The selected spec is the `model` of the `model_request` and `model_response` events of that turn.
+The selected spec is the `model` of the `model_request` and `model_response` events of that turn. Its `costUsd` uses
+the selected model's pricing (`ModelResponse.pricing`); a selected model without known pricing costs zero.
 
 ### Limits
 
-- Cost is computed from the pricing of the agent's own model, whichever model the router picked.
 - Params set on the agent apply to every routed model unless the selected model's `models` entry defines its own.
 - The `models.<name>.fallback` chains of a selected model apply as usual.

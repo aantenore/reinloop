@@ -1,6 +1,6 @@
 export type * from './types.ts';
 
-export { run, stream, createHandle, createEmitter, contextTokens, costOf, OUTPUT_FEEDBACK, type RunHandle } from './loop.ts';
+export { run, stream, createHandle, createEmitter, contextTokens, costOf, responseCost, OUTPUT_FEEDBACK, type RunHandle } from './loop.ts';
 export { reduce, replay, pendingToolCalls, initialState, EPHEMERAL } from './state.ts';
 export { decide, matchesCondition, mergePolicies, exceededBudget, DEFAULT_RISK_DECISIONS } from './policy.ts';
 export { oidcVerifier, defaultKind, rolesOf, scopesOf, DEFAULT_ALGORITHMS, type OidcVerifierOptions } from './identity/verifier.ts';

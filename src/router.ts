@@ -10,7 +10,8 @@ export interface RoutedModelOptions {
 /**
  * Routes each request to the model the router selects, across providers. Returns the model reference to put on the
  * agent and the middleware that asks the router; both are needed. The selected spec shows up as `model` in the
- * `model_request` and `model_response` events. Costs are computed from the agent's own model pricing.
+ * `model_request` and `model_response` events. Each response is priced with the selected model's pricing (a selected
+ * model without pricing costs zero); requests that stay on the agent's model use the agent's pricing.
  */
 export function routedModel(base: ModelRef, opts: RoutedModelOptions): { model: ModelRef; middleware: Middleware } {
   const resolve = opts.resolve ?? ((spec: string) => resolveModel(spec));
@@ -30,7 +31,7 @@ export function routedModel(base: ModelRef, opts: RoutedModelOptions): { model: 
       if (req.model === base.model) return base.provider.generate(req, ctx);
       const ref = await target(req.model);
       const res = await ref.provider.generate({ ...req, model: ref.model, params: ref.params ?? req.params }, ctx);
-      return { ...res, model: req.model };
+      return { ...res, model: req.model, pricing: ref.pricing };
     },
   };
   const middleware: Middleware = {

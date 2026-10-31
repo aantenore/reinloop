@@ -124,6 +124,11 @@ export interface ModelResponse {
   model?: string;
   /** Served from a response cache: tokens are reported, cost is zero. */
   cached?: boolean;
+  /**
+   * Pricing of the model that actually served the request, when that is not the agent's model (set by routing
+   * providers). When the key is present it replaces `agent.model.pricing` for this response; `undefined` means unpriced.
+   */
+  pricing?: Pricing;
 }
 
 export interface GenerateContext {
