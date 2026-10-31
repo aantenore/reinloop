@@ -34,6 +34,17 @@ describe('parseMcpResult', () => {
     assert.match(out[1]!.id, /^[0-9a-f]{12}$/);
   });
 
+  it('parses the JSON-array-of-strings form of mcp-server-qdrant 0.8', () => {
+    const content = JSON.stringify([
+      "Results for the query 'x'",
+      '<entry><content>Rotation\nevery 13 days</content><metadata>{"id": "v.md#rotation", "path": "v.md"}</metadata></entry>',
+      '<entry><content>Other</content><metadata>{"id": "v.md#other"}</metadata></entry>',
+    ]);
+    const out = parseMcpResult({ content, isError: false }, 'qd');
+    assert.deepEqual(out.map((x) => x.id), ['v.md#rotation', 'v.md#other']);
+    assert.equal(out[0]!.text, 'Rotation\nevery 13 days');
+  });
+
   it('parses JSON arrays and wrapped objects, and plain text', () => {
     const arr = parseMcpResult({ content: JSON.stringify([{ id: 1, text: 'a', score: 0.5, extra: 'dropped' }, 'b']), isError: false }, 's');
     assert.deepEqual(arr.map((x) => [x.id, x.text, x.score]), [['1', 'a', 0.5], [arr[1]!.id, 'b', undefined]]);

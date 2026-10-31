@@ -49,12 +49,17 @@ function fromJson(value: unknown, source: string): Passage[] | undefined {
  * when present, becomes the passage id), and otherwise treats the text as one passage.
  */
 export function parseMcpResult(result: { content: string; isError: boolean }, source: string): Passage[] {
-  const text = result.content.trim();
+  let text = result.content.trim();
   if (!text) return [];
   if (text[0] === '[' || text[0] === '{') {
     try {
-      const found = fromJson(JSON.parse(text), source);
-      if (found) return found;
+      const json: unknown = JSON.parse(text);
+      // mcp-server-qdrant 0.8 returns its formatted entries as one JSON array of strings.
+      if (Array.isArray(json) && json.every((x) => typeof x === 'string') && json.some((x) => x.includes('<entry>'))) text = json.join('\n');
+      else {
+        const found = fromJson(json, source);
+        if (found) return found;
+      }
     } catch {
       // not JSON: fall through
     }
