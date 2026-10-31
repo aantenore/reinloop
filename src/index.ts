@@ -59,3 +59,9 @@ export type { TeamConfig, RoleBinding, HostedToolConfig, WebConfig, SignalsConfi
 export { discoverSkills, selectSkills, skillTool, DEFAULT_SKILL_DIRS, type Skill } from './skills.ts';
 export { otlpSink, type OtlpOptions } from './observe/otlp.ts';
 export { INTEGRATIONS, addIntegration, type Integration } from './integrations.ts';
+
+export { evaluate, summarize, type EvaluateOptions } from './eval/evaluate.ts';
+export { expectedEvaluator, judgeEvaluator, layerSignals, scoreLayers, JUDGE_SCHEMA, type ExpectedOptions, type JudgeOptions, type JudgeRunner, type SignalEvent } from './eval/evaluators.ts';
+export { replayRuns, withOverrides, inputSegments, type ReplayOptions, type ReplayOverrides, type ReplayRow } from './eval/replay.ts';
+export { LAYERS, parseDataset, toJsonl, caseProblems, scoreProblems, type EvalResult } from './eval/contract.ts';
+export { checkEvaluator, type EvalFixture, type EvaluatorCheckOptions } from './conformance/eval.ts';
