@@ -1,7 +1,7 @@
 import type { GenerateContext, ModelRequest, ModelResponse, Part, Provider, StopReason, Usage } from '../types.ts';
 import { ProviderError, textOf } from '../util.ts';
 import { limitDefault } from '../limits.ts';
-import { type FetchLike, parseArgs, postJson, readSse } from './http.ts';
+import { type Deadline, type FetchLike, parseArgs, postJson, readSse, requestTimeoutMs, withDeadline } from './http.ts';
 
 export interface OpenAICompatibleOptions {
   name?: string;
@@ -20,6 +20,12 @@ export interface OpenAICompatibleOptions {
   errorBodyChars?: number;
   /** Response JSON kept when a response has an unexpected shape (default 300). */
   responseExcerptChars?: number;
+  /**
+   * Time limit of one request in ms (default 600000; Infinity: none). Non-streamed: the whole request, body included.
+   * Streamed: time to the first chunk, then the longest silence between two chunks. Expiry rejects with a
+   * `TimeoutError` (HTTP 408, so `withRetry` retries it unless `retryOn` leaves 408 out).
+   */
+  timeoutMs?: number;
   fetch?: FetchLike;
 }
 
@@ -51,8 +57,10 @@ export function openaiCompatible(opts: OpenAICompatibleOptions = {}): Provider {
         ...p.extra,
       };
       const headers = { ...(opts.apiKey && { authorization: `Bearer ${opts.apiKey}` }), ...opts.headers };
-      const res = await postJson(fetchImpl, `${baseUrl}/chat/completions`, headers, body, ctx.signal, opts.errorBodyChars);
-      return stream ? readStream(res, ctx) : fromCompletion(await res.json(), opts.responseExcerptChars);
+      return withDeadline(requestTimeoutMs(opts.timeoutMs), ctx.signal, async (dl) => {
+        const res = await postJson(fetchImpl, `${baseUrl}/chat/completions`, headers, body, dl.signal, opts.errorBodyChars);
+        return stream ? readStream(res, ctx, dl) : fromCompletion(await res.json(), opts.responseExcerptChars);
+      });
     },
   };
 }
@@ -110,14 +118,14 @@ export function fromCompletion(json: any, excerptChars: number = limitDefault('p
   };
 }
 
-async function readStream(res: Response, ctx: GenerateContext): Promise<ModelResponse> {
+async function readStream(res: Response, ctx: GenerateContext, dl: Deadline): Promise<ModelResponse> {
   let text = '';
   let finish: string | undefined;
   let usage: any;
   let model: string | undefined;
   const calls: Array<{ id: string; name: string; args: string }> = [];
   let complete = false;
-  for await (const ev of readSse(res)) {
+  for await (const ev of readSse(res, dl.touch)) {
     if (ev.data === '[DONE]') {
       complete = true;
       break;

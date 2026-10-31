@@ -45,6 +45,20 @@ describe('limits', () => {
     }), []);
   });
 
+  it('accepts "unbounded" request timeouts for built-in providers and OTLP sinks, warns on them, and rejects 0', () => {
+    const config = {
+      providers: { p: { type: 'openai-compatible', timeoutMs: 'unbounded' as never }, q: { type: 'anthropic', timeoutMs: 500 } },
+      sinks: [{ type: 'otlp', exportTimeoutMs: 'unbounded' as never }],
+    };
+    assert.deepEqual(checkConfig(config), []);
+    assert.equal(limitWarnings(config, {}).length, 3);
+    assert.deepEqual(limitWarnings({ providers: { p: { type: 'anthropic', timeoutMs: 600_000 } }, sinks: [{ type: 'otlp', exportTimeoutMs: 10_000 }] }, {}), []);
+    assert.deepEqual(checkConfig({ providers: { p: { type: 'anthropic', timeoutMs: 0 } }, sinks: [{ type: 'otlp', exportTimeoutMs: 0 }] }).sort(), [
+      '$.providers.p.timeoutMs: must be within 1–∞ or "unbounded"',
+      '$.sinks[0].exportTimeoutMs: must be within 1–∞ or "unbounded"',
+    ]);
+  });
+
   it('turns placeholders and "unbounded" into numbers when the component is built', () => {
     assert.deepEqual(interpolate({ timeoutMs: '${env:T}', workspace: '${env:T}' }, { T: '2500' }, '$.tools'), { timeoutMs: 2500, workspace: '2500' });
     assert.equal(interpolate('unbounded', {}, '$.tools.maxResultChars'), Number.POSITIVE_INFINITY);
@@ -132,6 +146,8 @@ describe('limits', () => {
     assert.equal(limitDefault('serve.maxBodyBytes'), 1_000_000);
     assert.equal(limitDefault('limits.maxTurns'), 50);
     assert.equal(limitDefault('provider.retry.maxAttempts'), 3);
+    assert.equal(limitDefault('provider.timeoutMs'), 600_000);
+    assert.equal(limitDefault('otlp.exportTimeoutMs'), 10_000);
   });
 
   it('keeps every default inside its accepted and safe ranges', () => {

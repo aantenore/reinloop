@@ -6,6 +6,7 @@ import { GUARD_LIMITS } from './guardrails/contract.ts';
 import { IDENTITY_LIMITS } from './identity/http.ts';
 import { KNOWLEDGE_LIMITS } from './knowledge/core.ts';
 import { TELEMETRY_LIMITS } from './observe/metrics.ts';
+import { PROVIDER_TIMEOUT_LIMITS } from './providers/limits.ts';
 import { REDACT_LIMITS } from './tools/redact.ts';
 import type { JsonSchema, LimitSpec } from './types.ts';
 
@@ -269,6 +270,7 @@ export const LIMITS = {
   ...MCP_LIMITS,
   ...HTTP_TOOL_LIMITS,
   ...PROVIDER_LIMITS,
+  ...PROVIDER_TIMEOUT_LIMITS,
   ...AGENT_LIMITS,
   ...IDENTITY_LIMITS,
   ...GUARD_LIMITS,

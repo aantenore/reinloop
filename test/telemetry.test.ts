@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
-import { mockProvider, otlpMetricsSink, otlpSink, run, type RunEvent } from '../src/index.ts';
+import { createRuntime, mockProvider, otlpMetricsSink, otlpSink, run, type RunEvent } from '../src/index.ts';
 
 async function receiver() {
   const got: Array<{ url: string; body: any }> = [];
@@ -190,6 +190,84 @@ describe('otlp export failures and endpoints', () => {
       assert.throws(() => make({ endpoint: 'https://user:pw@collector.example' }), /must not carry credentials/);
       assert.throws(() => make({ endpoint: 'https://user@collector.example/v1/traces' }), /must not carry credentials/);
       assert.throws(() => make({ endpoint: 'collector' }), /not a valid http\(s\) URL/);
+    }
+  });
+});
+
+describe('otlp export timeout', () => {
+  // A collector that never answers; the request ends only when its signal aborts, as with the platform fetch.
+  const hanging = (seen: Array<AbortSignal | undefined> = []) => (_url: string, init: RequestInit) =>
+    new Promise<Response>((_, reject) => {
+      seen.push(init.signal ?? undefined);
+      init.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+    });
+  const answering = (seen: Array<AbortSignal | undefined>) => async (_url: string, init: RequestInit) => (seen.push(init.signal ?? undefined), new Response('{}'));
+
+  async function warningsOf(work: () => Promise<void>): Promise<string[]> {
+    const warnings: string[] = [];
+    const onWarning = (w: Error) => { warnings.push(w.message); };
+    process.on('warning', onWarning);
+    const keepAlive = setInterval(() => {}, 1000); // AbortSignal.timeout does not hold the process open
+    try {
+      await work();
+      await new Promise((r) => setImmediate(r));
+    } finally {
+      clearInterval(keepAlive);
+      process.off('warning', onWarning);
+    }
+    return warnings;
+  }
+
+  it('abandons a hung export without raising into the run or the close', async () => {
+    const warnings = await warningsOf(async () => {
+      const traces = otlpSink({ endpoint: 'https://collector.example:4318', fetch: hanging(), exportTimeoutMs: 30, intervalMs: 60_000 });
+      const result = await run(agent(), 'go', { sinks: [traces] });
+      assert.equal(result.status, 'completed');
+      await traces.close!();
+      const metrics = otlpMetricsSink({ endpoint: 'https://collector.example:4318', fetch: hanging(), exportTimeoutMs: 30, intervalMs: 60_000 });
+      assert.equal((await run(agent(), 'go', { sinks: [metrics] })).status, 'completed');
+      await metrics.close!();
+      // The metrics sink of otlpSink gets the same limit.
+      const both = otlpSink({ endpoint: 'https://collector.example:4318', fetch: hanging(), exportTimeoutMs: 30, intervalMs: 60_000, metrics: true });
+      await run(agent(), 'go', { sinks: [both] });
+      await both.close!();
+    });
+    assert.ok(warnings.includes('OTLP export to https://collector.example:4318 failed: timeout'));
+    assert.ok(warnings.includes('OTLP metrics export to https://collector.example:4318 failed: timeout'));
+  });
+
+  it('arms a timer by default and none when unbounded', async () => {
+    for (const [exportTimeoutMs, armed] of [[undefined, true], [10_000, true], [Number.POSITIVE_INFINITY, false]] as const) {
+      const seen: Array<AbortSignal | undefined> = [];
+      const traces = otlpSink({ endpoint: 'https://collector.example:4318', fetch: answering(seen), exportTimeoutMs, intervalMs: 60_000, metrics: true });
+      await run(agent(), 'go', { sinks: [traces] });
+      await traces.close!();
+      assert.equal(seen.length, 2, 'one traces and one metrics export');
+      assert.deepEqual(seen.map((x) => x !== undefined), [armed, armed], `exportTimeoutMs=${exportTimeoutMs}`);
+    }
+  });
+
+  it('flows from the config to the sink', async () => {
+    const server = createServer(() => {}); // accepts the request and never answers
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const warnings = await warningsOf(async () => {
+        const rt = await createRuntime(
+          {
+            providers: { mock: { type: 'mock', responses: [{ text: 'done' }] } },
+            sinks: [{ type: 'otlp', endpoint, intervalMs: 60_000, exportTimeoutMs: '${env:EXPORT_TIMEOUT}' as never }],
+            agents: { a: { model: 'mock/x' } },
+          },
+          { env: { EXPORT_TIMEOUT: '50' } },
+        );
+        assert.equal((await rt.run('a', 'go')).status, 'completed');
+        await rt.close();
+      });
+      assert.deepEqual(warnings, [`OTLP export to ${endpoint} failed: timeout`]);
+    } finally {
+      server.closeAllConnections();
+      server.close();
     }
   });
 });

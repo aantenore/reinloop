@@ -88,7 +88,7 @@ export function createRegistry(): Registry {
   r.stores.set('file', (o, ctx) => fileStore(resolve(ctx.baseDir, o.dir ?? '.reinloop/runs')));
 
   r.sinks.set('console', (o) => consoleSink({ level: o.level }));
-  r.sinks.set('otlp', (o) => otlpSink({ endpoint: o.endpoint ?? 'http://localhost:4318', headers: o.headers, serviceName: o.serviceName, captureContent: o.captureContent, intervalMs: o.intervalMs, metricsIntervalMs: o.metricsIntervalMs, metrics: o.metrics, eventLayers: o.eventLayers }));
+  r.sinks.set('otlp', (o) => otlpSink({ endpoint: o.endpoint ?? 'http://localhost:4318', headers: o.headers, serviceName: o.serviceName, captureContent: o.captureContent, intervalMs: o.intervalMs, metricsIntervalMs: o.metricsIntervalMs, exportTimeoutMs: o.exportTimeoutMs, metrics: o.metrics, eventLayers: o.eventLayers }));
   r.sinks.set('jsonl', (o, ctx) => jsonlSink(resolve(ctx.baseDir, o.dir ?? '.reinloop/traces'), { includeDeltas: o.includeDeltas }));
 
   r.compaction.set('window', (o) => windowCompaction(o));

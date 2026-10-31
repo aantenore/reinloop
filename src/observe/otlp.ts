@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { Layer, Sink } from '../types.ts';
 import { type OtelSpan, type OtelTracer, otelSink } from './otel.ts';
 import { otlpMetricsSink, TELEMETRY_LIMITS } from './metrics.ts';
-import { type Attrs, assertPlainEndpoint, ExportStatusError, exportFailure, nowNanos, toAttributes } from './otlp-json.ts';
+import { type Attrs, assertPlainEndpoint, ExportStatusError, exportFailure, exportSignal, nowNanos, toAttributes } from './otlp-json.ts';
 
 export interface OtlpOptions {
   /** Collector base URL (e.g. http://localhost:4318) or the full `/v1/traces` URL. */
@@ -14,6 +14,8 @@ export interface OtlpOptions {
   intervalMs?: number;
   /** Export interval for metrics (default: `intervalMs` when set, else 10000 ms). */
   metricsIntervalMs?: number;
+  /** Time limit of one export request in ms (default 10000; Infinity: none). A timed-out export is dropped with a warning, never raised. */
+  exportTimeoutMs?: number;
   /** Also export OTLP metrics (`/v1/metrics`, see `otlpMetricsSink`) from the same events. */
   metrics?: boolean;
   /** Extra or overriding event type → layer entries for events recorded as span events. */
@@ -42,6 +44,7 @@ export function otlpSink(opts: OtlpOptions): Sink {
   assertPlainEndpoint(opts.endpoint, 'otlpSink');
   const url = /\/v1\/traces\/?$/.test(opts.endpoint) ? opts.endpoint : `${opts.endpoint.replace(/\/+$/, '')}/v1/traces`;
   const post = opts.fetch ?? fetch;
+  const exportTimeoutMs = opts.exportTimeoutMs ?? TELEMETRY_LIMITS['otlp.exportTimeoutMs'].default;
   let pending: Recorded[] = [];
   let warned = false;
 
@@ -96,7 +99,8 @@ export function otlpSink(opts: OtlpOptions): Sink {
       }],
     };
     try {
-      const res = await post(url, { method: 'POST', headers: { 'content-type': 'application/json', ...opts.headers }, body: JSON.stringify(body) });
+      const signal = exportSignal(exportTimeoutMs);
+      const res = await post(url, { method: 'POST', headers: { 'content-type': 'application/json', ...opts.headers }, body: JSON.stringify(body), ...(signal && { signal }) });
       if (!res.ok) throw new ExportStatusError(res.status);
     } catch (err) {
       if (!warned) process.emitWarning(`OTLP export to ${new URL(url).origin} failed: ${exportFailure(err)}`);
@@ -108,7 +112,7 @@ export function otlpSink(opts: OtlpOptions): Sink {
   timer.unref();
   const inner = otelSink({ tracer, contextWith: (span) => span, captureContent: opts.captureContent, eventLayers: opts.eventLayers });
   const metrics = opts.metrics
-    ? otlpMetricsSink({ endpoint: opts.endpoint, headers: opts.headers, serviceName: opts.serviceName, intervalMs: opts.metricsIntervalMs ?? opts.intervalMs, fetch: opts.fetch })
+    ? otlpMetricsSink({ endpoint: opts.endpoint, headers: opts.headers, serviceName: opts.serviceName, intervalMs: opts.metricsIntervalMs ?? opts.intervalMs, exportTimeoutMs: opts.exportTimeoutMs, fetch: opts.fetch })
     : undefined;
   return {
     name: 'otlp',

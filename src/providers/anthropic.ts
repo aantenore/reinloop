@@ -2,7 +2,7 @@ import { closedSchema } from '../schema.ts';
 import type { Effort, GenerateContext, HostedResultPart, Message, ModelParams, ModelResponse, Part, Provider, StopReason, ThinkingType, ToolSpec, Usage } from '../types.ts';
 import { limitDefault } from '../limits.ts';
 import { estimateTokens, ProviderError, truncate } from '../util.ts';
-import { type FetchLike, parseToolJson, postJson, readSse } from './http.ts';
+import { type Deadline, type FetchLike, parseToolJson, postJson, readSse, requestTimeoutMs, withDeadline } from './http.ts';
 
 export interface AnthropicOptions {
   name?: string;
@@ -26,6 +26,12 @@ export interface AnthropicOptions {
   errorBodyChars?: number;
   /** Response JSON kept when a response has an unexpected shape (default 300). */
   responseExcerptChars?: number;
+  /**
+   * Time limit of one request in ms (default 600000; Infinity: none). Non-streamed: the whole request, body included.
+   * Streamed: time to the first chunk, then the longest silence between two chunks. Expiry rejects with a
+   * `TimeoutError` (HTTP 408, so `withRetry` retries it unless `retryOn` leaves 408 out).
+   */
+  timeoutMs?: number;
   /** Send `output_config.format: json_schema` when a schema is requested (default true; disable for gateways that reject it). */
   structuredOutput?: boolean;
   fetch?: FetchLike;
@@ -117,11 +123,13 @@ export function anthropic(opts: AnthropicOptions = {}): Provider {
         if (current) delete (headers as Record<string, string>)[current[0]];
         (headers as Record<string, string>)['anthropic-beta'] = merged.join(',');
       }
-      const res = await postJson(fetchImpl, `${baseUrl}/v1/messages`, headers, body, ctx.signal, opts.errorBodyChars);
-      if (stream) return readStream(res, ctx);
-      const out = fromMessage(await res.json(), opts.responseExcerptChars);
-      for (const part of out.message.parts) if (part.type === 'thinking' && part.text) ctx.onThinking?.(part.text);
-      return out;
+      return withDeadline(requestTimeoutMs(opts.timeoutMs), ctx.signal, async (dl) => {
+        const res = await postJson(fetchImpl, `${baseUrl}/v1/messages`, headers, body, dl.signal, opts.errorBodyChars);
+        if (stream) return readStream(res, ctx, dl);
+        const out = fromMessage(await res.json(), opts.responseExcerptChars);
+        for (const part of out.message.parts) if (part.type === 'thinking' && part.text) ctx.onThinking?.(part.text);
+        return out;
+      });
     },
   };
 }
@@ -248,14 +256,14 @@ export function fromMessage(json: any, excerptChars: number = limitDefault('prov
   return { message: { role: 'assistant', parts: toParts(json.content) }, usage: toUsage(json.usage), stopReason: STOP[json.stop_reason] ?? 'other', model: json.model };
 }
 
-async function readStream(res: Response, ctx: GenerateContext): Promise<ModelResponse> {
+async function readStream(res: Response, ctx: GenerateContext, dl: Deadline): Promise<ModelResponse> {
   const blocks: any[] = [];
   const json: Record<number, string> = {};
   let usage: any = {};
   let stop: string | undefined;
   let model: string | undefined;
   let complete = false;
-  for await (const ev of readSse(res)) {
+  for await (const ev of readSse(res, dl.touch)) {
     const data = JSON.parse(ev.data);
     switch (data.type) {
       case 'message_stop':

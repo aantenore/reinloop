@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
 import { anthropic, createRuntime, mockProvider, openaiCompatible, presetProvider, ProviderError, run, withFallback, withRetry, type Agent } from '../src/index.ts';
 import type { ModelRequest } from '../src/index.ts';
+import { deadline } from '../src/providers/http.ts';
 import { echoTool, fakeFetch, json, sse } from './helpers.ts';
 
 const signal = new AbortController().signal;
@@ -340,5 +343,132 @@ describe('anthropic thinking', () => {
     const stopped = await run({ ...b, model: { ...b.model, params: { maxTokens: 300, retryMaxTokens: 600 } } }, 'hi');
     assert.equal(twice.requests.length, 2);
     assert.deepEqual([stopped.status, stopped.reason], ['stopped', 'max_tokens']);
+  });
+});
+
+describe('request timeout', () => {
+  const ok = { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] };
+  const isTimeout = (e: unknown) => e instanceof ProviderError && e.name === 'TimeoutError' && e.status === 408;
+  // A fetch that never answers; it ends only when its signal aborts, the way the platform fetch does.
+  const hanging = (seen: AbortSignal[] = []) => (_url: string, init: RequestInit) =>
+    new Promise<Response>((_, reject) => {
+      seen.push(init.signal!);
+      if (init.signal!.aborted) return reject(init.signal!.reason);
+      init.signal!.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+    });
+
+  async function serverAt(handler: (req: IncomingMessage, res: ServerResponse) => void) {
+    const server = createServer(handler);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    return { baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`, close: () => (server.closeAllConnections(), server.close()) };
+  }
+  const chunk = (text: string, finish?: string) => `data: ${JSON.stringify({ choices: [{ delta: { content: text }, ...(finish && { finish_reason: finish }) }] })}\n\n`;
+
+  it('aborts a request that gets no answer, with a TimeoutError that leaks neither key nor body', async () => {
+    for (const make of [openaiCompatible, anthropic]) {
+      const provider = make({ apiKey: 'sk-secret-key', baseUrl: 'https://llm.example/v1', timeoutMs: 30, fetch: hanging() });
+      await assert.rejects(provider.generate(request, { signal }), (e: unknown) => {
+        assert.ok(isTimeout(e));
+        assert.equal((e as Error).message, 'model request timed out after 30ms');
+        return true;
+      });
+    }
+  });
+
+  it('still honours the caller signal, which is not reported as a timeout', async () => {
+    const seen: AbortSignal[] = [];
+    const ctl = new AbortController();
+    const pending = openaiCompatible({ timeoutMs: 60_000, fetch: hanging(seen) }).generate(request, { signal: ctl.signal });
+    setTimeout(() => ctl.abort(new Error('stop')), 10);
+    await assert.rejects(pending, (e: unknown) => e instanceof Error && e.message === 'stop' && e.name !== 'TimeoutError');
+    assert.ok(seen[0]!.aborted);
+    // Aborted before the request: nothing waits for the limit either.
+    const early = AbortSignal.abort(new Error('early'));
+    await assert.rejects(openaiCompatible({ timeoutMs: 60_000, fetch: hanging() }).generate(request, { signal: early }), /early/);
+  });
+
+  it('arms no timer when unbounded: the request gets the caller signal as it is', async () => {
+    const seen: AbortSignal[] = [];
+    const f = fakeFetch([json(ok), json(ok)]);
+    const impl = (url: string, init: RequestInit) => (seen.push(init.signal!), f.impl(url, init));
+    const ctl = new AbortController();
+    await openaiCompatible({ timeoutMs: Number.POSITIVE_INFINITY, fetch: impl }).generate(request, { signal: ctl.signal });
+    assert.equal(seen[0], ctl.signal);
+    assert.equal(deadline(Number.POSITIVE_INFINITY, ctl.signal).signal, ctl.signal);
+    assert.equal(deadline(undefined, ctl.signal).signal, ctl.signal);
+    // A finite limit is combined with the caller signal and released afterwards.
+    await openaiCompatible({ timeoutMs: 60_000, fetch: impl }).generate(request, { signal: ctl.signal });
+    assert.notEqual(seen[1], ctl.signal);
+  });
+
+  it('is retried like a 408 by default, and not when retryOn leaves it out', async () => {
+    let calls = 0;
+    const flaky = (url: string, init: RequestInit) => (++calls === 1 ? hanging()(url, init) : Promise.resolve(json(ok)()));
+    const res = await withRetry(openaiCompatible({ timeoutMs: 20, fetch: flaky }), { baseDelayMs: 1 }).generate(request, { signal });
+    assert.equal(calls, 2);
+    assert.equal(res.message.parts[0]!.type === 'text' && res.message.parts[0]!.text, 'ok');
+    calls = 0;
+    await assert.rejects(withRetry(openaiCompatible({ timeoutMs: 20, fetch: flaky }), { baseDelayMs: 1, retryOn: [0, 429] }).generate(request, { signal }), isTimeout);
+    assert.equal(calls, 1);
+  });
+
+  it('covers the response body of a request that is not streamed', async () => {
+    const srv = await serverAt((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"choices":[');
+    });
+    try {
+      await assert.rejects(openaiCompatible({ baseUrl: srv.baseUrl, timeoutMs: 80 }).generate(request, { signal }), isTimeout);
+    } finally {
+      srv.close();
+    }
+  });
+
+  it('limits a stream by its silence, not by its length', async () => {
+    const steady = await serverAt((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      let n = 0;
+      const timer = setInterval(() => {
+        res.write(chunk(`${n}`));
+        if (++n === 5) (clearInterval(timer), res.end(chunk('', 'stop') + 'data: [DONE]\n\n'));
+      }, 50);
+    });
+    const stalled = await serverAt((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(chunk('first'));
+    });
+    try {
+      // Five chunks over ~250 ms pass a 150 ms limit because no gap is longer than it.
+      const done = await openaiCompatible({ baseUrl: steady.baseUrl, stream: true, timeoutMs: 150 }).generate(request, { signal });
+      assert.equal(done.message.parts[0]!.type === 'text' && done.message.parts[0]!.text, '01234');
+      const seen: string[] = [];
+      await assert.rejects(openaiCompatible({ baseUrl: stalled.baseUrl, stream: true, timeoutMs: 100 }).generate(request, { signal, onText: (t) => seen.push(t) }), isTimeout);
+      assert.deepEqual(seen, ['first']);
+    } finally {
+      steady.close();
+      stalled.close();
+    }
+  });
+
+  it('flows from the config to the provider, and a timeout ends the run as failed', async () => {
+    const srv = await serverAt(() => {});
+    try {
+      const rt = await createRuntime(
+        {
+          providers: { slow: { type: 'openai-compatible', baseUrl: srv.baseUrl, timeoutMs: '${env:LLM_TIMEOUT}' as never, retry: false } },
+          agents: { a: { model: 'slow/m' } },
+        },
+        { env: { LLM_TIMEOUT: '60' } },
+      );
+      try {
+        const res = await rt.run('a', 'hi');
+        assert.equal(res.status, 'failed');
+        assert.equal(res.reason, 'model request timed out after 60ms');
+      } finally {
+        await rt.close();
+      }
+    } finally {
+      srv.close();
+    }
   });
 });

@@ -1,5 +1,5 @@
 import type { LimitSpec, RunEvent, Sink } from '../types.ts';
-import { type Attrs, assertPlainEndpoint, ExportStatusError, exportFailure, nowNanos, toAttributes } from './otlp-json.ts';
+import { type Attrs, assertPlainEndpoint, ExportStatusError, exportFailure, exportSignal, nowNanos, toAttributes } from './otlp-json.ts';
 
 export interface OtlpMetricsOptions {
   /** Collector base URL (e.g. http://localhost:4318) or the full `/v1/metrics` URL. */
@@ -8,11 +8,13 @@ export interface OtlpMetricsOptions {
   serviceName?: string;
   /** Export interval (default 10000 ms). Metrics are also sent on every `run_end` and on close. */
   intervalMs?: number;
+  /** Time limit of one export request in ms (default 10000; Infinity: none). A timed-out export is retried with the next one. */
+  exportTimeoutMs?: number;
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
 }
 
 // Bucket boundaries recommended by the OpenTelemetry GenAI semantic conventions.
-/** Export intervals of the OTLP sinks. */
+/** Export intervals and time limit of the OTLP sinks. */
 export const TELEMETRY_LIMITS = {
   'otlp.intervalMs': {
     component: 'Telemetry', path: 'sinks[].intervalMs', option: 'otlpSink({ intervalMs })', default: 2000, min: 100, safe: [500, 60_000], types: ['otlp'],
@@ -21,6 +23,11 @@ export const TELEMETRY_LIMITS = {
   'otlp.metricsIntervalMs': {
     component: 'Telemetry', path: 'sinks[].metricsIntervalMs', option: 'otlpSink({ metricsIntervalMs }), otlpMetricsSink({ intervalMs })', default: 10_000, min: 100,
     safe: [1000, 300_000], types: ['otlp'], why: 'How often metrics are exported',
+  },
+  'otlp.exportTimeoutMs': {
+    component: 'Telemetry', path: 'sinks[].exportTimeoutMs', option: 'otlpSink({ exportTimeoutMs }), otlpMetricsSink({ exportTimeoutMs })', default: 10_000, min: 1, unbounded: true,
+    warnUnbounded: true, safe: [1000, 60_000], types: ['otlp'],
+    why: 'Time limit of one export request; a timed-out export is dropped (spans) or retried with the next one (metrics), never raised into the run',
   },
 } as const satisfies Record<string, LimitSpec>;
 
@@ -53,6 +60,7 @@ export function otlpMetricsSink(opts: OtlpMetricsOptions): Sink {
   assertPlainEndpoint(opts.endpoint, 'otlpMetricsSink');
   const url = `${opts.endpoint.replace(/\/+$/, '').replace(/\/v1\/(traces|metrics)$/, '')}/v1/metrics`;
   const post = opts.fetch ?? fetch;
+  const exportTimeoutMs = opts.exportTimeoutMs ?? TELEMETRY_LIMITS['otlp.exportTimeoutMs'].default;
   const startNanos = nowNanos();
   const tokens = instrument('gen_ai.client.token.usage', '{token}', 'Input and output tokens used per model call', TOKEN_BOUNDS);
   const duration = instrument('gen_ai.client.operation.duration', 's', 'Duration of model calls', DURATION_BOUNDS);
@@ -112,7 +120,8 @@ export function otlpMetricsSink(opts: OtlpMetricsOptions): Sink {
     if (!dirty) return;
     dirty = false;
     try {
-      const res = await post(url, { method: 'POST', headers: { 'content-type': 'application/json', ...opts.headers }, body: JSON.stringify(body()) });
+      const signal = exportSignal(exportTimeoutMs);
+      const res = await post(url, { method: 'POST', headers: { 'content-type': 'application/json', ...opts.headers }, body: JSON.stringify(body()), ...(signal && { signal }) });
       if (!res.ok) throw new ExportStatusError(res.status);
     } catch (err) {
       dirty = true;

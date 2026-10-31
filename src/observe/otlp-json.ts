@@ -40,3 +40,6 @@ export function exportFailure(err: unknown): string {
   if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) return 'timeout';
   return 'network error';
 }
+
+/** Abort signal for one export POST; none when the limit is off (`Infinity`), so no timer is armed. */
+export const exportSignal = (timeoutMs: number): AbortSignal | undefined => (Number.isFinite(timeoutMs) && timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined);

@@ -1,7 +1,73 @@
-import { limitDefault } from '../limits.ts';
+import { finiteTimeout, limitDefault } from '../limits.ts';
 import { errorMessage, ProviderError, truncate } from '../util.ts';
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+
+/**
+ * A model request that ran past its time limit. Named `TimeoutError` like the platform's timeout errors, and status 408
+ * so `withRetry` treats it like any other request timeout. The message names neither the URL nor the request.
+ */
+export class ProviderTimeoutError extends ProviderError {
+  readonly timeoutMs: number;
+  constructor(timeoutMs: number) {
+    super(408, `model request timed out after ${timeoutMs}ms`);
+    this.name = 'TimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/** Time limit of one model request; `touch` restarts it (a stream calls it on every chunk). */
+export interface Deadline {
+  /** The caller's signal combined with the limit. With no limit it is the caller's signal itself. */
+  readonly signal: AbortSignal;
+  touch(): void;
+  stop(): void;
+  /** Set once the limit fired. */
+  readonly timeout?: ProviderTimeoutError;
+}
+
+/** `timeoutMs` that is not finite and positive (unbounded) arms no timer. */
+export function deadline(timeoutMs: number | undefined, caller: AbortSignal): Deadline {
+  const ms = finiteTimeout(timeoutMs);
+  if (!ms) return { signal: caller, touch() {}, stop() {} };
+  const ctl = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  const fire = () => {
+    dl.timeout = new ProviderTimeoutError(ms);
+    ctl.abort(dl.timeout);
+  };
+  const stop = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    caller.removeEventListener('abort', stop);
+  };
+  const dl: { signal: AbortSignal; touch(): void; stop(): void; timeout?: ProviderTimeoutError } = {
+    signal: AbortSignal.any([caller, ctl.signal]),
+    touch: () => timer?.refresh(),
+    stop,
+  };
+  timer = setTimeout(fire, ms);
+  caller.addEventListener('abort', stop, { once: true });
+  return dl;
+}
+
+/**
+ * Runs one model request under a time limit (see `PROVIDER_TIMEOUT_LIMITS`) and always releases the timer. A request
+ * that the limit ended rejects with `ProviderTimeoutError`; one the caller aborted rejects as the caller's signal says.
+ */
+export async function withDeadline<T>(timeoutMs: number | undefined, caller: AbortSignal, run: (dl: Deadline) => Promise<T>): Promise<T> {
+  const dl = deadline(timeoutMs, caller);
+  try {
+    return await run(dl);
+  } catch (err) {
+    if (dl.timeout && !caller.aborted) throw dl.timeout;
+    throw err;
+  } finally {
+    dl.stop();
+  }
+}
+
+export const requestTimeoutMs = (configured: number | undefined): number => configured ?? limitDefault('provider.timeoutMs');
 
 export async function postJson(
   fetchImpl: FetchLike,
@@ -37,8 +103,8 @@ function retryAfter(headers: Headers): number | undefined {
 
 export interface SseEvent { event?: string; data: string }
 
-/** Minimal Server-Sent Events reader over a fetch Response body. */
-export async function* readSse(res: Response): AsyncGenerator<SseEvent> {
+/** Minimal Server-Sent Events reader over a fetch Response body. `onChunk` is called for every chunk received. */
+export async function* readSse(res: Response, onChunk?: () => void): AsyncGenerator<SseEvent> {
   if (!res.body) return;
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = '';
@@ -50,6 +116,7 @@ export async function* readSse(res: Response): AsyncGenerator<SseEvent> {
         finished = true;
         break;
       }
+      onChunk?.();
       buffer += value;
       let match: RegExpExecArray | null;
       while ((match = /\r?\n\r?\n/.exec(buffer))) {
