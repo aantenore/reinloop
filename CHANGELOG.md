@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-11-02
+
+### Security
+
+- `reinloop serve`: per-run access requires a verified identity matching the run subject. Runs without a subject, and
+  callers without identity, are operator-only (`404` for others). Open mode without a verifier is documented.
+- MCP over HTTP with `auth` keeps one MCP session per run identity, opened with that identity's token; a response only
+  updates its caller's session. `mcpServers.<name>.maxSessions` (default 100, least recently used dropped).
+- MCP calls with per-call credentials but no identity use a session keyed by a hash of audience and token, never the
+  shared connection session.
+- With a `holdsText` middleware (output guards), thinking deltas are held until `afterModel` ran, and `guardMiddleware`
+  scans thinking parts at the output stage (a redacted thinking part loses its signature).
+- `serve` rejects unsafe run ids (`400`); `jsonlSink` and the run entry points (stream, teams, MCP `sessionId`) refuse
+  them (path traversal).
+- `serve` checks `Host` against an allow-list (bound host, `localhost`, `127.0.0.1`, `[::1]`; more via `allowedHosts` /
+  `--allow-host`, also `serve.allowedHosts` in config) and answers `403` otherwise (DNS rebinding).
+- `serve` answers `403` to an `Origin` that is not its own or in `allowedOrigins` / `--allow-origin` (also
+  `serve.allowedOrigins`), against cross-site requests; requests without `Origin` are unaffected.
+- Breaking: `POST /v1/agents/:name/runs` requires `Content-Type: application/json` (`415`).
+- Breaking: `serve` refuses to start on a non-loopback host without a token or identity verifier unless `insecure` /
+  `--insecure` (also `serve.insecure`).
+- Breaking: stdio MCP servers get a minimal environment (`PATH`, `HOME`, locale, temp dirs, Windows basics) plus `env`.
+  `mcpServers.<name>.inheritEnv` passes parent variables; `["*"]` restores the old behavior.
+- MCP HTTP transport no longer follows redirects.
+- Fix: team runs record `subject` and `identityKind` in `run_start`.
+- Fix: a `null` or array POST body returns `400` instead of `500`.
+
 ## 0.3.0 - 2026-10-31
 
 Layer hooks, configurable limits and security hardening. Highlights: run identity and credentials, policy `when` and
