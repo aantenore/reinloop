@@ -15,6 +15,7 @@
 - `serve`: `GET /health` is exempt from the `Host` / `Origin` allow-lists; non-GET `/health` returns `404`.
 - `serve`: `GET /v1/runs/:id` returns `404` for an unsafe run id without reading the store.
 - `serve`: one request per run id at a time (`409` run busy), closing a race on the ownership check of a new run id.
+- `serve`: the per-run lock is case-insensitive, matching case-insensitive file systems.
 - `serve`: a `Host` header without port is treated as port 80.
 - MCP over HTTP: an expired session (`404` for its id) is replaced and the call retried once.
 - MCP over HTTP: a caller that aborts no longer fails other callers waiting for the same per-identity session.

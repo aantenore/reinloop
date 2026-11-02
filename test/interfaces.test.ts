@@ -228,6 +228,8 @@ describe('http api guards', () => {
       const busy = results.find((r) => r.status === 409)!;
       assert.match(((await busy.json()) as { error: string }).error, /run busy/);
       assert.equal((await post('same-id')).status, 200, 'released after the run');
+      const cased = await Promise.all([post('abc'), post('ABC')]);
+      assert.deepEqual(cased.map((r) => r.status).sort(), [200, 409], 'ids differing only by case share one lock');
       const other = await Promise.all([post('id-a'), post('id-b')]);
       assert.deepEqual(other.map((r) => r.status), [200, 200], 'different ids do not block each other');
     } finally {

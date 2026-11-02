@@ -234,10 +234,12 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
         if (body.input !== undefined && typeof body.input !== 'string') throw new HttpError(400, '"input" must be a string');
         if (body.runId !== undefined && !isSafeRunId(body.runId)) throw new HttpError(400, '"runId" must be 1-128 characters of letters, digits, "_", "-" or "." (not first)');
         // One request per run id at a time: the ownership check below and the run itself must not interleave.
+        // Keyed case-insensitively: case-insensitive file systems map ids differing by case to the same run log.
         if (body.runId !== undefined) {
-          if (inflight.has(body.runId)) throw new HttpError(409, 'run busy');
-          inflight.add(body.runId);
-          busy = body.runId;
+          const key = body.runId.toLowerCase();
+          if (inflight.has(key)) throw new HttpError(409, 'run busy');
+          inflight.add(key);
+          busy = key;
         }
         if (body.runId !== undefined && verifier && !caller.operator) {
           const prior = await runtime.store.load(body.runId);
