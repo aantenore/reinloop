@@ -148,9 +148,9 @@ export const CONFIG_SCHEMA: JsonSchema = {
         type: 'object',
         additionalProperties: false,
         properties: {
-          command: str, args: { type: 'array', items: str }, env: strMap, cwd: str, url: str, headers: strMap,
+          command: str, args: { type: 'array', items: str }, env: strMap, inheritEnv: { type: 'array', items: str }, cwd: str, url: str, headers: strMap,
           prefix: { anyOf: [str, { const: false }] }, risk, include: { type: 'array', items: str }, exclude: { type: 'array', items: str }, readOnly: { type: 'array', items: str },
-          timeoutMs: lim('mcp.timeoutMs'), errorBodyChars: lim('mcp.errorBodyChars'), stderrChars: lim('mcp.stderrChars'),
+          timeoutMs: lim('mcp.timeoutMs'), errorBodyChars: lim('mcp.errorBodyChars'), stderrChars: lim('mcp.stderrChars'), maxSessions: lim('mcp.maxSessions'),
           auth: toolAuth,
         },
       },
@@ -269,6 +269,9 @@ export const CONFIG_SCHEMA: JsonSchema = {
         requestTimeoutMs: lim('serve.requestTimeoutMs'),
         headersTimeoutMs: lim('serve.headersTimeoutMs'),
         errorDescriptionChars: lim('serve.errorDescriptionChars'),
+        allowedHosts: { type: 'array', items: str },
+        allowedOrigins: { type: 'array', items: str },
+        insecure: { type: 'boolean' },
       },
     },
     limits: {

@@ -195,6 +195,70 @@ describe('serve with identity', () => {
     }
   });
 
+  it('runs without a subject and callers without identity never match; owner and operator do', async () => {
+    const rt = await createRuntime(config({ verifier: { type: 'static' }, required: false }), { registry: registry() });
+    const open = await serve(rt, { port: 0 });
+    const guarded = await serve(rt, { port: 0, token: 'operator-key', identity: { verifier: staticVerifier(), required: false } });
+    const get = (base: string, id: string, authorization?: string) => fetch(`${base}/v1/runs/${id}`, { headers: authorization ? { authorization } : {} });
+    const post = (base: string, body: unknown, authorization?: string) =>
+      fetch(`${base}/v1/agents/echo/runs`, { method: 'POST', headers: { 'content-type': 'application/json', ...(authorization && { authorization }) }, body: JSON.stringify(body) });
+    try {
+      // A run without subject (started anonymously) is not readable or continuable by an anonymous caller, nor by a user.
+      const anon = (await (await post(open.url, { input: 'hi' })).json()) as { runId: string };
+      assert.equal((await get(open.url, anon.runId)).status, 404);
+      assert.equal((await get(open.url, anon.runId, 'Bearer tok-alice')).status, 404);
+      assert.equal((await post(open.url, { input: 'x', runId: anon.runId })).status, 404);
+      assert.equal((await post(open.url, { input: 'x', runId: anon.runId }, 'Bearer tok-alice')).status, 404);
+      // The operator reads and continues it.
+      assert.equal((await get(guarded.url, anon.runId, 'Bearer operator-key')).status, 200);
+      assert.equal((await post(guarded.url, { input: 'x', runId: anon.runId }, 'Bearer operator-key')).status, 200);
+
+      // A user cannot read another user's run or continue it; the owner and the operator can.
+      const alice = (await (await post(open.url, { input: 'hi' }, 'Bearer tok-alice')).json()) as { runId: string };
+      assert.equal((await get(open.url, alice.runId, 'Bearer tok-bob')).status, 404);
+      assert.equal((await get(open.url, alice.runId)).status, 404);
+      assert.equal((await post(open.url, { input: 'x', runId: alice.runId }, 'Bearer tok-bob')).status, 404);
+      assert.equal((await get(open.url, alice.runId, 'Bearer tok-alice')).status, 200);
+      assert.equal((await post(open.url, { input: 'x', runId: alice.runId }, 'Bearer tok-alice')).status, 200);
+      assert.equal((await get(guarded.url, alice.runId, 'Bearer operator-key')).status, 200);
+    } finally {
+      await open.close();
+      await guarded.close();
+      await rt.close();
+    }
+  });
+
+  it('a team run is owned by its caller: the owner reads it, another user and anonymous callers do not', async () => {
+    const rt = await createRuntime(
+      {
+        providers: { mock: { type: 'mock', responses: [{ text: 'hello' }], loop: true } },
+        models: { m: { provider: 'mock', model: 'mock-1' } },
+        agents: { a: { model: 'm', description: 'A' } },
+        teams: { crew: { pattern: 'parallel', roles: { workers: ['a'] }, description: 'Crew' } },
+        identity: { verifier: { type: 'static' }, required: false },
+      } as HarnessConfig,
+      { registry: registry() },
+    );
+    const served = await serve(rt, { port: 0 });
+    const get = (id: string, authorization?: string) => fetch(`${served.url}/v1/runs/${id}`, { headers: authorization ? { authorization } : {} });
+    try {
+      const res = await fetch(`${served.url}/v1/agents/crew/runs`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer tok-alice' }, body: JSON.stringify({ input: 'go' }),
+      });
+      assert.equal(res.status, 200);
+      const { runId } = (await res.json()) as { runId: string };
+      const events = (await rt.store.load(runId)) as RunEvent[];
+      const start = events.find((e) => e.type === 'run_start') as RunEvent<'run_start'>;
+      assert.deepEqual([start.data.subject, start.data.identityKind], ['alice-id', 'user']);
+      assert.equal((await get(runId, 'Bearer tok-alice')).status, 200);
+      assert.equal((await get(runId, 'Bearer tok-bob')).status, 404);
+      assert.equal((await get(runId)).status, 404);
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+  });
+
   it('a verifier passed to serve() needs no config; an unregistered type points to plugins', async () => {
     const rt = await createRuntime(config(undefined));
     const served = await serve(rt, { port: 0, identity: { verifier: staticVerifier() } });
@@ -207,6 +271,122 @@ describe('serve with identity', () => {
     }
     await assert.rejects(createRuntime(config({ verifier: { type: 'oidc' } })), /identity\.verifier\.type: unknown identity verifier "oidc" \(none registered; load a plugin.*agent-layers/);
     await assert.rejects(createRuntime(config({ verifier: {} as never })), /identity\.verifier\.type: required/);
+  });
+});
+
+describe('mcp sessions per identity', () => {
+  const bob: Identity = { subject: 'bob', kind: 'user', token: 'tok-bob-SECRET' };
+  interface Seen { method: string; session?: string; authorization?: string }
+
+  /** An MCP server that binds each session to the credential that opened it and refuses any other caller. */
+  async function sessionServer(rotateFor?: string) {
+    const seen: Seen[] = [];
+    const owner = new Map<string, string | undefined>();
+    let n = 0;
+    const srv = await listen((req, body, res) => {
+      const msg = JSON.parse(body || '{}');
+      const session = req.headers['mcp-session-id'] as string | undefined;
+      const authorization = req.headers.authorization;
+      seen.push({ method: msg.method, session, authorization });
+      if (session && owner.get(session) !== authorization) return void res.writeHead(403).end('session belongs to another caller');
+      if (msg.id === undefined) return void res.writeHead(202).end();
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (msg.method === 'initialize') {
+        const sid = `sess-${++n}`;
+        owner.set(sid, authorization);
+        headers['mcp-session-id'] = sid;
+      } else if (msg.method === 'tools/call' && authorization === rotateFor) {
+        const sid = `rotated-${++n}`;
+        owner.set(sid, authorization);
+        headers['mcp-session-id'] = sid;
+      }
+      const result =
+        msg.method === 'initialize' ? { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'mock' } }
+        : msg.method === 'tools/list' ? { tools: [{ name: 'whoami', inputSchema: { type: 'object' } }] }
+        : { content: [{ type: 'text', text: `session=${session}` }] };
+      res.writeHead(200, headers).end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
+    });
+    return { ...srv, seen };
+  }
+  const call = async (tool: Tool, identity?: Identity, token = `tok-${identity?.subject}`): Promise<string> =>
+    ((await tool.run({}, { signal: new AbortController().signal, identity, credentials: { token: async () => token } } as any)) as any).content;
+  const calls = (seen: Seen[]) => seen.filter((s) => s.method === 'tools/call');
+
+  it('keeps one MCP session per identity and never sends one identity the session of another', async () => {
+    const srv = await sessionServer();
+    const { client, tools } = await mcpTools('api', { url: srv.url, auth: { audience: 'a' } }, { credentials: { token: async () => 'tok-agent' } });
+    try {
+      assert.equal(await call(tools[0]!, analyst), 'session=sess-2');
+      assert.equal(await call(tools[0]!, bob), 'session=sess-3');
+      assert.equal(await call(tools[0]!, analyst), 'session=sess-2'); // reused, not reopened
+      assert.equal(await call(tools[0]!, bob), 'session=sess-3');
+      assert.equal(await call(tools[0]!, undefined, 'tok-agent'), 'session=sess-4'); // no identity: a session of its own, not the connection's
+      for (const c of calls(srv.seen)) assert.notEqual(c.session, undefined);
+      assert.equal(srv.seen.filter((s) => s.method === 'initialize').length, 4);
+      // B's requests (initialize included) never carried A's or the connection's session id.
+      const forBob = srv.seen.filter((s) => s.authorization === 'Bearer tok-bob');
+      assert.deepEqual([...new Set(forBob.map((s) => s.session))], [undefined, 'sess-3']);
+      const forAlice = srv.seen.filter((s) => s.authorization === 'Bearer tok-alice');
+      assert.deepEqual([...new Set(forAlice.map((s) => s.session))], [undefined, 'sess-2']);
+    } finally {
+      await client.close();
+      await srv.close();
+    }
+  });
+
+  it('gives two per-call tokens without identity different sessions, and a repeated token the same one', async () => {
+    const srv = await sessionServer();
+    const { client, tools } = await mcpTools('api', { url: srv.url, auth: { audience: 'a' } }, { credentials: { token: async () => 'tok-agent' } });
+    try {
+      assert.equal(await call(tools[0]!, undefined, 'tok-one'), 'session=sess-2');
+      assert.equal(await call(tools[0]!, undefined, 'tok-two'), 'session=sess-3');
+      assert.equal(await call(tools[0]!, undefined, 'tok-one'), 'session=sess-2');
+      assert.equal(srv.seen.filter((s) => s.method === 'initialize').length, 3);
+      assert.ok(!srv.seen.some((s) => s.session === 'sess-1' && s.method === 'tools/call'));
+    } finally {
+      await client.close();
+      await srv.close();
+    }
+  });
+
+  it('applies a session id returned for one identity to that identity only', async () => {
+    const srv = await sessionServer('Bearer tok-bob');
+    const { client, tools } = await mcpTools('api', { url: srv.url, auth: { audience: 'a' } }, { credentials: { token: async () => 'tok-agent' } });
+    try {
+      assert.equal(await call(tools[0]!, analyst), 'session=sess-2');
+      assert.equal(await call(tools[0]!, bob), 'session=sess-3');
+      assert.equal(await call(tools[0]!, bob), 'session=rotated-4'); // B's own session moved on
+      assert.equal(await call(tools[0]!, analyst), 'session=sess-2'); // A's did not
+      assert.equal(await call(tools[0]!, undefined, 'tok-agent'), 'session=sess-6');
+    } finally {
+      await client.close();
+      await srv.close();
+    }
+  });
+
+  it('opens one session for concurrent first calls and drops the least recently used beyond maxSessions', async () => {
+    const srv = await sessionServer();
+    const { client, tools } = await mcpTools('api', { url: srv.url, auth: { audience: 'a' }, maxSessions: 1 }, { credentials: { token: async () => 'tok-agent' } });
+    try {
+      const both = await Promise.all([call(tools[0]!, analyst), call(tools[0]!, analyst)]);
+      assert.deepEqual(both, ['session=sess-2', 'session=sess-2']);
+      assert.equal(await call(tools[0]!, bob), 'session=sess-3'); // evicts alice
+      assert.equal(await call(tools[0]!, analyst), 'session=sess-4'); // reopened, fresh
+    } finally {
+      await client.close();
+      await srv.close();
+    }
+  });
+
+  it('does not keep a failed session open', async () => {
+    const srv = await sessionServer();
+    const { client, tools } = await mcpTools('api', { url: srv.url, auth: { audience: 'a' } }, { credentials: { token: async () => 'tok-agent' } });
+    try {
+      await srv.close();
+      await assert.rejects(call(tools[0]!, analyst));
+    } finally {
+      await client.close();
+    }
   });
 });
 

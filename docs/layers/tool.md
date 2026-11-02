@@ -34,7 +34,8 @@ const lookup = defineTool({
 `mcpServers` (stdio `command`/`args`, or streamable HTTP `url`) is documented in [integrations](../integrations.md).
 `auth: { audience, scopes? }` on a streamable HTTP server sends a per-call bearer token for that audience, taken from
 the run's credentials (see [identity](identity.md#mcp-streamable-http)). Tokens and static header secrets are masked in
-results and errors.
+results and errors. A stdio server gets only a minimal environment plus its `env` (`inheritEnv` opts further
+parent variables in); the HTTP transport refuses redirects.
 
 ## HTTP and OpenAPI tools
 

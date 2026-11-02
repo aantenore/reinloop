@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RunEvent, Sink } from '../types.ts';
-import { truncate } from '../util.ts';
+import { isSafeRunId, truncate } from '../util.ts';
 
 export interface ConsoleSinkOptions {
   /** `info`: tools, decisions, end of run. `debug`: also model calls and compaction. */
@@ -49,11 +49,12 @@ export function consoleSink(opts: ConsoleSinkOptions = {}): Sink {
   };
 }
 
-/** Writes every event (including ephemeral ones, except text and thinking deltas) to `<dir>/<runId>.trace.jsonl`. */
+/** Writes every event (including ephemeral ones, except text and thinking deltas) to `<dir>/<runId>.trace.jsonl`; events with an unsafe run id are skipped. */
 export function jsonlSink(dir: string, opts: { includeDeltas?: boolean } = {}): Sink {
   mkdirSync(dir, { recursive: true });
   return {
     onEvent(ev) {
+      if (!isSafeRunId(ev.runId)) return;
       if ((ev.type === 'text_delta' || ev.type === 'thinking_delta') && !opts.includeDeltas) return;
       appendFileSync(join(dir, `${ev.runId}.trace.jsonl`), `${JSON.stringify(ev)}\n`);
     },

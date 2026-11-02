@@ -4,7 +4,7 @@ import {
   collectSink, createRegistry, createRuntime, guardMiddleware, memoryStore, parseVerdict, run,
   type Guard, type GuardInput, type GuardVerdict, type HarnessConfig, type RunEvent,
 } from '../src/index.ts';
-import { echoTool, makeAgent } from './helpers.ts';
+import { echoTool, makeAgent, thinkingAgent } from './helpers.ts';
 
 const EMAIL = 'jane.doe@example.com';
 
@@ -104,6 +104,44 @@ describe('guardMiddleware', () => {
     const inputOnly = collectSink();
     await run(makeAgent([{ text: 'a b c' }], { middleware: [guardMiddleware([spy('in', () => allow, ['input'])])] }), 'q', { sinks: [inputOnly] });
     assert.equal(inputOnly.events.filter((e) => e.type === 'text_delta').length, 3, 'no output guard: tokens stream as they arrive');
+  });
+
+  it('with an output guard, thinking is held until afterModel and scanned like text', async () => {
+    const SECRET = 'sk-live-secret';
+    const redact = spy('leak', (i) => ({ action: 'redact', text: i.text.replace(SECRET, '<KEY>') }), ['output']);
+    const store = memoryStore();
+    const sink = collectSink();
+    const res = await run(thinkingAgent(`the key is ${SECRET} so`, 'done', { middleware: [guardMiddleware([redact])] }), 'q', { sinks: [sink], store });
+    const types = sink.events.map((e) => e.type);
+    assert.equal(types.filter((t) => t === 'thinking_delta').length, 1, 'one delta with the checked thinking');
+    assert.ok(types.indexOf('thinking_delta') < types.indexOf('model_response'));
+    assert.deepEqual(sink.events.filter((e) => e.type === 'thinking_delta').map((e) => (e.data as { text: string }).text), ['the key is <KEY> so']);
+    assert.deepEqual(redact.seen.map((i) => i.text), ['the key is sk-live-secret so', 'done']);
+    for (const blob of [JSON.stringify(sink.events), JSON.stringify(await store.load(res.runId)), JSON.stringify(res)]) {
+      assert.equal(blob.includes(SECRET), false);
+    }
+    const thinking = res.messages.find((m) => m.role === 'assistant')!.parts.find((p) => p.type === 'thinking') as { signature?: string };
+    assert.equal(thinking.signature, undefined, 'a rewritten thinking part is not replayed with the old signature');
+  });
+
+  it('with an output guard, blocked content in thinking is never streamed, persisted or returned', async () => {
+    const SECRET = 'sk-live-secret';
+    const block = spy('leak', (i) => (i.text.includes(SECRET) ? { action: 'block' } : allow), ['output']);
+    const store = memoryStore();
+    const sink = collectSink();
+    const res = await run(thinkingAgent(`the key is ${SECRET}`, 'harmless answer', { middleware: [guardMiddleware([block])] }), 'q', { sinks: [sink], store });
+    assert.equal(res.status, 'stopped');
+    assert.equal(res.reason, 'guardrail:leak:output');
+    assert.equal(sink.events.some((e) => e.type === 'thinking_delta' || e.type === 'text_delta'), false);
+    for (const blob of [JSON.stringify(sink.events), JSON.stringify(await store.load(res.runId)), JSON.stringify(res)]) {
+      assert.equal(blob.includes(SECRET), false);
+    }
+  });
+
+  it('without an output guard, thinking still streams as it arrives', async () => {
+    const sink = collectSink();
+    await run(thinkingAgent('a b c', 'x', { middleware: [guardMiddleware([spy('in', () => allow, ['input'])])] }), 'q', { sinks: [sink] });
+    assert.equal(sink.events.filter((e) => e.type === 'thinking_delta').length, 3);
   });
 
   it('a blocked answer is accounted (usage, cost) but neither persisted nor kept in the history', async () => {

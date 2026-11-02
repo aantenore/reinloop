@@ -10,7 +10,7 @@ import type {
   Agent, Budget, EventMap, EventType, HookContext, Message, ModelRequest, ModelResponse, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
   RunStore, ToolSpec, Usage,
 } from './types.ts';
-import { addUsage, errorMessage, estimateTokens, hasVisibleParts, newId, textOf, toolCallsOf, userMessage } from './util.ts';
+import { addUsage, assertSafeRunId, errorMessage, estimateTokens, hasVisibleParts, newId, textOf, toolCallsOf, userMessage } from './util.ts';
 
 export interface RunHandle extends AsyncIterable<RunEvent> {
   readonly runId: string;
@@ -27,6 +27,7 @@ export const OUTPUT_FEEDBACK = (schema: unknown, problems: string) =>
 
 /** Runs an agent and exposes every event as an async iterable. Breaking out of the iteration aborts the run. */
 export function stream(agent: Agent, input?: string | Message[], opts: RunOptions = {}): RunHandle {
+  assertSafeRunId(opts.runId);
   const continuing = opts.runId !== undefined;
   const runId = opts.runId ?? newId();
   return createHandle(runId, opts.signal, (signal, channel) => drive(agent, input, { ...opts, runId }, continuing, signal, channel));
@@ -83,7 +84,7 @@ async function drive(
   const specs: ToolSpec[] = agent.tools.map((t) => ({ name: t.name, description: t.description, schema: t.schema, ...(t.hosted && { hosted: t.hosted }) }));
   let offered: ToolSpec[] | undefined; // tool specs after the hosted-tool policy check, done once per run
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
-  // Middleware that rewrites or blocks answer text: stream it only once every afterModel has run.
+  // Middleware that rewrites or blocks the answer (text and thinking): stream it only once every afterModel has run.
   const holdText = (agent.middleware ?? []).some((mw) => mw.holdsText);
 
   const storeFailure = new AbortController();
@@ -208,7 +209,7 @@ async function drive(
       let res = await agent.model.provider.generate(req, {
         signal,
         onText: holdText ? undefined : (text) => emit('text_delta', { text }),
-        onThinking: (text) => emit('thinking_delta', { text }),
+        onThinking: holdText ? undefined : (text) => emit('thinking_delta', { text }),
       });
       try {
         for (const mw of agent.middleware ?? []) res = (await mw.afterModel?.(res, hookCtx)) ?? res;
@@ -222,6 +223,7 @@ async function drive(
         throw err;
       }
       if (holdText) {
+        for (const part of res.message.parts) if (part.type === 'thinking' && part.text) emit('thinking_delta', { text: part.text });
         const text = textOf(res.message);
         if (text) emit('text_delta', { text });
       }

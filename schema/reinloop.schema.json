@@ -283,6 +283,12 @@
               "type": "string"
             }
           },
+          "inheritEnv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "cwd": {
             "type": "string"
           },
@@ -368,6 +374,20 @@
               {
                 "type": "integer",
                 "minimum": 0
+              },
+              {
+                "type": "string",
+                "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
+              }
+            ]
+          },
+          "maxSessions": {
+            "description": "Per-identity MCP sessions kept open on an HTTP server with `auth` (the least recently used is dropped). Default 100.",
+            "default": 100,
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
               },
               {
                 "type": "string",
@@ -2440,6 +2460,21 @@
               "pattern": "\\$\\{env:[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\\}"
             }
           ]
+        },
+        "allowedHosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedOrigins": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "insecure": {
+          "type": "boolean"
         }
       }
     },

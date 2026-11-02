@@ -6,7 +6,7 @@ import { describeMembers } from './describe.ts';
 import type { Approver, Identity, IdentityVerifier, RunEvent } from './types.ts';
 import { limitDefault } from './limits.ts';
 import { CONSOLE_HTML } from './ui.ts';
-import { errorMessage } from './util.ts';
+import { errorMessage, isSafeRunId } from './util.ts';
 
 export const DEFAULT_PORT = 7878;
 
@@ -34,10 +34,39 @@ export interface ServeOptions {
   headersTimeoutMs?: number;
   /** Verifier reason kept in the WWW-Authenticate `error_description` (default 120). */
   errorDescriptionChars?: number;
+  /**
+   * Host header values accepted besides the bound host, `localhost`, `127.0.0.1` and `[::1]` (those with the bound
+   * port). `name` matches any port, `name:port` that port only. Other hosts get 403 (DNS rebinding).
+   */
+  allowedHosts?: string[];
+  /**
+   * Origins (`https://app.example.com`) whose browser pages may call the API. A request with an Origin header that is
+   * neither listed nor the server's own origin gets 403; requests without Origin (CLI, servers) pass. Default: none.
+   */
+  allowedOrigins?: string[];
+  /** Allow a non-loopback `host` without `token` or identity verifier (default: refuse to start). */
+  insecure?: boolean;
 }
 
 /** `serve` settings of the config file; options passed to `serve()` win. */
-export type ServeSettings = Pick<ServeOptions, 'maxBodyBytes' | 'requestTimeoutMs' | 'headersTimeoutMs' | 'errorDescriptionChars'>;
+export type ServeSettings = Pick<ServeOptions, 'maxBodyBytes' | 'requestTimeoutMs' | 'headersTimeoutMs' | 'errorDescriptionChars' | 'allowedHosts' | 'allowedOrigins' | 'insecure'>;
+
+const LOOPBACK_NAMES = ['localhost', '127.0.0.1', '[::1]'];
+const isLoopback = (host: string) => {
+  const name = host.replace(/^\[|\]$/g, '').toLowerCase();
+  return name === 'localhost' || name === '::1' || /^127(\.\d{1,3}){3}$/.test(name);
+};
+
+/** Splits a Host header or an allow-list entry; port is '' when absent. Undefined when it is not a valid authority. */
+function parseAuthority(value: string | undefined): { name: string; port: string } | undefined {
+  if (!value || /[\s/@?#\\]/.test(value)) return undefined;
+  try {
+    const u = new URL(`http://${value}`);
+    return { name: u.hostname.toLowerCase(), port: u.port || (/:\d+$/.test(value) ? '80' : '') };
+  } catch {
+    return undefined;
+  }
+}
 
 /** Node server timeouts: Infinity (unbounded) is 0, which Node reads as "no timeout". */
 const nodeTimeout = (ms: number) => (Number.isFinite(ms) ? ms : 0);
@@ -107,6 +136,10 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
   const requestTimeout = nodeTimeout(opts.requestTimeoutMs ?? settings.requestTimeoutMs ?? limitDefault('serve.requestTimeoutMs'));
   const headersTimeout = nodeTimeout(opts.headersTimeoutMs ?? settings.headersTimeoutMs ?? limitDefault('serve.headersTimeoutMs'));
   const verifier = opts.identity === false ? undefined : (opts.identity?.verifier ?? runtime.identity?.verifier);
+  const bindHost = opts.host ?? '127.0.0.1';
+  if (!isLoopback(bindHost) && !opts.token && !verifier && !(opts.insecure ?? settings.insecure)) {
+    throw new Error(`refusing to serve on ${bindHost} without authentication: set a token (--token / REINLOOP_API_TOKEN) or an identity verifier, or pass --insecure to accept an open API`);
+  }
   const required = opts.identity ? (opts.identity.required ?? true) : (runtime.identity?.required ?? true);
   const authenticate = async (header: string | undefined): Promise<Caller> => {
     if (opts.token && sameSecret(header, `Bearer ${opts.token}`)) return { operator: true };
@@ -129,11 +162,35 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
     }
   };
   // With identity on, a caller sees and continues only runs started under its own subject; the operator sees all.
-  const mayAccess = (caller: Caller, events: RunEvent[]) => !verifier || caller.operator || runSubject(events) === caller.identity?.subject;
+  // Runs without a subject, and callers without identity, never match: those runs are operator-only.
+  // Without a verifier serve is an open (local) mode: runs carry no subject and access is not restricted.
+  const mayAccess = (caller: Caller, events: RunEvent[]) => {
+    if (!verifier || caller.operator) return true;
+    const subject = runSubject(events);
+    return caller.identity !== undefined && subject !== undefined && subject === caller.identity.subject;
+  };
+  // Browsers cannot forge Host or Origin: the Host allow-list stops DNS rebinding, the Origin check stops cross-site calls.
+  const extraHosts = (opts.allowedHosts ?? settings.allowedHosts ?? []).map((h) => ({ raw: h, ...parseAuthority(h) })).filter((h): h is { raw: string; name: string; port: string } => h.name !== undefined);
+  const allowedOrigins = new Set((opts.allowedOrigins ?? settings.allowedOrigins ?? []).map((o) => o.toLowerCase().replace(/\/$/, '')));
+  let boundPort = '';
+  let boundName = '';
+  const hostAllowed = (header: string | undefined) => {
+    const h = parseAuthority(header);
+    if (!h) return false;
+    if ([...LOOPBACK_NAMES, boundName].some((n) => n === h.name) && h.port === boundPort) return true;
+    return extraHosts.some((e) => e.name === h.name && (!e.port || e.port === h.port));
+  };
+  const originAllowed = (origin: string, host: string | undefined) => {
+    const o = origin.toLowerCase().replace(/\/$/, '');
+    return allowedOrigins.has(o) || o === `http://${(host ?? '').toLowerCase()}`; // the console served by this very server
+  };
   // As in Node: the headers timeout never exceeds the request timeout (0 turns either off).
   const serverOptions = { requestTimeout, headersTimeout: requestTimeout && headersTimeout ? Math.min(headersTimeout, requestTimeout) : headersTimeout };
   const server = createServer(serverOptions, async (req, res) => {
     try {
+      if (!hostAllowed(req.headers.host)) throw new HttpError(403, 'host not allowed');
+      const origin = req.headers.origin;
+      if (origin !== undefined && !originAllowed(origin, req.headers.host)) throw new HttpError(403, 'origin not allowed');
       const url = new URL(req.url ?? '/', 'http://local');
       const path = url.pathname;
       if (req.method === 'GET' && path === '/' && opts.ui !== false) {
@@ -160,9 +217,12 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
       if (req.method === 'POST' && start) {
         const name = decodeURIComponent(start[1]!);
         if (!runtime.names().includes(name)) throw new HttpError(404, `unknown agent "${name}"`);
+        // Only JSON: a cross-site form or text/plain POST is a "simple" request browsers send without preflight.
+        if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) throw new HttpError(415, 'content-type must be application/json');
         const body = await readBody(req, limit);
+        if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'body must be a JSON object');
         if (body.input !== undefined && typeof body.input !== 'string') throw new HttpError(400, '"input" must be a string');
-        if (body.runId !== undefined && typeof body.runId !== 'string') throw new HttpError(400, '"runId" must be a string');
+        if (body.runId !== undefined && !isSafeRunId(body.runId)) throw new HttpError(400, '"runId" must be 1-128 characters of letters, digits, "_", "-" or "." (not first)');
         if (body.runId !== undefined && verifier && !caller.operator) {
           const prior = await runtime.store.load(body.runId);
           if (prior.length && !mayAccess(caller, prior)) throw new HttpError(404, 'not found');
@@ -194,10 +254,12 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
     server.once('error', (err: NodeJS.ErrnoException) =>
       reject(err.code === 'EADDRINUSE' ? new Error(`port ${port} is already in use; pass --port <n>`) : err),
     );
-    server.listen(port, opts.host ?? '127.0.0.1', resolve);
+    server.listen(port, bindHost, resolve);
   });
   const { address } = server.address() as AddressInfo;
   const bound = (server.address() as AddressInfo).port;
+  boundPort = String(bound);
+  boundName = (bindHost.includes(':') ? `[${bindHost}]` : bindHost).toLowerCase();
   const host = address.includes(':') ? `[${address}]` : address;
   return {
     server,

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
+import { request } from 'node:http';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { architect, design, loadProject, McpClient, mockProvider, serve } from '../src/index.ts';
+import { agent, architect, design, jsonlSink, loadProject, McpClient, mockProvider, serve, stream, team, type RunEvent } from '../src/index.ts';
 
 async function project(files: Record<string, string>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'reinloop-if-'));
@@ -90,5 +91,127 @@ describe('architect', () => {
     assert.deepEqual(problems, []);
     assert.equal(result.output, 'fixed');
     assert.match(JSON.stringify(provider.requests[2]!.messages), /GROQ_API_KEY is not set/);
+  });
+});
+
+describe('http api guards', () => {
+  const echo = { 'echo.md': '---\ndescription: Echoes\nmodel: mock/echo\n---\nEcho.' };
+  const raw = (url: string, headers: Record<string, string>, method = 'GET', path = '/v1/agents', body?: string) =>
+    new Promise<number>((resolve, reject) => {
+      const u = new URL(url);
+      const req = request({ host: u.hostname, port: u.port, path, method, headers }, (res) => (res.resume(), resolve(res.statusCode!)));
+      req.on('error', reject);
+      req.end(body);
+    });
+  const json = { 'content-type': 'application/json' };
+
+  it('rejects traversal run ids with 400 and writes no trace outside the directory', async () => {
+    const dir = await project(echo);
+    const rt = await loadProject({ cwd: dir, env: {} });
+    const traces = join(dir, 'traces');
+    rt.sinks.push(jsonlSink(traces));
+    const served = await serve(rt, { port: 0 });
+    const post = (runId: unknown) => fetch(`${served.url}/v1/agents/echo/runs`, { method: 'POST', headers: json, body: JSON.stringify({ input: 'hi', runId }) });
+    try {
+      for (const bad of ['../escape', '..%2Fescape', 'a/b', '.hidden', 'x'.repeat(129), 7, '']) assert.equal((await post(bad)).status, 400, String(bad));
+      assert.deepEqual(readdirSync(traces), []);
+      assert.equal(existsSync(join(dir, 'escape.trace.jsonl')), false);
+      assert.equal((await post('good-id_1.2')).status, 200);
+      assert.deepEqual(readdirSync(traces), ['good-id_1.2.trace.jsonl']);
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+  });
+
+  it('jsonlSink skips events whose run id is not a safe file name', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reinloop-sink-'));
+    const sink = jsonlSink(join(dir, 'traces'));
+    const ev = (runId: string) => ({ runId, seq: 0, ts: 0, type: 'run_end', data: {} }) as unknown as RunEvent;
+    for (const id of ['../x', 'a/b', '..', '.x']) sink.onEvent(ev(id));
+    sink.onEvent(ev('ok'));
+    assert.deepEqual(readdirSync(join(dir, 'traces')), ['ok.trace.jsonl']);
+    assert.equal(existsSync(join(dir, 'x.trace.jsonl')), false);
+  });
+
+  it('stream refuses an unsafe caller-supplied run id for agents and teams', () => {
+    const a = agent({ name: 'a', model: { provider: mockProvider([{ text: 'x' }]), model: 'mock' } });
+    assert.throws(() => stream(a, 'hi', { runId: '../x' }), /invalid runId/);
+    assert.throws(() => team('t', 'parallel', { workers: [a] }).stream('hi', { runId: 'a/b' }), /invalid runId/);
+  });
+
+  it('403 for a foreign Host; localhost and an allowed host pass', async () => {
+    const rt = await loadProject({ cwd: await project(echo), env: {} });
+    const served = await serve(rt, { port: 0, allowedHosts: ['proxy.example.com'] });
+    const port = new URL(served.url).port;
+    try {
+      assert.equal(await raw(served.url, { host: `evil.example:${port}` }), 403);
+      assert.equal(await raw(served.url, { host: `127.0.0.1.evil.example:${port}` }), 403);
+      assert.equal(await raw(served.url, { host: '127.0.0.1' }), 403, 'port must match');
+      assert.equal(await raw(served.url, { host: `127.0.0.1:${port}` }), 200);
+      assert.equal(await raw(served.url, { host: `localhost:${port}` }), 200);
+      assert.equal(await raw(served.url, { host: `[::1]:${port}` }), 200);
+      assert.equal(await raw(served.url, { host: 'proxy.example.com' }), 200);
+      assert.equal(await raw(served.url, { host: 'proxy.example.com' }, 'GET', '/health'), 200);
+      assert.equal(await raw(served.url, { host: 'evil.example' }, 'GET', '/health'), 403);
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+  });
+
+  it('403 for a foreign Origin; allowed, own and absent Origin pass', async () => {
+    const rt = await loadProject({ cwd: await project(echo), env: {} });
+    const served = await serve(rt, { port: 0, allowedOrigins: ['https://app.example.com'] });
+    const get = (origin?: string) => fetch(`${served.url}/v1/agents`, { headers: origin ? { origin } : {} }).then((r) => r.status);
+    try {
+      assert.equal(await get('https://evil.example'), 403);
+      assert.equal(await get('null'), 403);
+      assert.equal(await get('https://app.example.com'), 200);
+      assert.equal(await get(served.url), 200, 'the console on this server');
+      assert.equal(await get(), 200);
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+    const closed = await serve(rt, { port: 0 });
+    try {
+      assert.equal((await fetch(`${closed.url}/v1/agents`, { headers: { origin: 'https://app.example.com' } })).status, 403, 'no origin allowed by default');
+    } finally {
+      await closed.close();
+    }
+  });
+
+  it('415 for a POST that is not JSON', async () => {
+    const rt = await loadProject({ cwd: await project(echo), env: {} });
+    const served = await serve(rt, { port: 0 });
+    const post = (type?: string) =>
+      fetch(`${served.url}/v1/agents/echo/runs`, { method: 'POST', headers: type ? { 'content-type': type } : {}, body: JSON.stringify({ input: 'hi' }) }).then((r) => r.status);
+    try {
+      assert.equal(await post('text/plain'), 415);
+      assert.equal(await post('application/x-www-form-urlencoded'), 415);
+      assert.equal(await post('application/jsonx'), 415);
+      assert.equal(await post('multipart/form-data; boundary=x'), 415);
+      assert.equal(await post('application/json; charset=utf-8'), 200);
+      assert.equal(await post('Application/JSON'), 200);
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+  });
+
+  it('refuses to start on a non-loopback host without authentication unless insecure', async () => {
+    const rt = await loadProject({ cwd: await project(echo), env: {} });
+    try {
+      await assert.rejects(serve(rt, { port: 0, host: '0.0.0.0' }), /refusing to serve on 0\.0\.0\.0 without authentication.*--insecure/);
+      for (const options of [{ token: 't' }, { insecure: true }]) {
+        const served = await serve(rt, { port: 0, host: '0.0.0.0', ...options });
+        await served.close();
+      }
+      const local = await serve(rt, { port: 0, host: 'localhost' });
+      await local.close();
+    } finally {
+      await rt.close();
+    }
   });
 });

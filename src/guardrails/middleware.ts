@@ -31,15 +31,17 @@ type Outcome = { text: string; changed: boolean } | { block: { guard: string; re
  * Runs any `Guard` objects (implementations live in plugins, e.g. agent-layers adapters) at the four checkpoints of a run:
  * - `input`: new user text before it is recorded (`beforeInput`; `beforeModel` for older history); redaction changes
  *   what is persisted and what the model sees.
- * - `output`: assistant text after each model call (`afterModel`); redaction changes what is persisted and returned.
+ * - `output`: assistant text and thinking after each model call (`afterModel`); redaction changes what is persisted and
+ *   returned (a redacted thinking part loses its signature, so providers do not replay it).
  * - `tool_args`: the JSON of a call's arguments (`beforeTool`); block denies the call.
  * - `tool_result`: a tool's result (`afterTool`); block replaces it with an error for the model.
  * A block on `input` or `output` ends the run with status `stopped` and reason `guardrail:<guard>:<stage>` (see `RunStop`;
  * a blocked response is recorded as a discarded `model_response` without its content, so its usage and cost count). Guards run in order, the first block wins and
  * redactions chain. Each non-allow verdict is recorded as a `guardrail` event (audit: guard, stage, action, reason; never the text).
  *
- * With an `output` guard the middleware sets `holdsText`: `text_delta` carries the checked text once, after the answer
- * is complete, instead of streaming the raw tokens (no streamed text bypasses the guard; streaming latency is lost).
+ * With an `output` guard the middleware sets `holdsText`: `text_delta` and `thinking_delta` carry the checked text once,
+ * after the answer is complete, instead of streaming the raw tokens (nothing streamed bypasses the guard; streaming
+ * latency is lost).
  */
 export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = {}): Middleware {
   const failOpen = opts.onError === 'allow';
@@ -68,15 +70,19 @@ export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = 
     return { text, changed: text !== original };
   }
 
-  /** Applies `scan` to every text part; the first block is returned instead of the parts. */
+  /** Applies `scan` to every text part (and, at `output`, every thinking part); the first block is returned instead of the parts. */
   async function scanParts(ctx: HookContext, stage: 'input' | 'output', parts: Part[]): Promise<Part[] | undefined | { blocked: string }> {
     let out: Part[] | undefined;
     for (const [i, part] of parts.entries()) {
-      if (part.type !== 'text') continue;
+      if (part.type !== 'text' && !(part.type === 'thinking' && stage === 'output')) continue;
       const res = await scan(ctx, stage, part.text);
       if ('block' in res) return { blocked: `guardrail:${res.block.guard}:${stage}` };
       if (!res.changed) continue;
       out ??= [...parts];
+      if (part.type === 'thinking') {
+        out[i] = { type: 'thinking', text: res.text }; // the signature covers the original text: dropped, so providers do not replay it
+        continue;
+      }
       const { citations: _stale, ...rest } = part; // offsets no longer match the rewritten text
       out[i] = { ...rest, text: res.text };
     }

@@ -111,6 +111,10 @@ const MCP_LIMITS = {
     component: 'MCP servers', path: 'mcpServers.<name>.stderrChars', option: 'McpServerConfig.stderrChars', default: 2000, min: 0,
     why: 'Tail of a stdio server stderr kept for error messages',
   },
+  'mcp.maxSessions': {
+    component: 'MCP servers', path: 'mcpServers.<name>.maxSessions', option: 'McpServerConfig.maxSessions', default: 100, min: 1, safe: [1, 10_000],
+    why: 'Per-identity MCP sessions kept open on an HTTP server with `auth` (the least recently used is dropped)',
+  },
 } as const satisfies Record<string, LimitSpec>;
 
 const BUILTIN_PROVIDERS = ['openai-compatible', 'anthropic'] as const;

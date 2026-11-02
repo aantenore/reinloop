@@ -25,6 +25,15 @@ export class ProviderError extends ReinloopError {
 
 export const newId = (): string => randomUUID();
 
+/** Run ids become file names (stores, traces): no separators, no leading dot, bounded length. */
+export const SAFE_RUN_ID = /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/;
+export const isSafeRunId = (id: unknown): id is string => typeof id === 'string' && SAFE_RUN_ID.test(id);
+
+/** Throws on a caller-supplied run id that is not a safe file name. */
+export function assertSafeRunId(id: string | undefined): void {
+  if (id !== undefined && !isSafeRunId(id)) throw new ReinloopError('invalid_run_id', 'invalid runId: use 1-128 letters, digits, "_", "-" or "." (not first)');
+}
+
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0 });
 
 export function addUsage(a: Usage, b: Usage): Usage {

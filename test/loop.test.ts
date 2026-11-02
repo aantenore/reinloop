@@ -4,7 +4,7 @@ import {
   agentTool, collectSink, defineTool, memoryArtifacts, memoryStore, readArtifactTool, run, stream, windowCompaction,
   type RunEvent,
 } from '../src/index.ts';
-import { echoTool, makeAgent, sleepTool } from './helpers.ts';
+import { echoTool, makeAgent, sleepTool, thinkingAgent } from './helpers.ts';
 
 describe('loop', () => {
   it('completes a text-only run and reports usage', async () => {
@@ -217,6 +217,19 @@ describe('loop', () => {
     const b = await run(agent, 'two', { store, runId: a.runId });
     assert.equal(b.output, 'second');
     assert.equal(agent.provider.requests[1]!.messages.length, 3);
+  });
+
+  it('holds thinking_delta until afterModel ran when a middleware sets holdsText, and streams it otherwise', async () => {
+    const order: string[] = [];
+    const sink = { onEvent: (e: RunEvent) => { if (e.type === 'thinking_delta' || e.type === 'text_delta') order.push(e.type); } };
+    const holding = { name: 'hold', holdsText: true, afterModel: () => { order.push('afterModel'); return undefined; } };
+    await run(thinkingAgent('a b', 'c d', { middleware: [holding] }), 'q', { sinks: [sink] });
+    assert.deepEqual(order, ['afterModel', 'thinking_delta', 'text_delta']);
+
+    order.length = 0;
+    const plain = { name: 'plain', afterModel: () => { order.push('afterModel'); return undefined; } };
+    await run(thinkingAgent('a b', 'c d', { middleware: [plain] }), 'q', { sinks: [sink] });
+    assert.deepEqual(order, ['thinking_delta', 'thinking_delta', 'text_delta', 'text_delta', 'afterModel']);
   });
 
   it('streams events, supports abort and marks the run interrupted', async () => {

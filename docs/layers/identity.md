@@ -82,7 +82,16 @@ exposes the built verifier and factory.
 - The static `token` is an operator credential: it runs without identity and may read every run log.
 - Verified callers read and continue only runs started under their own subject (others: `404`); listing runs needs the
   operator token (`403`).
-- `required: false`: requests without a header run anonymously and see only runs without identity.
+- Runs without a subject (started anonymously or without identity) and callers without identity never match: such runs
+  are readable and continuable with the operator token only (`404` otherwise).
+- `required: false`: requests without a header run anonymously; they cannot read or continue any stored run, including
+  the ones they started (read those with the operator token).
+- Browser and network guards run before authentication: a `Host` outside the allow-list -> `403` (DNS rebinding), an
+  `Origin` that is neither allowed nor the server's own -> `403`, a `POST` without `application/json` -> `415`, an
+  invalid `runId` -> `400`. Binding a non-loopback host without `token` or verifier is refused unless `insecure` is set.
+  See [configuration](../configuration.md#serve).
+- Without a verifier (`identity: false` or none configured) `serve` is an open local mode: no per-run access
+  restriction; set `token` to require a static credential.
 
 ## MCP (streamable HTTP)
 

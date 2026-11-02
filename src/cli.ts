@@ -40,7 +40,10 @@ Options:
   -y, --yes               Approve tool calls that policy marks "ask"
       --json              Print events as JSON lines
       --debug             Verbose progress on stderr
-      --port, --host, --token   Options for serve (token also from REINLOOP_API_TOKEN)`;
+      --port, --host, --token   Options for serve (token also from REINLOOP_API_TOKEN)
+      --allow-host <host>     serve: extra Host accepted (repeatable; localhost and the bound host always are)
+      --allow-origin <url>    serve: browser origin allowed to call the API (repeatable; default none)
+      --insecure              serve: allow a non-loopback --host without token or identity verifier`;
 
 type Values = Record<string, string | boolean | string[] | undefined>;
 
@@ -129,6 +132,9 @@ async function main(argv: string[]): Promise<number> {
       port: { type: 'string' },
       host: { type: 'string' },
       token: { type: 'string' },
+      'allow-host': { type: 'string', multiple: true },
+      'allow-origin': { type: 'string', multiple: true },
+      insecure: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -204,7 +210,7 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       case 'serve': {
         const token = values.token ?? process.env.REINLOOP_API_TOKEN;
-        const served = await serve(rt, { port: values.port ? Number(values.port) : undefined, host: values.host, token, approve: values.yes ? () => true : undefined });
+        const served = await serve(rt, { port: values.port ? Number(values.port) : undefined, host: values.host, token, allowedHosts: values['allow-host'], allowedOrigins: values['allow-origin'], insecure: values.insecure, approve: values.yes ? () => true : undefined });
         console.error(`reinloop serving ${rt.names().join(', ')} at ${served.url}${token ? ' (token required)' : ''}`);
         await new Promise<void>((resolve) => process.once('SIGINT', resolve));
         await served.close();

@@ -53,7 +53,7 @@ The state of a run is a fold over its events (`state.ts: reduce`):
 | `tool_result` | yes | appends a tool result; records a `stop` request; `layer` from `Tool.layer` (also on `tool_start`) |
 | `compaction` | yes | replaces the history |
 | `run_end` | yes | final status; clears stop requests; team runs carry `failures` |
-| `turn_start`, `model_request`, `text_delta`, `thinking_delta`, `tool_start` | no | streaming and tracing only (`text_delta` arrives once, after `afterModel`, when a middleware sets `holdsText`) |
+| `turn_start`, `model_request`, `text_delta`, `thinking_delta`, `tool_start` | no | streaming and tracing only (`text_delta` and `thinking_delta` arrive once, after `afterModel`, when a middleware sets `holdsText`) |
 
 Persistence is awaited at checkpoints: after each model response and after each tool batch. Crash semantics:
 
@@ -107,7 +107,7 @@ most code; the rest is the lower layers.
 | Hook | Where |
 |---|---|
 | `Provider.generate(request, { signal, onText })` | one method; any model API |
-| `Middleware.beforeInput/beforeModel/afterModel/beforeTool/afterTool` | rewrite input before it is recorded, rewrite requests, deny calls, redact outputs; `holdsText` holds streamed text until `afterModel` ran; `HookContext.emit` records events; throw `RunStop` to end the run `stopped` |
+| `Middleware.beforeInput/beforeModel/afterModel/beforeTool/afterTool` | rewrite input before it is recorded, rewrite requests, deny calls, redact outputs; `holdsText` holds streamed text and thinking until `afterModel` ran; `HookContext.emit` records events; throw `RunStop` to end the run `stopped` |
 | `ModelRouter.select(req, ctx)` | pick the model per request (`routers`, agent `router`) |
 | `KnowledgeSource.search(query)` | retrieval backend (`knowledgeMiddleware`) |
 | `IdentityVerifier`, `CredentialFactory`/`CredentialProvider`, `Authorizer` | inbound tokens (`identity.verifier`, `serve`), downstream tokens (`identity.credentials`), external policy decision point (`policy.pdp`) |

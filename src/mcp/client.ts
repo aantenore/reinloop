@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { readSse } from '../providers/http.ts';
 import { defineTool, safeToolName } from '../tools/define.ts';
@@ -14,7 +15,13 @@ export interface McpServerConfig {
   /** stdio transport */
   command?: string;
   args?: string[];
+  /** Variables set for the server, on top of the minimal base environment (see `inheritEnv`). */
   env?: Record<string, string>;
+  /**
+   * Names of parent environment variables passed to the server in addition to the minimal base (`MCP_BASE_ENV`);
+   * `"*"` passes the whole parent environment. Without it a server never sees provider keys or other secrets of the process.
+   */
+  inheritEnv?: string[];
   cwd?: string;
   /** Streamable HTTP transport */
   url?: string;
@@ -33,9 +40,12 @@ export interface McpServerConfig {
   errorBodyChars?: number;
   /** Tail of a stdio server's stderr kept for error messages (default 2000). */
   stderrChars?: number;
+  /** Per-identity sessions kept open with `auth` (default 100); the least recently used is dropped. */
+  maxSessions?: number;
   /**
    * Streamable HTTP only: send `Authorization: Bearer` with a token for `audience` from the run's credentials on every
    * tool call (overrides a static `headers.authorization`). Connection setup uses the `connect` credentials, if any.
+   * Calls with a run credential use an MCP session of their own (per identity, or per token without one), never the connection's or another caller's.
    */
   auth?: { audience: string; scopes?: string[] };
 }
@@ -56,6 +66,20 @@ function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortS
 
 type HeaderMap = Record<string, string>;
 
+/** Parent variables a stdio server always receives: enough to locate binaries, a home and temp directory, and the locale (plus the Windows basics). */
+export const MCP_BASE_ENV: readonly string[] = [
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TMPDIR',
+  'TEMP', 'TMP', 'SystemRoot', 'windir', 'COMSPEC', 'PATHEXT', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'USERNAME', 'HOMEDRIVE', 'HOMEPATH', 'ProgramData', 'ProgramFiles',
+];
+
+/** Environment of a stdio server: the base allowlist, then `inheritEnv`, then `env` (which wins). */
+export function mcpChildEnv(cfg: Pick<McpServerConfig, 'env' | 'inheritEnv'>, parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  const names = cfg.inheritEnv?.includes('*') ? Object.keys(parent) : [...MCP_BASE_ENV, ...(cfg.inheritEnv ?? [])];
+  for (const name of names) if (parent[name] !== undefined) out[name] = parent[name];
+  return { ...out, ...cfg.env };
+}
+
 /** Static headers plus credentials; a credential header replaces a static one of any letter case. */
 function withAuth(base: HeaderMap | undefined, auth: HeaderMap | undefined): HeaderMap {
   if (!auth) return { ...base };
@@ -64,7 +88,8 @@ function withAuth(base: HeaderMap | undefined, auth: HeaderMap | undefined): Hea
 }
 
 interface Transport {
-  request(method: string, params: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<any>;
+  /** `sessionKey` (HTTP): the MCP session of one identity; without it the connection's session is used. */
+  request(method: string, params: unknown, signal?: AbortSignal, headers?: HeaderMap, sessionKey?: string): Promise<any>;
   notify(method: string, params?: unknown): Promise<void>;
   close(): Promise<void>;
 }
@@ -84,7 +109,7 @@ class StdioTransport implements Transport {
 
   constructor(cfg: McpServerConfig, timeoutMs: number) {
     this.timeoutMs = timeoutMs;
-    this.child = spawn(cfg.command!, cfg.args ?? [], { cwd: cfg.cwd, env: { ...process.env, ...cfg.env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn(cfg.command!, cfg.args ?? [], { cwd: cfg.cwd, env: mcpChildEnv(cfg), stdio: ['pipe', 'pipe', 'pipe'] });
     const stderrChars = cfg.stderrChars ?? limitDefault('mcp.stderrChars');
     this.child.stderr!.on('data', (d: Buffer) => (this.stderr = stderrChars ? (this.stderr + d.toString()).slice(-stderrChars) : ''));
     createInterface({ input: this.child.stdout! }).on('line', (line) => this.onLine(line));
@@ -151,9 +176,20 @@ class StdioTransport implements Transport {
   }
 }
 
+/** An MCP session: the server's id, once it has assigned one. */
+interface Session { id?: string }
+
+function initializeParams() {
+  return { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: 'reinloop', version: VERSION } };
+}
+
 class HttpTransport implements Transport {
   private nextId = 1;
-  private session?: string;
+  /** The connection's own session (initialize, tools/list, calls without identity). */
+  private main: Session = {};
+  /** One session per identity, least recently used first; each response only updates the session of its own caller. */
+  private sessions = new Map<string, { session: Session; ready: Promise<void> }>();
+  private maxSessions: number;
   private protocol?: string;
   private cfg: McpServerConfig;
   private timeoutMs: number;
@@ -161,6 +197,7 @@ class HttpTransport implements Transport {
   private minSecretChars?: number;
 
   constructor(cfg: McpServerConfig, timeoutMs: number, connectHeaders: () => Promise<HeaderMap | undefined> = async () => undefined, minSecretChars?: number) {
+    this.maxSessions = cfg.maxSessions ?? limitDefault('mcp.maxSessions');
     this.cfg = cfg;
     this.timeoutMs = timeoutMs;
     this.connectHeaders = connectHeaders;
@@ -176,29 +213,65 @@ class HttpTransport implements Transport {
     return secretForms([...staticSecrets(this.cfg.headers), ...staticSecrets(auth)], this.minSecretChars);
   }
 
-  private async post(body: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<{ res: Response; auth: HeaderMap | undefined }> {
+  /** Never follows a redirect: static headers and credentials must not be resent to another location. */
+  private async fetch(init: RequestInit): Promise<Response> {
+    try {
+      return await fetch(this.cfg.url!, { ...init, redirect: 'error' });
+    } catch (err) {
+      const cause = (err as { cause?: { message?: string } } | undefined)?.cause?.message ?? '';
+      if (/redirect/i.test(cause)) throw new Error('MCP HTTP request was redirected; redirects are not followed, set "url" to the final location');
+      throw err;
+    }
+  }
+
+  private async post(body: unknown, signal?: AbortSignal, headers?: HeaderMap, session: Session = this.main): Promise<{ res: Response; auth: HeaderMap | undefined }> {
     const auth = headers ?? (await this.connectHeaders());
-    const res = await fetch(this.cfg.url!, {
+    const res = await this.fetch({
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
-        ...(this.session && { 'mcp-session-id': this.session }),
+        ...(session.id && { 'mcp-session-id': session.id }),
         ...(this.protocol && { 'mcp-protocol-version': this.protocol }),
         ...withAuth(this.cfg.headers, auth),
       },
       body: JSON.stringify(body),
       signal: withTimeout(signal, this.timeoutMs),
     });
-    this.session = res.headers.get('mcp-session-id') ?? this.session;
+    session.id = res.headers.get('mcp-session-id') ?? session.id;
     // Mask the whole body before cutting it: a secret that straddles the cut would otherwise survive in part.
     if (!res.ok) throw new Error(`MCP HTTP ${res.status}: ${redact(await res.text().catch(() => ''), this.secrets(auth)).slice(0, this.cfg.errorBodyChars ?? limitDefault('mcp.errorBodyChars'))}`);
     return { res, auth };
   }
 
-  async request(method: string, params: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<any> {
+  /** The session of `key`, initialized with the caller's own credentials on first use. */
+  private async sessionFor(key: string, headers: HeaderMap | undefined, signal?: AbortSignal): Promise<Session> {
+    let entry = this.sessions.get(key);
+    if (entry) {
+      this.sessions.delete(key); // re-insert: most recently used last
+    } else {
+      const session: Session = {};
+      const ready = this.exchange('initialize', initializeParams(), signal, headers, session).then(async () => {
+        const { res } = await this.post({ jsonrpc: '2.0', method: 'notifications/initialized' }, signal, headers, session);
+        await res.body?.cancel();
+      });
+      entry = { session, ready };
+      ready.catch(() => this.sessions.get(key) === entry && this.sessions.delete(key));
+    }
+    this.sessions.set(key, entry);
+    while (this.sessions.size > this.maxSessions) this.sessions.delete(this.sessions.keys().next().value!);
+    await entry.ready;
+    return entry.session;
+  }
+
+  async request(method: string, params: unknown, signal?: AbortSignal, headers?: HeaderMap, sessionKey?: string): Promise<any> {
+    const session = sessionKey === undefined ? this.main : await this.sessionFor(sessionKey, headers, signal);
+    return this.exchange(method, params, signal, headers, session);
+  }
+
+  private async exchange(method: string, params: unknown, signal: AbortSignal | undefined, headers: HeaderMap | undefined, session: Session): Promise<any> {
     const id = this.nextId++;
-    const { res, auth } = await this.post({ jsonrpc: '2.0', id, method, params }, signal, headers);
+    const { res, auth } = await this.post({ jsonrpc: '2.0', id, method, params }, signal, headers, session);
     const pick = (msg: any) => {
       if (msg.error) throw rpcError(msg.error, this.secrets(auth));
       return msg.result;
@@ -219,9 +292,11 @@ class HttpTransport implements Transport {
   }
 
   async close(): Promise<void> {
-    if (!this.session) return;
+    // Per-identity sessions cannot be closed here: that needs the identity's own credentials, which are not kept.
+    this.sessions.clear();
+    if (!this.main.id) return;
     const auth = await this.connectHeaders().catch(() => undefined);
-    await fetch(this.cfg.url!, { method: 'DELETE', headers: { 'mcp-session-id': this.session, ...withAuth(this.cfg.headers, auth) } }).catch(() => {});
+    await this.fetch({ method: 'DELETE', headers: { 'mcp-session-id': this.main.id, ...withAuth(this.cfg.headers, auth) } }).catch(() => {});
   }
 }
 
@@ -250,11 +325,7 @@ export class McpClient {
     const connectHeaders = async () => (cfg.auth && opts.credentials ? bearer(await opts.credentials.token(cfg.auth.audience, { scopes: cfg.auth.scopes })) : undefined);
     const transport = cfg.command ? new StdioTransport(cfg, timeoutMs) : new HttpTransport(cfg, timeoutMs, connectHeaders, opts.minSecretChars);
     try {
-      const init = await transport.request('initialize', {
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: 'reinloop', version: VERSION },
-      });
+      const init = await transport.request('initialize', initializeParams());
       if (transport instanceof HttpTransport) transport.setProtocol(init?.protocolVersion ?? MCP_PROTOCOL_VERSION);
       await transport.notify('notifications/initialized');
       return new McpClient(name, transport, init?.serverInfo);
@@ -275,9 +346,12 @@ export class McpClient {
     return tools;
   }
 
-  /** `headers` (HTTP transport) replace the connection credentials for this call, e.g. a per-run Authorization. */
-  async callTool(name: string, args: unknown, signal?: AbortSignal, headers?: HeaderMap): Promise<{ content: string; isError: boolean }> {
-    const res = await this.transport.request('tools/call', { name, arguments: args ?? {} }, signal, headers);
+  /**
+   * `headers` (HTTP transport) replace the connection credentials for this call, e.g. a per-run Authorization.
+   * `sessionKey` runs the call in the MCP session of that caller (opened on first use), not in the connection's.
+   */
+  async callTool(name: string, args: unknown, signal?: AbortSignal, headers?: HeaderMap, sessionKey?: string): Promise<{ content: string; isError: boolean }> {
+    const res = await this.transport.request('tools/call', { name, arguments: args ?? {} }, signal, headers, sessionKey);
     const text = (res?.content ?? [])
       .map((c: any) => (c.type === 'text' ? c.text : c.type === 'resource' ? (c.resource?.text ?? `[resource ${c.resource?.uri}]`) : `[${c.type}]`))
       .join('\n');
@@ -330,7 +404,10 @@ export async function mcpTools(name: string, cfg: McpServerConfig, opts: McpConn
           const token = headers?.authorization?.replace(/^Bearer /, '');
           const forms = secretForms([...(token ? [token] : []), ...staticSecrets(cfg.headers)], opts.minSecretChars);
           try {
-            const res = await client.callTool(info.name, args, ctx.signal, headers);
+            // The session follows the identity, never the raw token (tokens rotate and must not be kept). Without an identity
+            // it follows a digest of the token, so two principals never share a session (the connection's session is never used).
+            const sessionKey = !headers ? undefined : ctx.identity ? `${ctx.identity.kind}:${ctx.identity.subject}` : `token:${createHash('sha256').update(`${auth!.audience}\0${token}`).digest('hex')}`;
+            const res = await client.callTool(info.name, args, ctx.signal, headers, sessionKey);
             return { ...res, content: redact(res.content, forms) };
           } catch (err) {
             throw scrubError(err, forms);

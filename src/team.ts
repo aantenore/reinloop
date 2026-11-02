@@ -2,7 +2,7 @@ import { createEmitter, createHandle, normalizeInput, type RunHandle, stream } f
 import { initialState } from './state.ts';
 import { memoryStore } from './store/memory.ts';
 import type { Agent, MemberFailure, Message, RunOptions, RunResult, RunStatus, Usage } from './types.ts';
-import { addUsage, emptyUsage, errorMessage, newId, textOf } from './util.ts';
+import { addUsage, assertSafeRunId, emptyUsage, errorMessage, newId, textOf } from './util.ts';
 
 export interface TeamOutcome { output: string; data?: unknown; status?: RunStatus; reason?: string; failures?: MemberFailure[] }
 
@@ -48,6 +48,7 @@ function subtract(a: Usage, b: Usage): Usage {
 
 /** Teams keep an event log (start, input, output, end) and aggregate usage and cost of their members. */
 export function streamTeam(team: Team, input?: string | Message[], opts: RunOptions = {}): RunHandle {
+  assertSafeRunId(opts.runId);
   const runId = opts.runId ?? newId();
   return createHandle(runId, opts.signal, async (signal, channel) => {
     const store = opts.store ?? memoryStore(); // shared by members so sessions can continue
@@ -59,7 +60,10 @@ export function streamTeam(team: Team, input?: string | Message[], opts: RunOpti
     let turns = 0;
     const sessions = new Map<string, RunResult>();
 
-    emit('run_start', { agent: team.name, resumed: false, parentRunId: opts.parentRunId });
+    emit('run_start', {
+      agent: team.name, resumed: false, parentRunId: opts.parentRunId,
+      ...(opts.identity && { subject: opts.identity.subject, identityKind: opts.identity.kind }),
+    });
     for (const message of messages) emit('message', { message, source: 'input' });
 
     const ctx: TeamContext = {

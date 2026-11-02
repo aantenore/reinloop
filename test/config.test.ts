@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { costOf, createRegistry, createRuntime, defineTool, deepMerge, interpolate, loadConfig, loadRuntime, pricingFor, resolveModel, type Agent, type HarnessConfig } from '../src/index.ts';
+import { costOf, createRegistry, createRuntime, defineTool, deepMerge, interpolate, loadConfig, loadRuntime, pricingFor, resolveModel, serve, type Agent, type HarnessConfig } from '../src/index.ts';
 
 const fixture = new URL('./fixtures/mcp-server.mjs', import.meta.url).pathname;
 
@@ -126,5 +126,32 @@ describe('config', () => {
     assert.deepEqual(await priceOf('opus'), { inputPerMTok: 1, outputPerMTok: 20, cacheReadPerMTok: 0.2, cacheWriteMultiplier: 1.25, cacheWrite1hMultiplier: 2, serverToolUsd: { webSearchRequests: 0.01 } });
     assert.deepEqual(await priceOf('house'), { inputPerMTok: 1, outputPerMTok: 2 });
     assert.deepEqual(await priceOf('pinned'), { inputPerMTok: 9, outputPerMTok: 9 }, 'models.<alias>.pricing wins');
+  });
+
+  it('reads the serve exposure guards from config; serve() options win', async () => {
+    const runtime = await createRuntime({ ...base(), serve: { allowedOrigins: ['https://app.example.com'], allowedHosts: ['proxy.example.com'], insecure: true } }, { env: {} });
+    assert.deepEqual(runtime.serveSettings?.(), { allowedOrigins: ['https://app.example.com'], allowedHosts: ['proxy.example.com'], insecure: true });
+    const status = (url: string, origin: string) => fetch(`${url}/v1/agents`, { headers: { origin } }).then((r) => r.status);
+    try {
+      const served = await serve(runtime, { port: 0 });
+      try {
+        assert.equal(await status(served.url, 'https://app.example.com'), 200, 'allowedOrigins from config');
+        assert.equal(await status(served.url, 'https://evil.example'), 403);
+      } finally {
+        await served.close();
+      }
+      const overridden = await serve(runtime, { port: 0, allowedOrigins: [] });
+      try {
+        assert.equal(await status(overridden.url, 'https://app.example.com'), 403, 'the option replaces the config value');
+      } finally {
+        await overridden.close();
+      }
+      const open = await serve(runtime, { port: 0, host: '0.0.0.0' });
+      await open.close();
+      await assert.rejects(serve(runtime, { port: 0, host: '0.0.0.0', insecure: false }), /refusing to serve/);
+    } finally {
+      await runtime.close();
+    }
+    await assert.rejects(createRuntime({ ...base(), serve: { insecure: 'yes' as never } }, { env: {} }), /insecure/);
   });
 });

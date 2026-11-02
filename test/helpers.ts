@@ -1,5 +1,5 @@
 import { defineTool, mockProvider, type MockStep } from '../src/index.ts';
-import type { Agent, Tool } from '../src/index.ts';
+import type { Agent, Provider, Tool } from '../src/index.ts';
 
 export function makeAgent(script: MockStep[], overrides: Partial<Agent> = {}): Agent & { provider: ReturnType<typeof mockProvider> } {
   const provider = mockProvider(script);
@@ -52,3 +52,20 @@ export const sse = (events: Array<{ event?: string; data: unknown }>) => () =>
     events.map((e) => `${e.event ? `event: ${e.event}\n` : ''}data: ${typeof e.data === 'string' ? e.data : JSON.stringify(e.data)}\n\n`).join(''),
     { status: 200, headers: { 'content-type': 'text/event-stream' } },
   );
+
+/** Agent whose model streams `thinking` (signed) and then `text`, token by token, like a reasoning model. */
+export function thinkingAgent(thinking: string, text: string, overrides: Partial<Agent> = {}): Agent {
+  const provider: Provider = {
+    name: 'thinking-mock',
+    async generate(_req, ctx) {
+      for (const chunk of thinking.match(/\S+\s*/g) ?? []) ctx.onThinking?.(chunk);
+      for (const chunk of text.match(/\S+\s*/g) ?? []) ctx.onText?.(chunk);
+      return {
+        message: { role: 'assistant', parts: [{ type: 'thinking', text: thinking, signature: 'sig' }, { type: 'text', text }] },
+        stopReason: 'end',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      };
+    },
+  };
+  return { name: 'test', model: { provider, model: 'mock-1' }, tools: [], ...overrides };
+}

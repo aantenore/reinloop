@@ -285,9 +285,11 @@ export interface HookContext {
 export interface Middleware {
   name?: string;
   /**
-   * Set by middleware whose `afterModel` rewrites or blocks the answer text (e.g. output guardrails). The loop then holds
-   * `text_delta` events until every `afterModel` has run and emits the final text as one delta, so no unchecked text is
-   * streamed. Trade-off: no incremental streaming; the text arrives together with the complete answer.
+   * Set by middleware whose `afterModel` rewrites or blocks the answer (e.g. output guardrails). The loop then holds
+   * `text_delta` and `thinking_delta` events until every `afterModel` has run and emits the surviving thinking and text
+   * as one delta each, so nothing unchecked is streamed. `afterModel` sees the thinking parts of `message.parts` next to
+   * the text and must scan or strip them (a rewritten thinking part must drop its `signature`). Trade-off: no
+   * incremental streaming; the content arrives together with the complete answer.
    */
   holdsText?: boolean;
   /**

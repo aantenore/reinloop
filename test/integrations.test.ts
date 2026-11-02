@@ -3,11 +3,14 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
 import { promisify } from 'node:util';
 import { mcpTools, mockProvider, otelSink, run, workspaceTools, type McpServerConfig, type McpToolInfo, type OtelSpan, type ToolContext } from '../src/index.ts';
 
 const fixture = new URL('./fixtures/mcp-server.mjs', import.meta.url).pathname;
+const envFixture = new URL('./fixtures/mcp-env-server.mjs', import.meta.url).pathname;
 const ctx = { signal: new AbortController().signal } as ToolContext;
 
 describe('mcp', () => {
@@ -42,6 +45,61 @@ describe('mcp', () => {
 
   it('reports a server that fails to start', async () => {
     await assert.rejects(mcpTools('bad', { command: process.execPath, args: ['-e', 'process.exit(3)'] }), /exited with code 3/);
+  });
+
+  describe('stdio environment', () => {
+    const SENTINEL = 'REINLOOP_TEST_SENTINEL_SECRET';
+    const read = async (cfg: McpServerConfig, name: string): Promise<string> => {
+      const { client, tools } = await mcpTools('e', { command: process.execPath, args: [envFixture], ...cfg });
+      try {
+        return (await tools[0]!.run({ name }, ctx) as { content: string }).content;
+      } finally {
+        await client.close();
+      }
+    };
+    const withSentinel = async (fn: () => Promise<void>) => {
+      process.env[SENTINEL] = 'parent-secret';
+      try {
+        await fn();
+      } finally {
+        delete process.env[SENTINEL];
+      }
+    };
+
+    it('does not pass the parent environment by default', () =>
+      withSentinel(async () => {
+        assert.equal(await read({}, SENTINEL), '<unset>');
+        assert.notEqual(await read({}, 'PATH'), '<unset>');
+      }));
+
+    it('passes the variables named in inheritEnv, and all with "*"', () =>
+      withSentinel(async () => {
+        assert.equal(await read({ inheritEnv: [SENTINEL] }, SENTINEL), 'parent-secret');
+        assert.equal(await read({ inheritEnv: ['*'] }, SENTINEL), 'parent-secret');
+      }));
+
+    it('passes env, which wins over inherited values', () =>
+      withSentinel(async () => {
+        assert.equal(await read({ env: { OWN_VAR: 'own' } }, 'OWN_VAR'), 'own');
+        assert.equal(await read({ env: { [SENTINEL]: 'cfg' }, inheritEnv: [SENTINEL] }, SENTINEL), 'cfg');
+      }));
+  });
+
+  it('does not follow an HTTP redirect to another origin', async () => {
+    const hits: string[] = [];
+    const listen = async (handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void) => {
+      const server = createServer((req, res) => (req.resume(), handler(req, res)));
+      await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+      return { server, url: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+    };
+    const target = await listen((req, res) => (hits.push(`${req.method} ${req.headers.authorization ?? ''}`), res.writeHead(200).end('{}')));
+    const origin = await listen((_req, res) => res.writeHead(307, { location: `${target.url}/mcp` }).end());
+    try {
+      await assert.rejects(mcpTools('r', { url: `${origin.url}/mcp`, headers: { authorization: 'Bearer static-secret' } }), /redirected; redirects are not followed/);
+      assert.deepEqual(hits, []);
+    } finally {
+      for (const s of [origin.server, target.server]) (s.closeAllConnections(), s.close());
+    }
   });
 });
 

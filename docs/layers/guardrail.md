@@ -23,15 +23,15 @@ guardMiddleware(guards, { onError: 'block', name: 'guard', maxReasonChars: 200 }
 | Stage | Hook | Effect |
 |---|---|---|
 | `input` | `beforeInput` | new user text; a redaction is what is persisted and what the model sees |
-| `output` | `afterModel` | assistant text; a redaction is what is persisted and returned |
+| `output` | `afterModel` | assistant text and thinking; a redaction is what is persisted and returned (a redacted thinking part loses its signature) |
 | `tool_args` | `beforeTool` | the JSON of a call's arguments; block denies the call |
 | `tool_result` | `afterTool` | a tool's result; block replaces it with an error for the model |
 
 - Guards run in order, the first block wins and redactions chain. Guards that set `stages` run only there.
 - A block on `input` or `output` ends the run with status `stopped` and reason `guardrail:<guard>:<stage>`, through
   `RunStop`. The blocked response is accounted as a discarded `model_response` without its content, so usage and cost count.
-- With an `output` guard the middleware sets `holdsText`: `text_delta` carries the checked text once, after the answer is
-  complete, so no unchecked text is streamed (streaming latency is lost).
+- With an `output` guard the middleware sets `holdsText`: `text_delta` and `thinking_delta` carry the checked content once,
+  after the answer is complete, so nothing unchecked is streamed (streaming latency is lost).
 - `onError`: what a guard that throws or returns an invalid verdict means; `block` (default, fail closed) or `allow`.
 - Each non-allow verdict is a `guardrail` audit event (`guard`, `stage`, `action`, `reason`); it never carries the text.
   `parseVerdict` validates a raw answer into a `GuardVerdict`.

@@ -127,7 +127,7 @@ describe('limits', () => {
 
       const served = await serve(rt, { port: 0 });
       try {
-        const res = await fetch(`${served.url}/v1/agents/a/runs`, { method: 'POST', body: JSON.stringify({ input: 'more than sixteen bytes' }) });
+        const res = await fetch(`${served.url}/v1/agents/a/runs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: 'more than sixteen bytes' }) });
         assert.equal(res.status, 413, 'serve.maxBodyBytes from the config');
       } finally {
         await served.close();
