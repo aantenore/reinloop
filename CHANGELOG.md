@@ -8,6 +8,17 @@
 
 - `reinloop serve`: per-run access requires a verified identity matching the run subject. Runs without a subject, and
   callers without identity, are operator-only (`404` for others). Open mode without a verifier is documented.
+- `serve` run access also requires the same identity kind as the run; runs without a recorded kind are operator-only
+  (breaking for runs stored by older versions).
+- `serve` refuses a non-loopback host when the identity verifier is optional (`required: false`) and no token or
+  `insecure` is set.
+- `serve`: `GET /health` is exempt from the `Host` / `Origin` allow-lists; non-GET `/health` returns `404`.
+- `serve`: `GET /v1/runs/:id` returns `404` for an unsafe run id without reading the store.
+- `serve`: one request per run id at a time (`409` run busy), closing a race on the ownership check of a new run id.
+- `serve`: a `Host` header without port is treated as port 80.
+- MCP over HTTP: an expired session (`404` for its id) is replaced and the call retried once.
+- MCP over HTTP: a caller that aborts no longer fails other callers waiting for the same per-identity session.
+- Guardrails: thinking parts with no text are not scanned.
 - MCP over HTTP with `auth` keeps one MCP session per run identity, opened with that identity's token; a response only
   updates its caller's session. `mcpServers.<name>.maxSessions` (default 100, least recently used dropped).
 - MCP calls with per-call credentials but no identity use a session keyed by a hash of audience and token, never the
@@ -25,7 +36,8 @@
   `--insecure` (also `serve.insecure`).
 - Breaking: stdio MCP servers get a minimal environment (`PATH`, `HOME`, locale, temp dirs, Windows basics) plus `env`.
   `mcpServers.<name>.inheritEnv` passes parent variables; `["*"]` restores the old behavior.
-- MCP HTTP transport no longer follows redirects.
+- MCP HTTP transport, OTLP export (traces and metrics), provider, signal-tool and conformance-check HTTP requests
+  no longer follow redirects.
 - Fix: team runs record `subject` and `identityKind` in `run_start`.
 - Fix: a `null` or array POST body returns `400` instead of `500`.
 

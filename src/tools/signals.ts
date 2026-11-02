@@ -279,7 +279,8 @@ export function signalTools(opts: SignalToolsOptions = {}): SignalTools {
     rateLimitBodyChars: opts.rateLimitBodyChars ?? limitDefault('signals.rateLimitBodyChars'),
   };
   const userAgent = opts.userAgent ?? DEFAULT_UA;
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  // Never follows a redirect: the GitHub token and custom source headers must not be resent to another location.
+  const fetchImpl = opts.fetchImpl ?? ((u: string, i?: RequestInit) => fetch(u, { ...i, redirect: 'error' }));
   const cache = ttlCache(opts.cacheTtlMs ?? limitDefault('signals.cacheTtlMs'), opts.cacheMaxEntries ?? limitDefault('signals.cacheMaxEntries'));
   const out: SignalTools = {};
   for (const spec of opts.sources ?? BUILTIN_SIGNAL_SOURCES) {

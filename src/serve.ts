@@ -120,8 +120,11 @@ const unauthorized = (error?: string, description?: string) =>
 /** Who a request acts as: the operator (static token), a verified identity, or anonymous. */
 interface Caller { operator: boolean; identity?: Identity }
 
-/** Subject of a stored run (from its first `run_start`); undefined for runs without identity. */
-const runSubject = (events: RunEvent[]) => (events.find((e) => e.type === 'run_start') as RunEvent<'run_start'> | undefined)?.data.subject;
+/** Subject and identity kind of a stored run (from its first `run_start`); undefined for runs without identity. */
+const runSubject = (events: RunEvent[]) => {
+  const data = (events.find((e) => e.type === 'run_start') as RunEvent<'run_start'> | undefined)?.data;
+  return data?.subject === undefined ? undefined : { subject: data.subject, kind: data.identityKind };
+};
 
 /**
  * HTTP API over a runtime:
@@ -137,10 +140,11 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
   const headersTimeout = nodeTimeout(opts.headersTimeoutMs ?? settings.headersTimeoutMs ?? limitDefault('serve.headersTimeoutMs'));
   const verifier = opts.identity === false ? undefined : (opts.identity?.verifier ?? runtime.identity?.verifier);
   const bindHost = opts.host ?? '127.0.0.1';
-  if (!isLoopback(bindHost) && !opts.token && !verifier && !(opts.insecure ?? settings.insecure)) {
-    throw new Error(`refusing to serve on ${bindHost} without authentication: set a token (--token / REINLOOP_API_TOKEN) or an identity verifier, or pass --insecure to accept an open API`);
-  }
   const required = opts.identity ? (opts.identity.required ?? true) : (runtime.identity?.required ?? true);
+  // A verifier that lets anonymous callers through (`required: false`) does not authenticate the API.
+  if (!isLoopback(bindHost) && !opts.token && !(verifier && required) && !(opts.insecure ?? settings.insecure)) {
+    throw new Error(`refusing to serve on ${bindHost} without authentication: set a token (--token / REINLOOP_API_TOKEN) or a required identity verifier, or pass --insecure to accept an open API`);
+  }
   const authenticate = async (header: string | undefined): Promise<Caller> => {
     if (opts.token && sameSecret(header, `Bearer ${opts.token}`)) return { operator: true };
     if (!verifier) {
@@ -162,12 +166,13 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
     }
   };
   // With identity on, a caller sees and continues only runs started under its own subject; the operator sees all.
-  // Runs without a subject, and callers without identity, never match: those runs are operator-only.
+  // Runs without a subject (or without a recorded identity kind), and callers without identity, never match: those runs
+  // are operator-only. The kind must match too, so a user and an agent sharing a subject string stay apart.
   // Without a verifier serve is an open (local) mode: runs carry no subject and access is not restricted.
   const mayAccess = (caller: Caller, events: RunEvent[]) => {
     if (!verifier || caller.operator) return true;
-    const subject = runSubject(events);
-    return caller.identity !== undefined && subject !== undefined && subject === caller.identity.subject;
+    const owner = runSubject(events);
+    return caller.identity !== undefined && owner !== undefined && owner.kind !== undefined && owner.subject === caller.identity.subject && owner.kind === caller.identity.kind;
   };
   // Browsers cannot forge Host or Origin: the Host allow-list stops DNS rebinding, the Origin check stops cross-site calls.
   const extraHosts = (opts.allowedHosts ?? settings.allowedHosts ?? []).map((h) => ({ raw: h, ...parseAuthority(h) })).filter((h): h is { raw: string; name: string; port: string } => h.name !== undefined);
@@ -177,8 +182,9 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
   const hostAllowed = (header: string | undefined) => {
     const h = parseAuthority(header);
     if (!h) return false;
-    if ([...LOOPBACK_NAMES, boundName].some((n) => n === h.name) && h.port === boundPort) return true;
-    return extraHosts.some((e) => e.name === h.name && (!e.port || e.port === h.port));
+    const port = h.port || '80'; // a Host header without port means the http default
+    if ([...LOOPBACK_NAMES, boundName].some((n) => n === h.name) && port === boundPort) return true;
+    return extraHosts.some((e) => e.name === h.name && (!e.port || e.port === port));
   };
   const originAllowed = (origin: string, host: string | undefined) => {
     const o = origin.toLowerCase().replace(/\/$/, '');
@@ -186,8 +192,12 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
   };
   // As in Node: the headers timeout never exceeds the request timeout (0 turns either off).
   const serverOptions = { requestTimeout, headersTimeout: requestTimeout && headersTimeout ? Math.min(headersTimeout, requestTimeout) : headersTimeout };
+  const inflight = new Set<string>();
   const server = createServer(serverOptions, async (req, res) => {
+    let busy: string | undefined;
     try {
+      // Liveness probe: returns no data, so load balancers may call it with any Host.
+      if (req.method === 'GET' && (req.url === '/health' || req.url?.startsWith('/health?'))) return send(res, 200, { ok: true });
       if (!hostAllowed(req.headers.host)) throw new HttpError(403, 'host not allowed');
       const origin = req.headers.origin;
       if (origin !== undefined && !originAllowed(origin, req.headers.host)) throw new HttpError(403, 'origin not allowed');
@@ -197,7 +207,6 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         return res.end(CONSOLE_HTML);
       }
-      if (path === '/health') return send(res, 200, { ok: true });
       if (!path.startsWith('/v1/')) throw new HttpError(404, 'not found');
       const caller = await authenticate(req.headers.authorization);
 
@@ -208,7 +217,8 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
       }
       const runMatch = /^\/v1\/runs\/([\w.-]+)$/.exec(path);
       if (req.method === 'GET' && runMatch) {
-        const events = await runtime.store.load(runMatch[1]!);
+        if (!isSafeRunId(runMatch[1])) throw new HttpError(404, 'not found');
+        const events = await runtime.store.load(runMatch[1]);
         if (!mayAccess(caller, events)) throw new HttpError(404, 'not found');
         return send(res, 200, events);
       }
@@ -223,6 +233,12 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
         if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'body must be a JSON object');
         if (body.input !== undefined && typeof body.input !== 'string') throw new HttpError(400, '"input" must be a string');
         if (body.runId !== undefined && !isSafeRunId(body.runId)) throw new HttpError(400, '"runId" must be 1-128 characters of letters, digits, "_", "-" or "." (not first)');
+        // One request per run id at a time: the ownership check below and the run itself must not interleave.
+        if (body.runId !== undefined) {
+          if (inflight.has(body.runId)) throw new HttpError(409, 'run busy');
+          inflight.add(body.runId);
+          busy = body.runId;
+        }
         if (body.runId !== undefined && verifier && !caller.operator) {
           const prior = await runtime.store.load(body.runId);
           if (prior.length && !mayAccess(caller, prior)) throw new HttpError(404, 'not found');
@@ -247,6 +263,8 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
       const status = err instanceof HttpError ? err.status : 500;
       send(res, status, { error: errorMessage(err) }, err instanceof HttpError ? err.headers : undefined);
       if (status === 413) res.once('finish', () => req.destroy());
+    } finally {
+      if (busy !== undefined) inflight.delete(busy);
     }
   });
   const port = opts.port ?? DEFAULT_PORT;

@@ -66,6 +66,26 @@ function withTimeout(signal: AbortSignal | undefined, timeoutMs: number): AbortS
 
 type HeaderMap = Record<string, string>;
 
+/** `promise`, but a caller's `signal` only ends this wait, not the work behind it. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error('aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    if (signal.aborted) onAbort();
+  });
+}
+
+/** A non-2xx answer of an HTTP server. */
+class McpHttpError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 /** Parent variables a stdio server always receives: enough to locate binaries, a home and temp directory, and the locale (plus the Windows basics). */
 export const MCP_BASE_ENV: readonly string[] = [
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TMPDIR',
@@ -189,6 +209,7 @@ class HttpTransport implements Transport {
   private main: Session = {};
   /** One session per identity, least recently used first; each response only updates the session of its own caller. */
   private sessions = new Map<string, { session: Session; ready: Promise<void> }>();
+  private mainReopen?: Promise<void>;
   private maxSessions: number;
   private protocol?: string;
   private cfg: McpServerConfig;
@@ -240,8 +261,15 @@ class HttpTransport implements Transport {
     });
     session.id = res.headers.get('mcp-session-id') ?? session.id;
     // Mask the whole body before cutting it: a secret that straddles the cut would otherwise survive in part.
-    if (!res.ok) throw new Error(`MCP HTTP ${res.status}: ${redact(await res.text().catch(() => ''), this.secrets(auth)).slice(0, this.cfg.errorBodyChars ?? limitDefault('mcp.errorBodyChars'))}`);
+    if (!res.ok) throw new McpHttpError(res.status, `MCP HTTP ${res.status}: ${redact(await res.text().catch(() => ''), this.secrets(auth)).slice(0, this.cfg.errorBodyChars ?? limitDefault('mcp.errorBodyChars'))}`);
     return { res, auth };
+  }
+
+  /** Opens a session: `initialize`, then `notifications/initialized`. Not tied to any caller's signal (only the request time limit applies). */
+  private async open(session: Session, headers: HeaderMap | undefined): Promise<void> {
+    await this.exchange('initialize', initializeParams(), undefined, headers, session);
+    const { res } = await this.post({ jsonrpc: '2.0', method: 'notifications/initialized' }, undefined, headers, session);
+    await res.body?.cancel();
   }
 
   /** The session of `key`, initialized with the caller's own credentials on first use. */
@@ -251,22 +279,40 @@ class HttpTransport implements Transport {
       this.sessions.delete(key); // re-insert: most recently used last
     } else {
       const session: Session = {};
-      const ready = this.exchange('initialize', initializeParams(), signal, headers, session).then(async () => {
-        const { res } = await this.post({ jsonrpc: '2.0', method: 'notifications/initialized' }, signal, headers, session);
-        await res.body?.cancel();
-      });
+      const ready = this.open(session, headers);
       entry = { session, ready };
       ready.catch(() => this.sessions.get(key) === entry && this.sessions.delete(key));
     }
     this.sessions.set(key, entry);
     while (this.sessions.size > this.maxSessions) this.sessions.delete(this.sessions.keys().next().value!);
-    await entry.ready;
+    await abortable(entry.ready, signal); // a caller that gives up abandons its own wait; the others still get the session
     return entry.session;
   }
 
+  /** Drops an expired session (the server answered 404 to its id) so the next use opens a fresh one. */
+  private async expire(key: string | undefined, session: Session, sent: string): Promise<void> {
+    if (key !== undefined) {
+      if (this.sessions.get(key)?.session === session) this.sessions.delete(key);
+      return;
+    }
+    if (session.id !== sent) return; // already renewed by a concurrent caller
+    session.id = undefined;
+    this.mainReopen ??= this.open(session, undefined).finally(() => (this.mainReopen = undefined));
+    await this.mainReopen;
+  }
+
   async request(method: string, params: unknown, signal?: AbortSignal, headers?: HeaderMap, sessionKey?: string): Promise<any> {
-    const session = sessionKey === undefined ? this.main : await this.sessionFor(sessionKey, headers, signal);
-    return this.exchange(method, params, signal, headers, session);
+    for (let retried = false; ; retried = true) {
+      const session = sessionKey === undefined ? this.main : await this.sessionFor(sessionKey, headers, signal);
+      const sent = session.id;
+      try {
+        return await this.exchange(method, params, signal, headers, session);
+      } catch (err) {
+        // 404 for a request that carried a session id: the server dropped the session. Replace it, once.
+        if (retried || !sent || method === 'initialize' || !(err instanceof McpHttpError) || err.status !== 404) throw err;
+        await abortable(this.expire(sessionKey, session, sent), signal);
+      }
+    }
   }
 
   private async exchange(method: string, params: unknown, signal: AbortSignal | undefined, headers: HeaderMap | undefined, session: Session): Promise<any> {

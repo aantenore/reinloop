@@ -79,7 +79,7 @@ export async function postJson(
 ): Promise<Response> {
   let res: Response;
   try {
-    res = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal });
+    res = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal, redirect: 'error' });
   } catch (err) {
     if (signal.aborted) throw err;
     throw new ProviderError(0, `network error: ${errorMessage(err)}`);

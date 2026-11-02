@@ -75,6 +75,7 @@ export function guardMiddleware(guards: Guard[], opts: GuardMiddlewareOptions = 
     let out: Part[] | undefined;
     for (const [i, part] of parts.entries()) {
       if (part.type !== 'text' && !(part.type === 'thinking' && stage === 'output')) continue;
+      if (part.type === 'thinking' && !part.text) continue; // omitted or redacted thinking carries nothing to check
       const res = await scan(ctx, stage, part.text);
       if ('block' in res) return { blocked: `guardrail:${res.block.guard}:${stage}` };
       if (!res.changed) continue;

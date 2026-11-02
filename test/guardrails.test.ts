@@ -124,6 +124,13 @@ describe('guardMiddleware', () => {
     assert.equal(thinking.signature, undefined, 'a rewritten thinking part is not replayed with the old signature');
   });
 
+  it('does not pass empty thinking (omitted or redacted display) to a guard', async () => {
+    const strict = spy('strict', (i) => (i.text === '' ? { action: 'block', reason: 'empty input' } : allow), ['output']);
+    const res = await run(thinkingAgent('', 'fine', { middleware: [guardMiddleware([strict], { onError: 'block' })] }), 'q');
+    assert.equal(res.status, 'completed');
+    assert.deepEqual(strict.seen.map((i) => i.text), ['fine'], 'one guard call for the answer, none for the empty thinking');
+  });
+
   it('with an output guard, blocked content in thinking is never streamed, persisted or returned', async () => {
     const SECRET = 'sk-live-secret';
     const block = spy('leak', (i) => (i.text.includes(SECRET) ? { action: 'block' } : allow), ['output']);

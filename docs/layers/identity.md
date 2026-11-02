@@ -80,16 +80,19 @@ exposes the built verifier and factory.
   RFC 6750 `WWW-Authenticate: Bearer ...`. A present but malformed header is never treated as anonymous.
 - A verifier error with an `IdentityError` `code` starting with `identity_` (provider unavailable or misconfigured) -> `503`.
 - The static `token` is an operator credential: it runs without identity and may read every run log.
-- Verified callers read and continue only runs started under their own subject (others: `404`); listing runs needs the
-  operator token (`403`).
-- Runs without a subject (started anonymously or without identity) and callers without identity never match: such runs
-  are readable and continuable with the operator token only (`404` otherwise).
+- Verified callers read and continue only runs started under their own subject and identity kind (others: `404`);
+  listing runs needs the operator token (`403`).
+- Runs without a subject or without a recorded identity kind (started anonymously, without identity, or by an older
+  version) and callers without identity never match: such runs are readable and continuable with the operator token only
+  (`404` otherwise).
 - `required: false`: requests without a header run anonymously; they cannot read or continue any stored run, including
   the ones they started (read those with the operator token).
 - Browser and network guards run before authentication: a `Host` outside the allow-list -> `403` (DNS rebinding), an
   `Origin` that is neither allowed nor the server's own -> `403`, a `POST` without `application/json` -> `415`, an
-  invalid `runId` -> `400`. Binding a non-loopback host without `token` or verifier is refused unless `insecure` is set.
-  See [configuration](../configuration.md#serve).
+  invalid `runId` -> `400` (a malformed id in `GET /v1/runs/:id` -> `404`). `GET /health` returns no data and skips the
+  `Host`/`Origin` checks. Binding a non-loopback host without `token` or a verifier with `required` (default) is refused
+  unless `insecure` is set. See [configuration](../configuration.md#serve).
+- One request per `runId` at a time: a second one while the first still runs (including a stream) -> `409` `run busy`.
 - Without a verifier (`identity: false` or none configured) `serve` is an open local mode: no per-run access
   restriction; set `token` to require a static credential.
 
@@ -100,7 +103,8 @@ run's `CredentialProvider`, on every `tools/call`; without credentials the call 
 (`initialize`, `tools/list`, session close) happens outside any run and uses the agent's own credentials, from the
 `CredentialFactory` called without identity. The credential header replaces a static `headers.authorization`, and tokens
 are masked in results and errors. Servers that bind the MCP session to the principal that opened it may reject per-user
-calls on a shared session.
+calls on a shared session. A session the server expires (HTTP 404 for its id) is replaced and the call retried once; a
+caller that aborts only stops its own wait, never the session setup other callers share.
 
 ## Implementations
 

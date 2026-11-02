@@ -242,9 +242,9 @@ Exposure guards are `serve` config keys, options of `serve()` and flags of `rein
 
 | Config / option / flag | Default | Why |
 |---|---|---|
-| `allowedHosts` / `--allow-host <host>` (repeatable) | the bound host, `localhost`, `127.0.0.1`, `[::1]` (with the bound port) | Other `Host` headers get 403 (DNS rebinding). `name` matches any port, `name:port` that port only; add the public name behind a proxy. |
+| `allowedHosts` / `--allow-host <host>` (repeatable) | the bound host, `localhost`, `127.0.0.1`, `[::1]` (with the bound port) | Other `Host` headers get 403 (DNS rebinding); `GET /health` (no data) is exempt. A `Host` without port counts as port 80. `name` matches any port, `name:port` that port only; add the public name behind a proxy. |
 | `allowedOrigins` / `--allow-origin <origin>` (repeatable) | none | A request with an `Origin` header that is neither listed nor this server's own origin (the web console) gets 403. Requests without `Origin` (CLI, servers) pass. |
-| `insecure` / `--insecure` | off | Without it, `serve` refuses to start on a non-loopback `host` unless a `token` or an identity verifier is set. |
+| `insecure` / `--insecure` | off | Without it, `serve` refuses to start on a non-loopback `host` unless a `token` or an identity verifier with `required` (default) is set. |
 
 `POST` requests need `Content-Type: application/json` (`415` otherwise), and `runId` must match `[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}` (`400` otherwise).
 

@@ -59,7 +59,8 @@ const instrument = (name: string, unit: string, description: string, bounds?: nu
 export function otlpMetricsSink(opts: OtlpMetricsOptions): Sink {
   assertPlainEndpoint(opts.endpoint, 'otlpMetricsSink');
   const url = `${opts.endpoint.replace(/\/+$/, '').replace(/\/v1\/(traces|metrics)$/, '')}/v1/metrics`;
-  const post = opts.fetch ?? fetch;
+  // Never follows a redirect: the configured headers must not be resent to another location.
+  const post = opts.fetch ?? ((u: string, i: RequestInit) => fetch(u, { ...i, redirect: 'error' }));
   const exportTimeoutMs = opts.exportTimeoutMs ?? TELEMETRY_LIMITS['otlp.exportTimeoutMs'].default;
   const startNanos = nowNanos();
   const tokens = instrument('gen_ai.client.token.usage', '{token}', 'Input and output tokens used per model call', TOKEN_BOUNDS);

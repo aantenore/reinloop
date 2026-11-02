@@ -110,7 +110,8 @@ const FINISH: Record<string, StopReason> = { stop: 'end', tool_calls: 'tool_call
  */
 export function checkOpenAIEndpoint(opts: EndpointCheckOptions): Promise<string[]> {
   const url = `${opts.baseUrl.replace(/\/+$/, '')}/chat/completions`;
-  const fetchImpl = opts.fetch ?? fetch;
+  // Never follows a redirect: the API key and headers must not be resent to another location.
+  const fetchImpl = opts.fetch ?? ((u: string, i?: RequestInit) => fetch(u, { ...i, redirect: 'error' }));
   const provider: Provider = {
     name: 'openai-endpoint',
     async generate(req, ctx) {

@@ -228,6 +228,49 @@ describe('serve with identity', () => {
     }
   });
 
+  it('refuses a non-loopback host when the verifier lets anonymous callers through, unless token or insecure', async () => {
+    const optional = await createRuntime(config({ verifier: { type: 'static' }, required: false }), { registry: registry() });
+    const required = await createRuntime(config({ verifier: { type: 'static' } }), { registry: registry() });
+    try {
+      await assert.rejects(serve(optional, { port: 0, host: '0.0.0.0' }), /refusing to serve on 0\.0\.0\.0 without authentication/);
+      await assert.rejects(serve(required, { port: 0, host: '0.0.0.0', identity: { verifier: staticVerifier(), required: false } }), /refusing to serve/);
+      await assert.rejects(serve(required, { port: 0, host: '0.0.0.0', identity: false }), /refusing to serve/);
+      for (const [rt, options] of [[required, {}], [optional, { token: 't' }], [optional, { insecure: true }]] as const) {
+        const served = await serve(rt, { port: 0, host: '0.0.0.0', ...options });
+        await served.close();
+      }
+    } finally {
+      await optional.close();
+      await required.close();
+    }
+  });
+
+  it('access needs the same identity kind as the run; runs without a recorded kind are operator-only', async () => {
+    const rt = await createRuntime(config({ verifier: { type: 'static' } }), { registry: registry() });
+    const agentIdentity: Identity = { subject: 'alice-id', kind: 'agent', token: 'tok-agent' };
+    tokens['tok-agent'] = agentIdentity;
+    const served = await serve(rt, { port: 0, token: 'operator-key' });
+    const seed = (runId: string, data: Record<string, unknown>) =>
+      rt.store.append({ runId, seq: 0, ts: 0, type: 'run_start', data: { agent: 'echo', resumed: false, ...data } } as unknown as RunEvent);
+    const get = (id: string, token: string) => fetch(`${served.url}/v1/runs/${id}`, { headers: { authorization: `Bearer ${token}` } }).then((r) => r.status);
+    const post = (runId: string, token: string) =>
+      fetch(`${served.url}/v1/agents/echo/runs`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ input: 'x', runId }) }).then((r) => r.status);
+    try {
+      await seed('r-user', { subject: 'alice-id', identityKind: 'user' });
+      await seed('r-legacy', { subject: 'alice-id' });
+      assert.equal(await get('r-user', 'tok-alice'), 200);
+      assert.equal(await get('r-user', 'tok-agent'), 404, 'same subject, other kind');
+      assert.equal(await post('r-user', 'tok-agent'), 404);
+      assert.equal(await get('r-legacy', 'tok-alice'), 404, 'no recorded kind');
+      assert.equal(await post('r-legacy', 'tok-alice'), 404);
+      assert.equal(await get('r-legacy', 'operator-key'), 200);
+    } finally {
+      delete tokens['tok-agent'];
+      await served.close();
+      await rt.close();
+    }
+  });
+
   it('a team run is owned by its caller: the owner reads it, another user and anonymous callers do not', async () => {
     const rt = await createRuntime(
       {
@@ -386,6 +429,93 @@ describe('mcp sessions per identity', () => {
       await assert.rejects(call(tools[0]!, analyst));
     } finally {
       await client.close();
+    }
+  });
+});
+
+describe('mcp session lifecycle', () => {
+  /** An MCP server whose sessions can be expired (404 for their id) and whose initialize can be slow. */
+  async function lifecycleServer(opts: { initDelayMs?: number; callsFail?: boolean } = {}) {
+    const live = new Set<string>();
+    const methods: string[] = [];
+    let n = 0;
+    const srv = await listen((req, body, res) => {
+      const msg = JSON.parse(body || '{}');
+      const session = req.headers['mcp-session-id'] as string | undefined;
+      methods.push(msg.method);
+      if (session && (!live.has(session) || (opts.callsFail && msg.method === 'tools/call'))) return void res.writeHead(404).end('session expired');
+      if (msg.id === undefined) return void res.writeHead(202).end();
+      const reply = (headers: Record<string, string>, result: unknown) =>
+        res.writeHead(200, { 'content-type': 'application/json', ...headers }).end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }));
+      if (msg.method === 'initialize') {
+        const sid = `sess-${++n}`;
+        live.add(sid);
+        const init = () => reply({ 'mcp-session-id': sid }, { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'mock' } });
+        return void (opts.initDelayMs && n > 1 ? setTimeout(init, opts.initDelayMs) : init());
+      }
+      reply({}, msg.method === 'tools/list' ? { tools: [{ name: 'whoami', inputSchema: { type: 'object' } }] } : { content: [{ type: 'text', text: `session=${session}` }] });
+    });
+    return { ...srv, methods, expire: (sid: string) => live.delete(sid) };
+  }
+  const run1 = async (t: Tool, identity?: Identity, signal: AbortSignal = new AbortController().signal): Promise<string> =>
+    ((await t.run({}, { signal, identity, credentials: { token: async () => `tok-${identity?.subject}` } } as any)) as any).content;
+  const withAuth = { auth: { audience: 'a' } };
+
+  it('lets a concurrent caller finish the shared initialize when the first caller aborts', async () => {
+    const srv = await lifecycleServer({ initDelayMs: 150 });
+    const { client, tools } = await mcpTools('api', { url: srv.url, ...withAuth }, { credentials: { token: async () => 'tok-agent' } });
+    try {
+      const ac = new AbortController();
+      const first = run1(tools[0]!, analyst, ac.signal);
+      const second = run1(tools[0]!, analyst);
+      setTimeout(() => ac.abort(), 30);
+      await assert.rejects(first);
+      assert.equal(await second, 'session=sess-2');
+      assert.equal(srv.methods.filter((m) => m === 'initialize').length, 2, 'connection + one shared identity session');
+      assert.equal(await run1(tools[0]!, analyst), 'session=sess-2'); // the session survived the abort
+    } finally {
+      await client.close();
+      await srv.close();
+    }
+  });
+
+  it('replaces an expired per-identity session and retries the call once', async () => {
+    const srv = await lifecycleServer();
+    const { client, tools } = await mcpTools('api', { url: srv.url, ...withAuth }, { credentials: { token: async () => 'tok-agent' } });
+    try {
+      assert.equal(await run1(tools[0]!, analyst), 'session=sess-2');
+      srv.expire('sess-2');
+      assert.equal(await run1(tools[0]!, analyst), 'session=sess-3');
+      assert.equal(await run1(tools[0]!, analyst), 'session=sess-3');
+    } finally {
+      await client.close();
+      await srv.close();
+    }
+  });
+
+  it('replaces an expired connection session', async () => {
+    const srv = await lifecycleServer();
+    const { client, tools } = await mcpTools('api', { url: srv.url });
+    try {
+      assert.equal(await run1(tools[0]!), 'session=sess-1');
+      srv.expire('sess-1');
+      assert.equal(await run1(tools[0]!), 'session=sess-2');
+    } finally {
+      await client.close();
+      await srv.close();
+    }
+  });
+
+  it('retries an expired session only once', async () => {
+    const srv = await lifecycleServer({ callsFail: true });
+    const { client, tools } = await mcpTools('api', { url: srv.url, ...withAuth }, { credentials: { token: async () => 'tok-agent' } });
+    try {
+      await assert.rejects(run1(tools[0]!, analyst), /MCP HTTP 404/);
+      assert.equal(srv.methods.filter((m) => m === 'tools/call').length, 2, 'one retry, not a loop');
+      assert.equal(srv.methods.filter((m) => m === 'initialize').length, 3, 'connection + the identity session + its replacement');
+    } finally {
+      await client.close();
+      await srv.close();
     }
   });
 });

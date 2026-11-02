@@ -450,6 +450,21 @@ describe('request timeout', () => {
     }
   });
 
+  it('never follows a redirect, so the API key is not resent to another location', async () => {
+    const hits: Array<Record<string, string | string[] | undefined>> = [];
+    const target = await serverAt((req, res) => (hits.push(req.headers), res.end('{}')));
+    const origin = await serverAt((_req, res) => res.writeHead(307, { location: `${target.baseUrl}/chat/completions` }).end());
+    try {
+      for (const make of [openaiCompatible, anthropic]) {
+        await assert.rejects(make({ apiKey: 'sk-secret-key', baseUrl: origin.baseUrl, retry: false } as never).generate(request, { signal }), (e: unknown) => e instanceof ProviderError && e.status === 0);
+      }
+      assert.deepEqual(hits, [], 'the redirect target received nothing');
+    } finally {
+      origin.close();
+      target.close();
+    }
+  });
+
   it('flows from the config to the provider, and a timeout ends the run as failed', async () => {
     const srv = await serverAt(() => {});
     try {

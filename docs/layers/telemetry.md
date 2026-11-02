@@ -30,7 +30,7 @@ Plugins that emit their own event types add entries with the `eventLayers` optio
 
 ## Metrics
 
-`otlpMetricsSink({ endpoint, headers, serviceName, intervalMs })`, or `"metrics": true` on the `otlp` sink, posts OTLP/HTTP JSON to `/v1/metrics`.
+`otlpMetricsSink({ endpoint, headers, serviceName, intervalMs })`, or `"metrics": true` on the `otlp` sink, posts OTLP/HTTP JSON to `/v1/metrics`. Exports never follow redirects (a redirect counts as a failed export), so `headers` are not resent elsewhere.
 
 | Metric | Type | Attributes |
 |---|---|---|

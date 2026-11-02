@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { agent, architect, design, jsonlSink, loadProject, McpClient, mockProvider, serve, stream, team, type RunEvent } from '../src/index.ts';
+import { agent, architect, createRuntime, design, jsonlSink, loadProject, McpClient, mockProvider, serve, stream, team, type HarnessConfig, type RunEvent } from '../src/index.ts';
 
 async function project(files: Record<string, string>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'reinloop-if-'));
@@ -153,7 +153,83 @@ describe('http api guards', () => {
       assert.equal(await raw(served.url, { host: `[::1]:${port}` }), 200);
       assert.equal(await raw(served.url, { host: 'proxy.example.com' }), 200);
       assert.equal(await raw(served.url, { host: 'proxy.example.com' }, 'GET', '/health'), 200);
-      assert.equal(await raw(served.url, { host: 'evil.example' }, 'GET', '/health'), 403);
+      assert.equal(await raw(served.url, { host: 'evil.example' }, 'GET', '/health'), 200, '/health returns no data: exempt from the Host check');
+      assert.equal(await raw(served.url, { host: 'evil.example', origin: 'https://evil.example' }, 'GET', '/health'), 200);
+      assert.equal(await raw(served.url, { host: 'evil.example' }, 'GET', '/v1/agents'), 403);
+      assert.equal(await raw(served.url, { host: 'evil.example' }, 'GET', '/'), 403);
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+  });
+
+  it('a Host without port means port 80: an allow-list entry name:80 matches it', async () => {
+    const rt = await loadProject({ cwd: await project(echo), env: {} });
+    const served = await serve(rt, { port: 0, allowedHosts: ['proxy.example.com:80', 'any.example.com'] });
+    try {
+      assert.equal(await raw(served.url, { host: 'proxy.example.com' }, 'GET', '/v1/agents'), 200);
+      assert.equal(await raw(served.url, { host: 'proxy.example.com:80' }, 'GET', '/v1/agents'), 200);
+      assert.equal(await raw(served.url, { host: 'proxy.example.com:81' }, 'GET', '/v1/agents'), 403);
+      assert.equal(await raw(served.url, { host: 'any.example.com:81' }, 'GET', '/v1/agents'), 200, 'entry without port: any port');
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+  });
+
+  it('bound to port 80: Host localhost and localhost:80 both pass', async (t) => {
+    const rt = await loadProject({ cwd: await project(echo), env: {} });
+    let served;
+    try {
+      served = await serve(rt, { port: 80 });
+    } catch (err) {
+      await rt.close();
+      if (['EACCES', 'EADDRINUSE'].includes((err as NodeJS.ErrnoException).code ?? '') || /already in use/.test((err as Error).message)) return t.skip('port 80 unavailable');
+      throw err;
+    }
+    try {
+      assert.equal(await raw(served.url, { host: 'localhost' }, 'GET', '/v1/agents'), 200);
+      assert.equal(await raw(served.url, { host: 'localhost:80' }, 'GET', '/v1/agents'), 200);
+      assert.equal(await raw(served.url, { host: 'localhost:81' }, 'GET', '/v1/agents'), 403);
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+  });
+
+  it('GET /v1/runs/:id with an unsafe id is 404 without touching the store', async () => {
+    const rt = await loadProject({ cwd: await project(echo), env: {} });
+    const loads: string[] = [];
+    const load = rt.store.load.bind(rt.store);
+    rt.store.load = async (id) => (loads.push(id), load(id));
+    const served = await serve(rt, { port: 0 });
+    try {
+      for (const bad of ['.hidden', 'x'.repeat(129)]) assert.equal(await raw(served.url, {}, 'GET', `/v1/runs/${bad}`), 404, bad);
+      assert.deepEqual(loads, []);
+      assert.equal(await raw(served.url, {}, 'GET', '/v1/runs/ok-id'), 200);
+      assert.deepEqual(loads, ['ok-id']);
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+  });
+
+  it('409 for a second request on a run id while the first is running; the id is free again afterwards', async () => {
+    const rt = await createRuntime({
+      providers: { mock: { type: 'mock', responses: [{ text: 'slow', delayMs: 200 }], loop: true } },
+      models: { m: { provider: 'mock', model: 'mock-1' } },
+      agents: { echo: { model: 'm', description: 'Echo' } },
+    } as HarnessConfig, { env: {} });
+    const served = await serve(rt, { port: 0 });
+    const post = (runId: string) => fetch(`${served.url}/v1/agents/echo/runs`, { method: 'POST', headers: json, body: JSON.stringify({ input: 'hi', runId }) });
+    try {
+      const results = await Promise.all([post('same-id'), post('same-id'), post('same-id')]);
+      assert.deepEqual(results.map((r) => r.status).sort(), [200, 409, 409]);
+      const busy = results.find((r) => r.status === 409)!;
+      assert.match(((await busy.json()) as { error: string }).error, /run busy/);
+      assert.equal((await post('same-id')).status, 200, 'released after the run');
+      const other = await Promise.all([post('id-a'), post('id-b')]);
+      assert.deepEqual(other.map((r) => r.status), [200, 200], 'different ids do not block each other');
     } finally {
       await served.close();
       await rt.close();

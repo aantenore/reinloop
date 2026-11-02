@@ -194,6 +194,39 @@ describe('otlp export failures and endpoints', () => {
   });
 });
 
+describe('otlp export redirects', () => {
+  it('does not follow a redirect with the configured headers, and warns', async () => {
+    const hits: string[] = [];
+    const target = createServer((req, res) => (hits.push(String(req.headers.authorization)), res.end('{}')));
+    await new Promise<void>((r) => target.listen(0, '127.0.0.1', r));
+    const targetUrl = `http://127.0.0.1:${(target.address() as AddressInfo).port}`;
+    const origin = createServer((_req, res) => res.writeHead(307, { location: `${targetUrl}/v1/traces` }).end());
+    await new Promise<void>((r) => origin.listen(0, '127.0.0.1', r));
+    const endpoint = `http://127.0.0.1:${(origin.address() as AddressInfo).port}`;
+    const warnings: string[] = [];
+    const onWarning = (w: Error) => { warnings.push(w.message); };
+    process.on('warning', onWarning);
+    try {
+      for (const metrics of [false, true]) {
+        const sink = otlpSink({ endpoint, headers: { authorization: 'Bearer abc123' }, intervalMs: 60_000, metrics });
+        await run(agent(), 'go', { sinks: [sink] });
+        await sink.close!();
+      }
+      const standalone = otlpMetricsSink({ endpoint, headers: { authorization: 'Bearer abc123' }, intervalMs: 60_000 });
+      await run(agent(), 'go', { sinks: [standalone] });
+      await standalone.close!();
+      await new Promise((r) => setImmediate(r));
+    } finally {
+      process.off('warning', onWarning);
+      for (const s of [origin, target]) (s.closeAllConnections(), s.close());
+    }
+    assert.deepEqual(hits, [], 'the redirect target received nothing');
+    assert.ok(warnings.some((w) => w.startsWith(`OTLP export to ${endpoint} failed`)));
+    assert.ok(warnings.some((w) => w.startsWith(`OTLP metrics export to ${endpoint} failed`)));
+    assert.ok(warnings.every((w) => !w.includes('abc123')));
+  });
+});
+
 describe('otlp export timeout', () => {
   // A collector that never answers; the request ends only when its signal aborts, as with the platform fetch.
   const hanging = (seen: Array<AbortSignal | undefined> = []) => (_url: string, init: RequestInit) =>

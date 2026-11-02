@@ -43,7 +43,8 @@ interface Recorded {
 export function otlpSink(opts: OtlpOptions): Sink {
   assertPlainEndpoint(opts.endpoint, 'otlpSink');
   const url = /\/v1\/traces\/?$/.test(opts.endpoint) ? opts.endpoint : `${opts.endpoint.replace(/\/+$/, '')}/v1/traces`;
-  const post = opts.fetch ?? fetch;
+  // Never follows a redirect: the configured headers must not be resent to another location.
+  const post = opts.fetch ?? ((u: string, i: RequestInit) => fetch(u, { ...i, redirect: 'error' }));
   const exportTimeoutMs = opts.exportTimeoutMs ?? TELEMETRY_LIMITS['otlp.exportTimeoutMs'].default;
   let pending: Recorded[] = [];
   let warned = false;
@@ -112,7 +113,7 @@ export function otlpSink(opts: OtlpOptions): Sink {
   timer.unref();
   const inner = otelSink({ tracer, contextWith: (span) => span, captureContent: opts.captureContent, eventLayers: opts.eventLayers });
   const metrics = opts.metrics
-    ? otlpMetricsSink({ endpoint: opts.endpoint, headers: opts.headers, serviceName: opts.serviceName, intervalMs: opts.metricsIntervalMs ?? opts.intervalMs, exportTimeoutMs: opts.exportTimeoutMs, fetch: opts.fetch })
+    ? otlpMetricsSink({ endpoint: opts.endpoint, headers: opts.headers, serviceName: opts.serviceName, intervalMs: opts.metricsIntervalMs ?? opts.intervalMs, exportTimeoutMs: opts.exportTimeoutMs, fetch: post })
     : undefined;
   return {
     name: 'otlp',
