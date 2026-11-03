@@ -31,7 +31,7 @@
     "./schema.json": "./schema/reinloop.schema.json"
   },
   "bin": {
-    "reinloop": "./dist/cli.js"
+    "reinloop": "dist/cli.js"
   },
   "files": [
     "dist",
