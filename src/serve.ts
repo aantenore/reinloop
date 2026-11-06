@@ -52,7 +52,8 @@ export interface ServeOptions {
 export type ServeSettings = Pick<ServeOptions, 'maxBodyBytes' | 'requestTimeoutMs' | 'headersTimeoutMs' | 'errorDescriptionChars' | 'allowedHosts' | 'allowedOrigins' | 'insecure'>;
 
 const LOOPBACK_NAMES = ['localhost', '127.0.0.1', '[::1]'];
-const isLoopback = (host: string) => {
+/** True for `localhost`, `127.x.x.x` and `::1` (also in brackets). */
+export const isLoopback = (host: string) => {
   const name = host.replace(/^\[|\]$/g, '').toLowerCase();
   return name === 'localhost' || name === '::1' || /^127(\.\d{1,3}){3}$/.test(name);
 };
@@ -103,6 +104,7 @@ async function readBody(req: IncomingMessage, limit: number): Promise<any> {
 }
 
 function send(res: ServerResponse, status: number, body: unknown, headers?: Record<string, string>): void {
+  if (res.destroyed) return; // the client is gone, or the server closed its connections
   // An unread request body would desynchronise a keep-alive connection: close it instead.
   res.writeHead(status, { 'content-type': 'application/json', ...(status === 413 && { connection: 'close' }), ...headers });
   res.end(JSON.stringify(body));
@@ -193,12 +195,14 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
   // As in Node: the headers timeout never exceeds the request timeout (0 turns either off).
   const serverOptions = { requestTimeout, headersTimeout: requestTimeout && headersTimeout ? Math.min(headersTimeout, requestTimeout) : headersTimeout };
   const inflight = new Set<string>();
+  // Runs in progress: closing the server interrupts them and waits for their `run_end`.
+  const runs = new Map<AbortController, Promise<unknown>>();
   const server = createServer(serverOptions, async (req, res) => {
     let busy: string | undefined;
     try {
       // Liveness probe: returns no data, so load balancers may call it with any Host.
       if (req.method === 'GET' && (req.url === '/health' || req.url?.startsWith('/health?'))) return send(res, 200, { ok: true });
-      if (!hostAllowed(req.headers.host)) throw new HttpError(403, 'host not allowed');
+      if (!hostAllowed(req.headers.host)) throw new HttpError(403, 'host not allowed: pass --allow-host <name> (config serve.allowedHosts) for the name clients use; see docs/configuration.md#serve');
       const origin = req.headers.origin;
       if (origin !== undefined && !originAllowed(origin, req.headers.host)) throw new HttpError(403, 'origin not allowed');
       const url = new URL(req.url ?? '/', 'http://local');
@@ -248,6 +252,7 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
         const controller = new AbortController();
         res.on('close', () => !res.writableFinished && controller.abort(new Error('client disconnected')));
         const handle = await runtime.stream(name, body.input, { runId: body.runId, approve: opts.approve, signal: controller.signal, ...(caller.identity && { identity: caller.identity }) });
+        runs.set(controller, handle.result.catch(() => {}).finally(() => runs.delete(controller)));
         const wantsStream = (req.headers.accept ?? '').includes('text/event-stream') || url.searchParams.get('stream') === '1';
         if (!wantsStream) {
           const result = await handle.result;
@@ -284,10 +289,14 @@ export async function serve(runtime: Runtime, opts: ServeOptions = {}): Promise<
   return {
     server,
     url: `http://${host}:${bound}`,
-    close: () =>
-      new Promise<void>((resolve) => {
+    close: async () => {
+      // Runs in progress end as interrupted, and their `run_end` is recorded before the caller goes on.
+      for (const controller of runs.keys()) controller.abort(new Error('server closed'));
+      await new Promise<void>((resolve) => {
         server.close(() => resolve());
         server.closeAllConnections();
-      }),
+      });
+      await Promise.allSettled(runs.values());
+    },
   };
 }

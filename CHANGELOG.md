@@ -2,7 +2,55 @@
 
 ## Unreleased
 
-## 0.3.1 - 2026-11-02
+### Changed
+
+- An agent `budget` without `maxTurns` keeps the turn limit (`limits.maxTurns`, default 50) instead of lifting it, so
+  a cost-only budget on a model without prices (every local one) still stops. `limits.maxTurns: "unbounded"` lifts it
+  for every agent, `maxTurns: Infinity` for one agent in code. `validate` warns about `maxCostUsd` on an unpriced model.
+- `run`, `resume`, `chat` and `serve` fail before any request when a built-in preset lacks its API key (the warning
+  `validate` prints); the CLI prints a failure reason once, in the end-of-run line.
+- Provider HTTP errors keep the `message` of a JSON error body instead of the whole body. A `404` from `ollama`,
+  `lmstudio` or `vllm` that names the model adds how to load it (`ollama pull <model>`, or `REINLOOP_MODEL`);
+  `missingModelHint` on `openai-compatible` providers.
+- `resume with:` is printed only when the store outlives the process (`store` other than `memory`) and the run made
+  progress. `reinloop resume` with the default memory store, and a resume of an unknown run id (`unknown run id`),
+  fail with a clear reason.
+- `reinloop create` fails with `no agent files were written` when the architect ended without writing a file, instead
+  of reporting `completed`.
+- `fileStore.list()` reports a directory it cannot read instead of returning an empty list (a missing one is empty).
+- The npm package ships `CHANGELOG.md`.
+- The README installs from npm (`npm i -g reinloop`), names the keyless default model (`ollama/qwen3:8b`) and the
+  `REINLOOP_MODEL=mock/echo` try-out, and checks `result.reason` in the code example.
+- Docs name `@agent-layers/adapters/<name>` (0.4.0 or later) instead of the deprecated `@agent-layers/adapter-<name>`
+  packages.
+
+### Added
+
+- `SECURITY.md` (reporting channel, supported versions, threat model) and `CONTRIBUTING.md` (checks, live scripts,
+  release steps).
+- Docs: the `serve` HTTP routes (`docs/configuration.md`), running agent files written for other tools on any model
+  (`docs/agent-files.md`), and a Troubleshooting section in the README.
+- `reinloop --version` / `-v` / `reinloop version`.
+- `SIGTERM` is handled like `SIGINT` by `run`, `resume`, `chat`, `serve` and `mcp`: runs in progress end as
+  `interrupted` with their `run_end` recorded, then sinks are closed. `serve().close()` and `serveMcp({ signal })` do
+  the same for runs in progress.
+- A `403 host not allowed` from `serve` and the start-up line of an off-loopback `--host` name the fix:
+  `--allow-host <name>` (`serve.allowedHosts`).
+
+### Fixed
+
+- A stdio MCP server that exited fails the next request at once with its exit code and stderr tail, instead of
+  waiting for `timeoutMs` (forever with `"unbounded"`).
+- The run loop yields to the event loop once per turn, so an abort signal or a timer also fires with a provider that
+  answers without I/O (mocks, caches); about 10 µs per turn in the bench.
+- A `run_end` the store could not append is reported through a `ReinloopStoreWarning` process warning and
+  `store: ...` in the result reason (status unchanged) instead of being dropped.
+- Workspace tools accept a file named `..config`: only a `..` segment leaves the workspace.
+- `reinloop chat` in a terminal: Ctrl+C ends the answer in progress and shows the next prompt (it used to close the
+  input, so the answer went on and the chat then failed with `readline was closed`); Ctrl+C or Ctrl+D at the prompt,
+  and the end of a piped input, end the chat with exit code 0.
+
+## 0.3.1 - 2026-11-03
 
 ### Security
 

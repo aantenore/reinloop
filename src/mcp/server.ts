@@ -13,6 +13,8 @@ export interface McpServeOptions {
   output?: Writable;
   approve?: Approver;
   version?: string;
+  /** Ends the server: runs in progress are aborted with the signal's reason and awaited, so their `run_end` is recorded. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -77,6 +79,16 @@ export function serveMcp(runtime: Runtime, opts: McpServeOptions = {}): Promise<
 
   return new Promise((resolve) => {
     const rl = createInterface({ input });
+    const running = new Set<Promise<unknown>>();
+    let stopping: Promise<void> | undefined;
+    // Aborts the runs in progress and resolves once they have ended, so their `run_end` is recorded and answered.
+    const stop = (reason: unknown) =>
+      (stopping ??= (async () => {
+        rl.close();
+        for (const c of inflight.values()) c.abort(reason instanceof Error ? reason : new Error(String(reason)));
+        await Promise.allSettled(running);
+        resolve();
+      })());
     rl.on('line', (line) => {
       let msg: any;
       try {
@@ -86,14 +98,14 @@ export function serveMcp(runtime: Runtime, opts: McpServeOptions = {}): Promise<
       }
       if (msg.method === 'notifications/cancelled') inflight.get(msg.params?.requestId)?.abort(new Error('cancelled by client'));
       if (msg.id === undefined || msg.id === null) return;
-      handle(msg).then(
+      const done = handle(msg).then(
         (result) => write({ id: msg.id, result }),
         (err) => write({ id: msg.id, error: { code: (err as { code?: number }).code ?? -32603, message: errorMessage(err) } }),
       );
+      running.add(done);
+      done.then(() => running.delete(done));
     });
-    rl.on('close', () => {
-      for (const c of inflight.values()) c.abort(new Error('client closed'));
-      resolve();
-    });
+    rl.on('close', () => stop(new Error('client closed')));
+    opts.signal?.addEventListener('abort', () => stop(opts.signal!.reason), { once: true });
   });
 }

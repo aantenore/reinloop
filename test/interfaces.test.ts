@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { agent, architect, createRuntime, design, jsonlSink, loadProject, McpClient, mockProvider, serve, stream, team, type HarnessConfig, type RunEvent } from '../src/index.ts';
+import { agent, architect, collectSink, createRuntime, design, jsonlSink, loadProject, McpClient, mockProvider, serve, stream, team, type HarnessConfig, type RunEvent } from '../src/index.ts';
 
 async function project(files: Record<string, string>): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'reinloop-if-'));
@@ -91,6 +91,18 @@ describe('architect', () => {
     assert.deepEqual(problems, []);
     assert.equal(result.output, 'fixed');
     assert.match(JSON.stringify(provider.requests[2]!.messages), /GROQ_API_KEY is not set/);
+  });
+
+  it('reports a design that wrote no agent files instead of completing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reinloop-nofiles-'));
+    const provider = mockProvider([{ text: 'I would create agents/triage.md with a triage agent.' }], { loop: true });
+    const { result, problems } = await design('a triage team', { cwd: dir, model: { provider, model: 'mock' }, rounds: 1 });
+    assert.equal(result.status, 'completed');
+    assert.equal(problems.length, 1);
+    assert.match(problems[0]!, /^no agent files were written under agents\//);
+    assert.equal(provider.requests.length, 2, 'one more round with the problem');
+    assert.match(JSON.stringify(provider.requests[1]!.messages), /no agent files were written/);
+    assert.equal(existsSync(join(dir, 'agents')), false);
   });
 });
 
@@ -289,6 +301,52 @@ describe('http api guards', () => {
       const local = await serve(rt, { port: 0, host: 'localhost' });
       await local.close();
     } finally {
+      await rt.close();
+    }
+  });
+
+  it('a refused Host names the flag that allows it', async () => {
+    const rt = await loadProject({ cwd: await project(echo), env: {} });
+    const served = await serve(rt, { port: 0 });
+    try {
+      const body = await new Promise<string>((resolve, reject) => {
+        const u = new URL(served.url);
+        const req = request({ host: u.hostname, port: u.port, path: '/v1/agents', headers: { host: 'app.example' } }, (res) => {
+          let text = '';
+          res.on('data', (d) => (text += d));
+          res.on('end', () => resolve(text));
+        });
+        req.on('error', reject);
+        req.end();
+      });
+      assert.equal(JSON.parse(body).error, 'host not allowed: pass --allow-host <name> (config serve.allowedHosts) for the name clients use; see docs/configuration.md#serve');
+    } finally {
+      await served.close();
+      await rt.close();
+    }
+  });
+
+  it('close() interrupts the runs in progress and waits for their run_end', async () => {
+    const rt = await createRuntime({
+      providers: { mock: { type: 'mock', responses: [{ text: 'slow', delayMs: 20_000 }], loop: true } },
+      models: { m: { provider: 'mock', model: 'mock-1' } },
+      agents: { echo: { model: 'm', description: 'Echo' } },
+    } as HarnessConfig, { env: {} });
+    const sink = collectSink();
+    rt.sinks.push(sink);
+    const served = await serve(rt, { port: 0 });
+    const post = (accept: string) => fetch(`${served.url}/v1/agents/echo/runs`, { method: 'POST', headers: { ...json, accept }, body: JSON.stringify({ input: 'hi' }) }).then((r) => r.text()).catch(() => '');
+    const pending = [post('application/json'), post('text/event-stream')];
+    try {
+      for (let i = 0; sink.events.filter((e) => e.type === 'run_start').length < 2; i++) {
+        if (i > 250) throw new Error('runs did not start');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await served.close();
+      const ends = sink.events.filter((e) => e.type === 'run_end') as RunEvent<'run_end'>[];
+      assert.deepEqual(ends.map((e) => [e.data.status, e.data.reason]), [['interrupted', 'server closed'], ['interrupted', 'server closed']]);
+    } finally {
+      await Promise.all(pending);
       await rt.close();
     }
   });
