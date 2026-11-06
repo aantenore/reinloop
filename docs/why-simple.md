@@ -112,15 +112,15 @@ patterns that are really configuration.
 
 ## Closer alternatives
 
-These overlap most with reinloop: agents in files, the same multi-agent patterns, or a runtime for coding agents.
+These overlap most with reinloop: agents in files, the same multi-agent patterns, or a runtime for agent command-line tools.
 
 | Project | Where it wins | Where reinloop differs |
 |---|---|---|
 | [fast-agent](https://github.com/evalstate/fast-agent) (Python) | The same patterns (chain, parallel, router, evaluator, orchestrator) with much deeper MCP support (OAuth, sampling, elicitation, roots, prompts), image and PDF input, built-in evals. | TypeScript/Node with zero dependencies; budgets in USD, tokens and time; risk-based approval rules; resume from an append-only log; subagent Markdown files run unchanged. |
 | [Pi](https://github.com/earendil-works/pi) (`pi-agent-core` and its packages) | A large ecosystem and a package model for extensions; its own telemetry contracts with a conformance suite and a durability package. | Pi deliberately leaves out sub-agents and permissions (it recommends containers); reinloop has team patterns, approvals and policy rules built in. To stay on Pi, see `@aantenore/pi-otel` and `@aantenore/pi-budget` in the [README](../README.md#pi-packages). |
-| [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) | The agent loop, tools and context management of a mature coding agent, with native support for the subagent Markdown format, tuned for Claude models. | Runs the same subagent files on any model (OpenAI, Gemini, Ollama, any OpenAI-compatible URL), with hard budgets and a provider-neutral OTLP export ([agent-files.md](agent-files.md#agent-files-from-other-tools)). |
+| [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) | The agent loop, tools and context management of a mature agent toolkit, with native support for the subagent Markdown format, tuned for Claude models. | Runs the same subagent files on any model (OpenAI, Gemini, Ollama, any OpenAI-compatible URL), with hard budgets and a provider-neutral OTLP export ([agent-files.md](agent-files.md#agent-files-from-other-tools)). |
 | [Vercel Ash](https://www.npmjs.com/package/experimental-ash) (experimental) | The same filesystem-first pitch, plus durable backend agents, serverless deployment, evals and workflows on the Vercel platform. | Not tied to a platform: a local CLI, `serve` and `mcp`, team files, zero dependencies. |
-| [opencode](https://github.com/anomalyco/opencode) | Markdown agents on any model inside a widely adopted interactive coding agent; for interactive coding work it is the obvious first pick. | An embeddable runtime for non-interactive and backend use: HTTP and MCP server, code API, budgets and durable resume, not a terminal UI. |
+| [opencode](https://github.com/anomalyco/opencode) | Markdown agents on any model inside a widely adopted interactive agent tool; for interactive coding work it is the obvious first pick. | An embeddable runtime for non-interactive and backend use: HTTP and MCP server, code API, budgets and durable resume, not a terminal UI. |
 
 ## Where others are ahead
 

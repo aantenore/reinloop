@@ -17,7 +17,6 @@
     "subagents",
     "agent-files",
     "markdown",
-    "claude-code",
     "mcp",
     "opentelemetry",
     "tool-calling",
