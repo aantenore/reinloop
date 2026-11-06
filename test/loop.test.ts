@@ -49,6 +49,22 @@ describe('loop', () => {
     assert.match(JSON.stringify(results), /Invalid arguments: args.text: expected string/);
   });
 
+  it('cuts a hung tool off at toolSettings.timeoutMs and completes the run', async () => {
+    // Waits on nothing the event loop holds (no socket, no timer): only the time limit can end it.
+    const hung = defineTool({
+      name: 'hung',
+      description: 'Never settles',
+      risk: 'read',
+      schema: { type: 'object', properties: {} },
+      run: (_args, { signal }) => new Promise((_, rej) => signal.addEventListener('abort', () => rej(new Error('aborted')))),
+    });
+    const agent = makeAgent([{ toolCalls: [{ name: 'hung', args: {} }] }, { text: 'recovered' }], { tools: [hung], toolSettings: { timeoutMs: 50 } });
+    const res = await run(agent, 'go');
+    assert.equal(res.status, 'completed');
+    const result = agent.provider.requests[1]!.messages.at(-1)!.parts[0]!;
+    assert.equal(result.type === 'tool_result' && result.content, 'Tool error: timed out after 50ms');
+  });
+
   it('enforces policy: ask without approver denies, approver allows, rules override', async () => {
     const writer = echoTool('writer', { risk: 'write' });
     const script = () => [{ toolCalls: [{ name: 'writer', args: { text: 'x' } }] }, { text: 'end' }];

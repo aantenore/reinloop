@@ -1,7 +1,7 @@
 import type { FetchLike } from '../providers/http.ts';
 import { limitDefault } from '../limits.ts';
 import type { Tool } from '../types.ts';
-import { errorMessage, truncate } from '../util.ts';
+import { errorMessage, timeoutSignal, truncate } from '../util.ts';
 import { VERSION } from '../version.ts';
 import { defineTool } from './define.ts';
 import { ttlCache, UNTRUSTED_NOTE } from './web.ts';
@@ -214,27 +214,31 @@ interface ErrorExcerpts { errorBodyChars: number; rateLimitBodyChars: number }
 
 function httpGetter(fetchImpl: FetchLike, userAgent: string, timeoutMs: number, source: string, signal: AbortSignal, excerpts: ErrorExcerpts): SignalSearchOptions['get'] {
   return async (url, init = {}) => {
-    const timeout = AbortSignal.timeout(timeoutMs);
-    let res: Response;
+    const timeout = timeoutSignal(timeoutMs, signal);
     try {
-      res = await fetchImpl(url, { method: 'GET', headers: { 'user-agent': userAgent, ...init.headers }, signal: AbortSignal.any([signal, timeout]) });
-    } catch (err) {
-      if (signal.aborted) throw err;
-      if (timeout.aborted) throw new Error(`${source}: request timed out after ${timeoutMs} ms`);
-      throw new Error(`${source}: network error: ${errorMessage(err)}`);
+      let res: Response;
+      try {
+        res = await fetchImpl(url, { method: 'GET', headers: { 'user-agent': userAgent, ...init.headers }, signal: timeout.signal });
+      } catch (err) {
+        if (signal.aborted) throw err;
+        if (timeout.signal.aborted) throw new Error(`${source}: request timed out after ${timeoutMs} ms`);
+        throw new Error(`${source}: network error: ${errorMessage(err)}`);
+      }
+      const limited = rateLimitDetail(res);
+      if (limited) {
+        const hint = source === 'github' && Number(res.headers.get('x-ratelimit-limit') ?? 0) < 1000 ? ' (set GITHUB_TOKEN for a higher limit)' : '';
+        throw new SignalRateLimitError(source, limited + hint);
+      }
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        // Stack Exchange reports throttling as HTTP 400 with error_name `throttle_violation`.
+        if (body.includes('throttle_violation')) throw new SignalRateLimitError(source, truncate(body, excerpts.rateLimitBodyChars));
+        throw new Error(`${source}: HTTP ${res.status}: ${truncate(body, excerpts.errorBodyChars)}`);
+      }
+      return init.as === 'text' ? await res.text() : await res.json();
+    } finally {
+      timeout.stop();
     }
-    const limited = rateLimitDetail(res);
-    if (limited) {
-      const hint = source === 'github' && Number(res.headers.get('x-ratelimit-limit') ?? 0) < 1000 ? ' (set GITHUB_TOKEN for a higher limit)' : '';
-      throw new SignalRateLimitError(source, limited + hint);
-    }
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      // Stack Exchange reports throttling as HTTP 400 with error_name `throttle_violation`.
-      if (body.includes('throttle_violation')) throw new SignalRateLimitError(source, truncate(body, excerpts.rateLimitBodyChars));
-      throw new Error(`${source}: HTTP ${res.status}: ${truncate(body, excerpts.errorBodyChars)}`);
-    }
-    return init.as === 'text' ? res.text() : res.json();
   };
 }
 

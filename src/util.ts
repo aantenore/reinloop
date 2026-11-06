@@ -93,6 +93,17 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * Time limit as an abort signal, like `AbortSignal.timeout` but with a timer that keeps the process alive: work that
+ * waits on nothing else is still cut off at `ms` (the timer of `AbortSignal.timeout` is unref'd, so a process whose only
+ * pending work awaits it exits before the limit fires). `stop` releases the timer once the work settled.
+ */
+export function timeoutSignal(ms: number, caller?: AbortSignal): { signal: AbortSignal; stop(): void } {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), ms);
+  return { signal: caller ? AbortSignal.any([caller, ctl.signal]) : ctl.signal, stop: () => clearTimeout(timer) };
+}
+
 /** Rough, provider-agnostic token estimate (~4 chars/token). */
 export function estimateTokens(value: unknown): number {
   const text = typeof value === 'string' ? value : JSON.stringify(value) ?? '';

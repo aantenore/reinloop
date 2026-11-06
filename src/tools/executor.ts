@@ -2,7 +2,7 @@ import { authorizeCall } from '../identity/authorize.ts';
 import { validate } from '../schema.ts';
 import type { Agent, Approver, CredentialProvider, HookContext, Identity, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
 import { finiteTimeout, limitDefault } from '../limits.ts';
-import { errorMessage, truncate } from '../util.ts';
+import { errorMessage, timeoutSignal, truncate } from '../util.ts';
 import { normalizeOutput } from './define.ts';
 
 export interface ExecEnv {
@@ -106,7 +106,8 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   env.emit('tool_start', { callId: call.id, name: call.name, args: call.args, ...(tool.layer && { layer: tool.layer }) });
   // A tool's own timeout wins; Infinity (unbounded) and 0 mean no timer.
   const timeoutMs = finiteTimeout(tool.timeoutMs ?? env.agent.toolSettings?.timeoutMs);
-  const signal = timeoutMs ? AbortSignal.any([env.signal, AbortSignal.timeout(timeoutMs)]) : env.signal;
+  const limit = timeoutMs ? timeoutSignal(timeoutMs, env.signal) : undefined;
+  const signal = limit?.signal ?? env.signal;
   try {
     const out = normalizeOutput(
       await raceAbort(
@@ -120,6 +121,8 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
     if (env.signal.aborted) throw err;
     const msg = signal.aborted ? `timed out after ${timeoutMs}ms` : errorMessage(err);
     return finish(`Tool error: ${msg}`, true);
+  } finally {
+    limit?.stop();
   }
 }
 

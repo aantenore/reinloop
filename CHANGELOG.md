@@ -39,6 +39,10 @@
 
 ### Fixed
 
+- `knowledgeMiddleware`, the signal tools and tool calls (`tools.timeoutMs`) keep the process alive until their
+  `timeoutMs` fires: a hung source, request or tool is cut off at the limit instead of the process exiting first when
+  nothing else holds the event loop (`AbortSignal.timeout` does not; the test suite showed it on Node 22 as
+  `Promise resolution is still pending`).
 - A stdio MCP server that exited fails the next request at once with its exit code and stderr tail, instead of
   waiting for `timeoutMs` (forever with `"unbounded"`).
 - The run loop yields to the event loop once per turn, so an abort signal or a timer also fires with a provider that
