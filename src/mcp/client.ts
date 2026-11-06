@@ -126,6 +126,8 @@ class StdioTransport implements Transport {
   private pending = new Map<number, Pending>();
   private stderr = '';
   private timeoutMs: number;
+  /** Why the server process is gone, once it is: later requests fail at once instead of waiting for the time limit. */
+  private exited?: string;
 
   constructor(cfg: McpServerConfig, timeoutMs: number) {
     this.timeoutMs = timeoutMs;
@@ -134,11 +136,19 @@ class StdioTransport implements Transport {
     this.child.stderr!.on('data', (d: Buffer) => (this.stderr = stderrChars ? (this.stderr + d.toString()).slice(-stderrChars) : ''));
     createInterface({ input: this.child.stdout! }).on('line', (line) => this.onLine(line));
     const fail = (why: string) => {
-      for (const p of this.pending.values()) p.reject(new Error(`MCP server ${why}${this.stderr ? `: ${this.stderr.trim()}` : ''}`));
+      this.exited = why;
+      for (const p of this.pending.values()) p.reject(this.gone());
       this.pending.clear();
     };
-    this.child.on('exit', (code) => fail(`exited with code ${code}`));
+    this.child.on('exit', (code, signal) => fail(code === null ? `was killed by ${signal}` : `exited with code ${code}`));
     this.child.on('error', (err) => fail(`failed to start (${err.message})`));
+    // A write to the pipe of a dead server (EPIPE) is reported through `exited`, never as an uncaught error.
+    this.child.stdin!.on('error', () => {});
+  }
+
+  /** The error of every request once the server process is gone, with the tail of its stderr. */
+  private gone(): Error {
+    return new Error(`MCP server ${this.exited}${this.stderr ? `: ${this.stderr.trim()}` : ''}`);
   }
 
   private onLine(line: string): void {
@@ -162,10 +172,11 @@ class StdioTransport implements Transport {
   }
 
   private write(msg: unknown): void {
-    this.child.stdin!.write(`${JSON.stringify(msg)}\n`);
+    if (!this.exited && this.child.stdin?.writable) this.child.stdin.write(`${JSON.stringify(msg)}\n`);
   }
 
   request(method: string, params: unknown, signal?: AbortSignal): Promise<any> {
+    if (this.exited) return Promise.reject(this.gone());
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const ms = finiteTimeout(this.timeoutMs);
