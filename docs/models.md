@@ -33,7 +33,7 @@ output, the 9-12B models work except lfm2.5 (tool calling). `create` only succee
 
 | Model | Provider path | What was exercised | Result |
 |---|---|---|---|
-| deterministic mock | `mock/echo`, scripted `mockProvider` | the whole test suite on every CI run | passing on Node 22 and 24 |
+| deterministic mock | `mock/echo`, scripted `mockProvider` | the whole test suite, in CI on Node 22 and 24; CI runs on demand and before each release, not on every push | passing |
 | qwen3.5:9b through LiteLLM | `litellm/ollama_chat/qwen3.5:9b` | tool-using agent through the LiteLLM proxy | works |
 | OpenAI (GPT-5 family) | `openai/...` | contract tests only (Chat Completions, streaming, tool calls, `max_completion_tokens`, `response_format`) | not run live |
 | Anthropic (Claude family) | `anthropic/...` | contract tests only (Messages API, streaming, tool use, cache breakpoints, hosted tools, `output_config.format`) | not run live |
@@ -117,7 +117,8 @@ for the rest of the run. It is off by default.
 ## Practical guidance
 
 - Tool calling and chat work well with 8-9B local models. Multi-agent quality loops and `create` benefit from larger
-  or hosted models.
+  or hosted models: `create` fails with `no agent files were written` when the model narrates instead of calling
+  `write_file`, as small models (qwen3:4b, for one) tend to; a 12B-class or hosted model completes it.
 - Reasoning models spend many output tokens thinking. Set `budget.maxTotalTokens` or `maxDurationMs` accordingly.
 - For deterministic tests of your own agents, use `mock/echo` or scripted `mockProvider`, plus the exact
   `responseCache` in a `ci` profile.

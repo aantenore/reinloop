@@ -116,9 +116,12 @@ export function architect(opts: ArchitectOptions): EasyAgent {
   });
 }
 
+/** Problem reported when the architect ended without writing a file: an empty `agents/` validates, so it is checked apart. */
+export const NO_AGENT_FILES = 'no agent files were written under agents/ (call write_file; small models tend to narrate instead, see docs/models.md)';
+
 /**
- * Runs the architect and enforces the result: when the files on disk do not validate, the same session is sent
- * the errors to fix (up to `rounds` times). `onHandle` can render each streamed attempt.
+ * Runs the architect and enforces the result: when the files on disk do not validate, or nothing was written, the
+ * same session is sent the problems to fix (up to `rounds` times). `onHandle` can render each streamed attempt.
  */
 export async function design(
   request: string,
@@ -127,12 +130,21 @@ export async function design(
   const designer = architect(opts);
   let input = request;
   let runId: string | undefined;
+  // Successful write_file / edit_file calls: the guard confines them to agents/*.md.
+  let writes = 0;
+  const counter: Sink = {
+    name: 'architect-writes',
+    onEvent: (ev) => {
+      if (ev.type === 'tool_result' && !ev.data.isError && (ev.data.name === 'write_file' || ev.data.name === 'edit_file')) writes++;
+    },
+  };
   for (let round = 0; ; round++) {
-    const handle = designer.stream(input, { runId });
+    const handle = designer.stream(input, { runId, sinks: [...(opts.sinks ?? []), counter] });
     await opts.onHandle?.(handle);
     const result = await handle.result;
     runId = result.runId;
     const problems = await validateProject(opts.cwd);
+    if (!problems.length && !writes) problems.push(NO_AGENT_FILES);
     if (!problems.length || round >= (opts.rounds ?? 2) || result.status === 'interrupted') return { result, problems };
     input = `The project does not validate yet. Fix these problems, then call validate_project:\n${problems.map((p) => `- ${p}`).join('\n')}`;
   }
