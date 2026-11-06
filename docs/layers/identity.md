@@ -2,7 +2,7 @@
 
 Who a run acts as, what it may call, and which credentials it carries downstream. reinloop defines the contracts and
 wires them into the loop, `serve` and the MCP client. Implementations (OIDC verifier, token exchange, OPA, AuthZEN) are
-agent-layers adapters: `adapter-oidc`, `adapter-opa`, `adapter-authzen`.
+agent-layers adapters: `@agent-layers/adapters/oidc`, `@agent-layers/adapters/opa`, `@agent-layers/adapters/authzen`.
 
 | Concern | Contract | Registry | Config |
 |---|---|---|---|
@@ -44,7 +44,7 @@ without identity.
 { "policy": { "pdp": { "type": "opa", "url": "${env:OPA_URL}", "onError": "deny" } } }
 ```
 
-`type: "opa"` here is whatever a plugin registered, for example a wrapper of `adapter-opa`:
+`type: "opa"` here is whatever a plugin registered, for example a wrapper of `@agent-layers/adapters/opa`:
 `registry.authorizers.set('opa', (options) => myAuthorizer(options))`.
 
 Order in `authorizeCall`:
@@ -69,7 +69,7 @@ question to what may leave the process. The shape follows the agent-layers `Acce
 }
 ```
 
-`type` is required in `verifier` and `credentials` (`"oidc"` above is whatever a plugin registered, for example a wrapper of `adapter-oidc`); the other fields go to the registered factory. `runtime.identity`
+`type` is required in `verifier` and `credentials` (`"oidc"` above is whatever a plugin registered, for example a wrapper of `@agent-layers/adapters/oidc`); the other fields go to the registered factory. `runtime.identity`
 exposes the built verifier and factory.
 
 ## HTTP (`reinloop serve`)
@@ -108,5 +108,5 @@ caller that aborts only stops its own wait, never the session setup other caller
 
 ## Implementations
 
-`adapter-oidc` (JWT/JWKS verifier, RFC 8693 token exchange and client credentials), `adapter-opa`, `adapter-authzen` in
+`@agent-layers/adapters/oidc` (JWT/JWKS verifier, RFC 8693 token exchange and client credentials), `@agent-layers/adapters/opa`, `@agent-layers/adapters/authzen` in
 agent-layers, with `@agent-layers/conformance` for the verifier, credential and authorizer contracts.

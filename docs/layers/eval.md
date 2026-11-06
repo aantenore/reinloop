@@ -35,6 +35,6 @@ const result = await run(agent, c.input, { runId: c.id, store });
 const scores = await evaluator.score(c, { runId: result.runId, output: result.output, status: result.status, events: await store.load(result.runId) });
 ```
 
-Implementations: `adapter-expected-eval` (expected-value checks), `adapter-judge-eval` (LLM as judge) and
-`adapter-layer-signals` (per-layer scores from events) in agent-layers, with the dataset format, replay and the
+Implementations: `@agent-layers/adapters/expected-eval` (expected-value checks), `@agent-layers/adapters/judge-eval` (LLM as judge) and
+`@agent-layers/adapters/layer-signals` (per-layer scores from events) in agent-layers, with the dataset format, replay and the
 conformance kit.

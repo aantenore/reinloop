@@ -48,5 +48,5 @@ registry.middleware.set('guard', () => guardMiddleware([myGuard], { onError: 'bl
 { "plugins": ["./plugins/guard.mjs"], "agents": { "support": { "middleware": ["guard"] } } }
 ```
 
-Implementations: `adapter-presidio`, `adapter-llm-guard`, `adapter-http-guard`, `adapter-regex-guard` in agent-layers,
+Implementations: `@agent-layers/adapters/presidio`, `@agent-layers/adapters/llm-guard`, `@agent-layers/adapters/http-guard`, `@agent-layers/adapters/regex-guard` in agent-layers,
 which also provides the conformance kit.

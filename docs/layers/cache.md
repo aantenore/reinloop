@@ -54,4 +54,4 @@ A router object with a `models: string[]` property has those specs resolved when
 startup. The selected spec is the `model` of that turn's `model_request` and `model_response` events, and the response
 is priced with the selected model's pricing (`ModelResponse.pricing`; unknown pricing costs zero).
 
-Implementations: `adapter-rule-router` in agent-layers (rules over context size, tools and turn).
+Implementations: `@agent-layers/adapters/rule-router` in agent-layers (rules over context size, tools and turn).

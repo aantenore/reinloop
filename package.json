@@ -13,9 +13,19 @@
     "llm",
     "harness",
     "agent-framework",
+    "agent-runtime",
+    "subagents",
+    "agent-files",
+    "markdown",
+    "claude-code",
     "mcp",
     "opentelemetry",
-    "tool-calling"
+    "tool-calling",
+    "ollama",
+    "openai-compatible",
+    "budget",
+    "durable",
+    "headless"
   ],
   "type": "module",
   "engines": {
@@ -37,6 +47,7 @@
     "dist",
     "schema",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "sideEffects": false,

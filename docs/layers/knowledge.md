@@ -40,6 +40,6 @@ registry.middleware.set('knowledge', () => knowledgeMiddleware({ sources: [mySou
 { "plugins": ["./plugins/knowledge.mjs"], "agents": { "support": { "middleware": ["knowledge"] } } }
 ```
 
-Implementations: `adapter-mcp`, `adapter-http-knowledge`, `adapter-markdown-knowledge` in agent-layers, which also
+Implementations: `@agent-layers/adapters/mcp`, `@agent-layers/adapters/http-knowledge`, `@agent-layers/adapters/markdown-knowledge` in agent-layers, which also
 provides the conformance kit. The `search_knowledge` tool was removed; expose a source as a tool with `defineTool` if
 the model should query on demand.

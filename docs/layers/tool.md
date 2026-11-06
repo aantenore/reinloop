@@ -40,5 +40,5 @@ parent variables in); the HTTP transport refuses redirects.
 ## HTTP and OpenAPI tools
 
 Declarative HTTP tools and OpenAPI import (the `httpTools` and `openapi` config sections) were removed from reinloop.
-They are agent-layers adapters: `adapter-http-tools` and `adapter-openapi`. Use them through
-`@agent-layers/adapter-reinloop`, or wrap them as `Tool` objects in a plugin and register them in `registry.tools`.
+They are agent-layers adapters: `@agent-layers/adapters/http-tools` and `@agent-layers/adapters/openapi`. Use them through
+`@agent-layers/adapters/reinloop`, or wrap them as `Tool` objects in a plugin and register them in `registry.tools`.
