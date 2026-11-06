@@ -40,8 +40,9 @@ export function fileStore(dir: string): RunStore {
     async list() {
       try {
         return (await readdir(dir)).filter((f) => f.endsWith('.jsonl')).map((f) => f.slice(0, -6));
-      } catch {
-        return [];
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []; // nothing stored yet
+        throw err;
       }
     },
   };

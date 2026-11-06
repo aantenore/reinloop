@@ -1,4 +1,4 @@
-import { createEmitter, createHandle, normalizeInput, type RunHandle, stream } from './loop.ts';
+import { createEmitter, createHandle, incompleteLog, normalizeInput, type RunHandle, stream } from './loop.ts';
 import { initialState } from './state.ts';
 import { memoryStore } from './store/memory.ts';
 import type { Agent, MemberFailure, Message, RunOptions, RunResult, RunStatus, Usage } from './types.ts';
@@ -98,10 +98,11 @@ export function streamTeam(team: Team, input?: string | Message[], opts: RunOpti
     const status = outcome.status ?? 'completed';
     if (outcome.output) emit('message', { message: { role: 'assistant', parts: [{ type: 'text', text: outcome.output }] }, source: 'harness' });
     const failures = outcome.failures?.length ? outcome.failures : undefined;
-    emit('run_end', { status, reason: outcome.reason, output: outcome.output, usage, turns, costUsd, ...(failures && { failures }) });
-    await flush().catch(() => {});
+    let reason = outcome.reason;
+    emit('run_end', { status, reason, output: outcome.output, usage, turns, costUsd, ...(failures && { failures }) });
+    await flush().catch((err) => (reason = incompleteLog(runId, reason, err)));
     return {
-      runId, status, reason: outcome.reason, output: outcome.output, data: outcome.data, usage, costUsd, turns, messages: state.messages,
+      runId, status, reason, output: outcome.output, data: outcome.data, usage, costUsd, turns, messages: state.messages,
       ...(failures && { failures }),
     };
   });

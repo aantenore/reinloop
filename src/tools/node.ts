@@ -42,7 +42,8 @@ export async function resolveInside(root: string, path: string): Promise<string>
       const real = await realpath(probe);
       const full = rest ? resolve(real, rest) : real;
       const rel = relative(realRoot, full);
-      if (rel.startsWith('..') || isAbsolute(rel)) throw new Error(`path "${path}" is outside the workspace`);
+      // `..` as a whole segment only: a file named `..config` is inside the workspace.
+      if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error(`path "${path}" is outside the workspace`);
       return full;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
