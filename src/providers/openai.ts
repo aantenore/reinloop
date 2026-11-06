@@ -18,6 +18,8 @@ export interface OpenAICompatibleOptions {
   structuredOutput?: boolean | 'without-tools';
   /** Response text kept in an HTTP error (default 500). */
   errorBodyChars?: number;
+  /** Added to a `404` that names a model (`{model}` is replaced): how to make the model available, e.g. on a local server. */
+  missingModelHint?: string;
   /** Response JSON kept when a response has an unexpected shape (default 300). */
   responseExcerptChars?: number;
   /**
@@ -58,11 +60,22 @@ export function openaiCompatible(opts: OpenAICompatibleOptions = {}): Provider {
       };
       const headers = { ...(opts.apiKey && { authorization: `Bearer ${opts.apiKey}` }), ...opts.headers };
       return withDeadline(requestTimeoutMs(opts.timeoutMs), ctx.signal, async (dl) => {
-        const res = await postJson(fetchImpl, `${baseUrl}/chat/completions`, headers, body, dl.signal, opts.errorBodyChars);
+        let res: Response;
+        try {
+          res = await postJson(fetchImpl, `${baseUrl}/chat/completions`, headers, body, dl.signal, opts.errorBodyChars);
+        } catch (err) {
+          throw withModelHint(err, req.model, opts.missingModelHint);
+        }
         return stream ? readStream(res, ctx, dl) : fromCompletion(await res.json(), opts.responseExcerptChars);
       });
     },
   };
+}
+
+/** A `404` whose body names a model (not a wrong path) gets the hint on how to make the model available. */
+function withModelHint(err: unknown, model: string, hint: string | undefined): unknown {
+  if (!hint || !(err instanceof ProviderError) || err.status !== 404 || !/\bmodel\b/i.test(err.message)) return err;
+  return new ProviderError(err.status, `${err.message} (${hint.replaceAll('{model}', model)})`, err.retryAfterMs);
 }
 
 function sendsSchema(mode: OpenAICompatibleOptions['structuredOutput'], hasTools: boolean): boolean {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
-import { anthropic, createRuntime, mockProvider, openaiCompatible, presetProvider, ProviderError, run, withFallback, withRetry, type Agent } from '../src/index.ts';
+import { anthropic, createRuntime, mockProvider, openaiCompatible, PRESETS, presetProvider, ProviderError, run, withFallback, withRetry, type Agent } from '../src/index.ts';
 import type { ModelRequest } from '../src/index.ts';
 import { deadline } from '../src/providers/http.ts';
 import { echoTool, fakeFetch, json, sse } from './helpers.ts';
@@ -485,5 +485,21 @@ describe('request timeout', () => {
     } finally {
       srv.close();
     }
+  });
+});
+
+describe('provider errors', () => {
+  it('keeps the message of a JSON error body and hints at a missing local model', async () => {
+    const notFound = json({ error: { message: "model 'qwen3:8b' not found", type: 'api_error' } }, 404);
+    const local = (missingModelHint?: string) => openaiCompatible({ fetch: fakeFetch([notFound]).impl, baseUrl: 'http://localhost:11434/v1', missingModelHint });
+    await assert.rejects(local().generate(request, { signal }), (e: unknown) =>
+      e instanceof ProviderError && e.status === 404 && e.message === "HTTP 404 from http://localhost:11434/v1/chat/completions: model 'qwen3:8b' not found");
+    const hint = PRESETS.ollama!.options!.missingModelHint as string;
+    assert.match(hint, /ollama pull \{model\}/);
+    await assert.rejects(local(hint).generate(request, { signal }), /not found \(hint: ollama pull m, or set REINLOOP_MODEL=ollama\/<installed model>\)$/);
+    // A 404 that names no model (a wrong path) gets no hint; a string error and a non-JSON body are kept as they are.
+    await assert.rejects(openaiCompatible({ fetch: fakeFetch([() => new Response('404 page not found', { status: 404 })]).impl, missingModelHint: hint }).generate(request, { signal }), /: 404 page not found$/);
+    await assert.rejects(openaiCompatible({ fetch: fakeFetch([json({ error: 'slow down' }, 429)]).impl }).generate(request, { signal }), /HTTP 429 from .*: slow down$/);
+    assert.ok(['lmstudio', 'vllm'].every((p) => typeof PRESETS[p]!.options!.missingModelHint === 'string'));
   });
 });

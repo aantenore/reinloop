@@ -86,9 +86,23 @@ export async function postJson(
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new ProviderError(res.status, `HTTP ${res.status} from ${url}: ${truncate(text, errorBodyChars)}`, retryAfter(res.headers));
+    throw new ProviderError(res.status, `HTTP ${res.status} from ${url}: ${truncate(errorBodyMessage(text), errorBodyChars)}`, retryAfter(res.headers));
   }
   return res;
+}
+
+/** The message of a JSON error body (`{ error: { message } }`, `{ error: "..." }` or `{ message }`); the text itself otherwise. */
+export function errorBodyMessage(text: string): string {
+  try {
+    const body = JSON.parse(text);
+    const error = body?.error;
+    if (typeof error === 'string') return error;
+    if (typeof error?.message === 'string') return error.message;
+    if (typeof body?.message === 'string') return body.message;
+  } catch {
+    // not JSON
+  }
+  return text;
 }
 
 function retryAfter(headers: Headers): number | undefined {

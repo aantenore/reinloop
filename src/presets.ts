@@ -39,10 +39,20 @@ export const PRESETS: Record<string, ProviderPreset> = {
   deepseek: { kind: 'openai-compatible', baseUrl: 'https://api.deepseek.com/v1', apiKeyEnv: 'DEEPSEEK_API_KEY' },
   xai: { kind: 'openai-compatible', baseUrl: 'https://api.x.ai/v1', apiKeyEnv: 'XAI_API_KEY' },
   together: { kind: 'openai-compatible', baseUrl: 'https://api.together.xyz/v1', apiKeyEnv: 'TOGETHER_API_KEY' },
-  // Local servers enforce schemas with a grammar that leaves no room for tool calls.
-  ollama: { kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1', baseUrlEnv: 'OLLAMA_BASE_URL', options: { structuredOutput: 'without-tools' } },
-  lmstudio: { kind: 'openai-compatible', baseUrl: 'http://localhost:1234/v1', baseUrlEnv: 'LMSTUDIO_BASE_URL', options: { structuredOutput: 'without-tools' } },
-  vllm: { kind: 'openai-compatible', baseUrl: 'http://localhost:8000/v1', baseUrlEnv: 'VLLM_BASE_URL', apiKeyEnv: 'VLLM_API_KEY', options: { structuredOutput: 'without-tools' } },
+  // Local servers enforce schemas with a grammar that leaves no room for tool calls, and answer 404 for a model that
+  // is not loaded: the hint says how to load it (the default model is a guess when no key is set).
+  ollama: {
+    kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1', baseUrlEnv: 'OLLAMA_BASE_URL',
+    options: { structuredOutput: 'without-tools', missingModelHint: 'hint: ollama pull {model}, or set REINLOOP_MODEL=ollama/<installed model>' },
+  },
+  lmstudio: {
+    kind: 'openai-compatible', baseUrl: 'http://localhost:1234/v1', baseUrlEnv: 'LMSTUDIO_BASE_URL',
+    options: { structuredOutput: 'without-tools', missingModelHint: 'hint: load {model} in LM Studio, or set REINLOOP_MODEL=lmstudio/<loaded model>' },
+  },
+  vllm: {
+    kind: 'openai-compatible', baseUrl: 'http://localhost:8000/v1', baseUrlEnv: 'VLLM_BASE_URL', apiKeyEnv: 'VLLM_API_KEY',
+    options: { structuredOutput: 'without-tools', missingModelHint: 'hint: serve {model} with vLLM, or set REINLOOP_MODEL=vllm/<served model>' },
+  },
   mock: { kind: 'mock' },
 };
 
