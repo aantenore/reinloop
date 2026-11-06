@@ -128,6 +128,21 @@ describe('config', () => {
     assert.deepEqual(await priceOf('pinned'), { inputPerMTok: 9, outputPerMTok: 9 }, 'models.<alias>.pricing wins');
   });
 
+  it('keeps the turn limit when an agent budget sets other limits only; limits.maxTurns "unbounded" lifts it', async () => {
+    const config: HarnessConfig = {
+      providers: { mock: { type: 'mock' } },
+      models: { m: { provider: 'mock', model: 'x' } },
+      agents: { cost: { model: 'm', budget: { maxCostUsd: 1 } }, own: { model: 'm', budget: { maxTurns: 3 } }, plain: { model: 'm' } },
+    };
+    const rt = await createRuntime(config, { env: {} });
+    const budget = async (name: string) => ((await rt.agent(name)) as Agent).budget;
+    assert.deepEqual(await budget('cost'), { maxTurns: 50, maxCostUsd: 1 });
+    assert.deepEqual(await budget('own'), { maxTurns: 3 });
+    assert.deepEqual(await budget('plain'), { maxTurns: 50 });
+    const lifted = await createRuntime({ ...config, limits: { maxTurns: 'unbounded' as never } }, { env: {} });
+    assert.deepEqual(((await lifted.agent('cost')) as Agent).budget, { maxTurns: Number.POSITIVE_INFINITY, maxCostUsd: 1 });
+  });
+
   it('reads the serve exposure guards from config; serve() options win', async () => {
     const runtime = await createRuntime({ ...base(), serve: { allowedOrigins: ['https://app.example.com'], allowedHosts: ['proxy.example.com'], insecure: true } }, { env: {} });
     assert.deepEqual(runtime.serveSettings?.(), { allowedOrigins: ['https://app.example.com'], allowedHosts: ['proxy.example.com'], insecure: true });

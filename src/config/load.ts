@@ -108,7 +108,7 @@ export interface HarnessConfig {
 }
 
 export interface LimitsConfig {
-  /** Turns of an agent that sets no `budget` (default 50; `"unbounded"` allowed, with a warning). */
+  /** Turn limit of an agent whose `budget` sets no `maxTurns` (default 50; `"unbounded"` allowed, with a warning). */
   maxTurns?: number;
   /** Empty model responses in a row before a run fails (default 2). */
   maxEmptyResponses?: number;

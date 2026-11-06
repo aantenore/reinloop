@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  agentTool, collectSink, defineTool, memoryArtifacts, memoryStore, readArtifactTool, run, stream, windowCompaction,
-  type RunEvent,
+  agent, agentTool, collectSink, DEFAULT_BUDGET, defineTool, memoryArtifacts, memoryStore, mockProvider, readArtifactTool, run, stream, team, windowCompaction,
+  type Agent, type Budget, type RunEvent, type RunStore,
 } from '../src/index.ts';
 import { echoTool, makeAgent, sleepTool, thinkingAgent } from './helpers.ts';
 
@@ -68,6 +68,57 @@ describe('loop', () => {
     const res = await run(agent, 'go');
     assert.equal(res.status, 'stopped');
     assert.equal(res.reason, 'budget:maxTurns');
+  });
+
+  it('keeps the default turn limit when a budget sets other limits only; maxTurns: Infinity lifts it', async () => {
+    const looping = (budget: Budget): Agent => ({
+      name: 'test', model: { provider: mockProvider([{ toolCalls: [{ name: 'echo', args: { text: 'a' } }] }], { loop: true }), model: 'mock-1' }, tools: [echoTool()], budget,
+    });
+    const res = await run(looping({ maxCostUsd: 1 }), 'go');
+    assert.equal(res.status, 'stopped');
+    assert.equal(res.reason, 'budget:maxTurns');
+    assert.equal(res.turns, DEFAULT_BUDGET.maxTurns);
+    // Only the abort ends this run: the loop must yield to the event loop between turns for the timer to fire.
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(new Error('deadline')), 50);
+    const unbounded = await run(looping({ maxTurns: Infinity, maxCostUsd: 1 }), 'go', { signal: ctl.signal });
+    assert.equal(unbounded.status, 'interrupted');
+    assert.equal(unbounded.reason, 'deadline');
+    assert.ok(unbounded.turns > DEFAULT_BUDGET.maxTurns!, `ran ${unbounded.turns} turns`);
+  });
+
+  it('fails a resume of an unknown run id with a clear reason', async () => {
+    const res = await run(makeAgent([{ text: 'x' }]), undefined, { store: memoryStore(), runId: 'nope-1' });
+    assert.deepEqual([res.status, res.reason], ['failed', 'unknown run id nope-1']);
+    assert.equal((await run(makeAgent([{ text: 'x' }]))).reason, 'no input');
+  });
+
+  it('reports a run_end the store could not append through a warning and the result reason', async () => {
+    const inner = memoryStore();
+    const store: RunStore = {
+      append: async (ev) => {
+        if (ev.type === 'run_end') throw new Error('disk full');
+        return inner.append(ev);
+      },
+      load: inner.load,
+    };
+    const warnings: string[] = [];
+    const onWarning = (w: Error) => {
+      if (w.name === 'ReinloopStoreWarning') warnings.push(w.message);
+    };
+    process.on('warning', onWarning);
+    try {
+      const res = await run(makeAgent([{ text: 'done' }]), 'go', { store });
+      assert.deepEqual([res.status, res.output, res.reason], ['completed', 'done', 'store: disk full']);
+      assert.ok(!(await inner.load(res.runId)).some((e) => e.type === 'run_end'), 'the log lacks run_end');
+      const t = await team('t', 'chain', { steps: [agent({ name: 'a', model: { provider: mockProvider([{ text: 'A' }]), model: 'mock' } })] }).run('go', { store });
+      assert.deepEqual([t.status, t.output, t.reason], ['completed', 'A', 'store: disk full']);
+      await new Promise((r) => setImmediate(r));
+      assert.equal(warnings.length, 3, 'agent run, team member run and team run');
+      assert.equal(warnings[0], `run ${res.runId}: run_end was not stored (disk full); the log is incomplete`);
+    } finally {
+      process.off('warning', onWarning);
+    }
   });
 
   it('validates structured output and retries with feedback', async () => {

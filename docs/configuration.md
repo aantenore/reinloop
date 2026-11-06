@@ -73,7 +73,7 @@ needs it is built, so an unused provider never blocks a run. Numeric limits take
 
 | Section | Notes |
 |---|---|
-| `providers.<name>` | `type`: `openai-compatible` (`baseUrl`, `apiKey`, `headers`, `stream`, `maxTokensParam`, `structuredOutput: true \| false \| "without-tools"`), `anthropic` (`baseUrl`, `apiKey`, `version`, `headers`, `stream`, `cache` (default on: breakpoints on tools, system prompt and the latest message; agents override with `params.cache` / `params.cacheTtl: "5m" \| "1h"`), `cacheTtl`, `cacheMinTokens` (default 1024: shorter prefixes get no breakpoint), `defaultMaxTokens`, `structuredOutput`), `mock` (`responses`, `loop`), or a plugin type. `retry: false \| { maxAttempts, baseDelayMs, maxDelayMs, retryOn }` (retries are on by default), `timeoutMs`, `errorBodyChars`, `responseExcerptChars`. A provider named `x` makes `x/<model>` strings work. |
+| `providers.<name>` | `type`: `openai-compatible` (`baseUrl`, `apiKey`, `headers`, `stream`, `maxTokensParam`, `structuredOutput: true \| false \| "without-tools"`, `missingModelHint`: text added to a `404` that names a model, `{model}` replaced), `anthropic` (`baseUrl`, `apiKey`, `version`, `headers`, `stream`, `cache` (default on: breakpoints on tools, system prompt and the latest message; agents override with `params.cache` / `params.cacheTtl: "5m" \| "1h"`), `cacheTtl`, `cacheMinTokens` (default 1024: shorter prefixes get no breakpoint), `defaultMaxTokens`, `structuredOutput`), `mock` (`responses`, `loop`), or a plugin type. `retry: false \| { maxAttempts, baseDelayMs, maxDelayMs, retryOn }` (retries are on by default), `timeoutMs`, `errorBodyChars`, `responseExcerptChars`. A provider named `x` makes `x/<model>` strings work. |
 | `presets.<name>` | Settings for a built-in preset used as `"<name>/<model>"`: `headers` (extra request headers, `${env:...}` allowed). Ignored when `providers.<name>` defines a provider with the same name. Presets also read headers from env vars: `ANTHROPIC_WORKSPACE_ID` becomes `anthropic-workspace-id` for `anthropic/...`; config headers win over env ones. |
 | `models.<alias>` | `provider`, `model`, `params`, `pricing` (USD per million tokens, used for cost budgets), `fallback` (aliases tried in order). |
 | `pricing.<model id>` | Price overrides (`inputPerMTok`, `outputPerMTok`, `cacheReadPerMTok`, USD per million tokens; `cacheWriteMultiplier` / `cacheWrite1hMultiplier`, cache writes as a multiple of the input price, built in for Claude as 1.25 / 2; `serverToolUsd`, USD per hosted-tool request such as `{ "webSearchRequests": 0.01 }`) keyed by the model id without the provider prefix, merged field by field over the built-in table (`PRICING`: `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`). `models.<alias>.pricing` takes precedence. Models without a price cost 0, so `maxCostUsd` does not limit them. |
@@ -83,7 +83,7 @@ needs it is built, so an unused provider never blocks a run. Numeric limits take
 | `policy.pdp` | External policy decision point asked after the local rules (a local `deny` is final): `type` (an authorizer a plugin registered; none is built in), `includeArgs` (send tool arguments; off by default), `onError: allow \| ask \| deny` (default `deny`), `maxReasonChars`; other fields go to the authorizer's factory. See [layers/identity.md](layers/identity.md#external-pdp). |
 | `identity` | `verifier` (turns a bearer token into the run identity, used by `reinloop serve`) and `credentials` (outbound tokens bound per run; called without identity for the agent's own, e.g. MCP connection setup), each with a required `type` (a factory a plugin registered; none is built in) plus the factory's own fields; `required` (default true): `reinloop serve` rejects `/v1/*` calls without a valid token. See [layers/identity.md](layers/identity.md). |
 | `routers.<name>` | Model routers: `type` (a router a plugin registered; none is built in) plus its options. Agents attach one with `router: <name>`. See [layers/cache.md](layers/cache.md). |
-| `store` | `memory` or `file`: the event log used for sessions and resume. |
+| `store` | `memory` (default) or `file`: the event log used for sessions and resume. Only `file` outlives the process: `reinloop runs`, `reinloop resume` and the `resume with:` hint need it. |
 | `responseCache` | `memory` or `file` (+ `ttlMs`, `namespace`; `memory`: `maxEntries`): identical requests replay at zero cost. Agents opt out with `responseCache: false`. |
 | `memory` | Backing store for `remember` / `recall`; `scope: shared \| agent`, `recallLimit`. |
 | `hostedTools.<name>` | Provider-hosted tools (`provider`, `type`, `params`, `risk`, `description`, `limitParam` (name of the `params` field that receives the remaining tool-call budget, e.g. `max_uses`), `beta`) that agents list in `tools` by name; they replace a built-in tool with the same name. See [web-tools.md](web-tools.md). |
@@ -91,7 +91,7 @@ needs it is built, so an unused provider never blocks a run. Numeric limits take
 | `signals` | Settings of the public-signal tools `search_discussions` / `search_projects` / `search_questions` / `search_papers`: `sources` (default all of `hackernews`, `github`, `stackoverflow`, `arxiv`), `maxResults`, `maxResultsCap`, `maxChars`, `cacheTtlMs`, `cacheMaxEntries`, `timeoutMs`, `errorBodyChars`, `rateLimitBodyChars`, `githubToken` (default env `GITHUB_TOKEN`), `githubIssues`, `stackExchangeSite`, `userAgent`. See [signal-tools.md](signal-tools.md). |
 | `sinks` | `console`, `jsonl`, `otlp` (`endpoint`, `headers`, `serviceName`, `captureContent`, `metrics`, `intervalMs`, `metricsIntervalMs`, `exportTimeoutMs`), or plugin sinks. |
 | `serve` | Limits of `reinloop serve`: `maxBodyBytes`, `requestTimeoutMs`, `headersTimeoutMs`, `errorDescriptionChars`, and the exposure guards `allowedHosts`, `allowedOrigins`, `insecure` (below). Options passed to `serve()` and CLI flags win. |
-| `limits` | Cross-cutting limits: `maxTurns` (turns of an agent without `budget`), `maxEmptyResponses`, `minSecretChars`. |
+| `limits` | Cross-cutting limits: `maxTurns` (turn limit of every agent whose `budget` sets none), `maxEmptyResponses`, `minSecretChars`. |
 | `skillsDir` | Folders with Agent Skills (default `skills/`, `.reinloop/skills/`). |
 | `agents`, `teams` | Same fields as agent files ([agent-files.md](agent-files.md), [patterns.md](patterns.md)): `description`, `model`, `instructions`, `tools`, `budget` (`maxTurns`, `maxToolCalls`, `maxInputTokens`, `maxOutputTokens`, `maxTotalTokens`, `maxCostUsd`, `maxDurationMs`), `params` (`temperature`, `maxTokens`, `topP`, `stop`, `thinking` with `type`, `budgetTokens`, `display`, `effort`, `retryMaxTokens`, `extra`), `policy`, `compaction` (`thresholdTokens`, `keepFirst`, `keepLast`, `maxTokens`, `toolResultChars`), `output` (`schema`, `retries`), `asTool` (`name`, `description`, `context`, `forwardEvents`). |
 | `$schema` | Optional pointer to `schema/reinloop.schema.json` for editor validation; ignored at runtime. |
@@ -231,6 +231,29 @@ layout follows [agent-layers limits](https://github.com/aantenore/agent-layers/b
 
 ### Serve
 
+`reinloop serve` (or `serve(runtime, options)` in code) answers these routes; every answer is JSON, errors are
+`{ "error": "..." }`:
+
+| Route | Answer |
+|---|---|
+| `GET /health` | `{ "ok": true }`. No data, so it skips the `Host` / `Origin` checks and authentication (load balancers). |
+| `GET /` | The web console (off with `ui: false` in `serve()`). |
+| `GET /v1/agents` | Agents and teams with their descriptions. |
+| `POST /v1/agents/:name/runs` | Body `{ "input": "...", "runId": "..." }` (both optional; a known `runId` continues that run or session) with `Content-Type: application/json`. Answers the run result, or the run's events as server-sent events with `Accept: text/event-stream` (or `?stream=1`), ending with an `event: result`. `404` unknown agent, `409 run busy` while a request with the same `runId` is running. |
+| `GET /v1/runs` | Stored runs (needs a `file` store to outlive the process). With an identity verifier, operator token only (`403`). |
+| `GET /v1/runs/:id` | The run's event log. |
+
+With `token` (or `REINLOOP_API_TOKEN`) set, requests need `Authorization: Bearer <token>` and act as the operator.
+With an identity verifier, a verified caller sees only the runs it started (same subject and identity kind); others
+get `404`, and runs without a recorded subject are operator-only. Without a token or verifier the API is open, which
+is why a non-loopback `host` needs one (see `insecure` below).
+
+```bash
+curl -s http://127.0.0.1:7878/v1/agents/researcher/runs \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $REINLOOP_API_TOKEN" \
+  -d '{"input":"What does this folder contain?"}'
+```
+
 | Setting | Default | Accepted | Safe range | At load | Why |
 |---|---|---|---|---|---|
 | `serve.maxBodyBytes` | 1000000 | 1–∞ or unbounded | 1024–10485760 | warn if unbounded, warn outside safe range | Largest request body; bigger ones get 413 and the connection is closed. |
@@ -242,7 +265,7 @@ Exposure guards are `serve` config keys, options of `serve()` and flags of `rein
 
 | Config / option / flag | Default | Why |
 |---|---|---|
-| `allowedHosts` / `--allow-host <host>` (repeatable) | the bound host, `localhost`, `127.0.0.1`, `[::1]` (with the bound port) | Other `Host` headers get 403 (DNS rebinding); `GET /health` (no data) is exempt. A `Host` without port counts as port 80. `name` matches any port, `name:port` that port only; add the public name behind a proxy. |
+| `allowedHosts` / `--allow-host <host>` (repeatable) | the bound host, `localhost`, `127.0.0.1`, `[::1]` (with the bound port) | Other `Host` headers get `403 host not allowed` (DNS rebinding), with the flag named in the body; `GET /health` (no data) is exempt. A `Host` without port counts as port 80. `name` matches any port, `name:port` that port only. Off loopback (`--host 0.0.0.0`, a container, a VM) clients reach the server through a name or address of their own, so add it: `--allow-host 192.168.1.33`, `--allow-host agents.internal`, the public name behind a proxy. |
 | `allowedOrigins` / `--allow-origin <origin>` (repeatable) | none | A request with an `Origin` header that is neither listed nor this server's own origin (the web console) gets 403. Requests without `Origin` (CLI, servers) pass. |
 | `insecure` / `--insecure` | off | Without it, `serve` refuses to start on a non-loopback `host` unless a `token` or an identity verifier with `required` (default) is set. |
 
@@ -252,7 +275,7 @@ Exposure guards are `serve` config keys, options of `serve()` and flags of `rein
 
 | Setting | Default | Accepted | Safe range | At load | Why |
 |---|---|---|---|---|---|
-| `limits.maxTurns` | 50 | 1–∞ or unbounded | 1–1000 | warn if unbounded, warn outside safe range | Turns of an agent that sets no budget; with "unbounded" a looping agent never stops. |
+| `limits.maxTurns` | 50 | 1–∞ or unbounded | 1–1000 | warn if unbounded, warn outside safe range | Turn limit of an agent whose budget sets no maxTurns; with "unbounded" a looping agent never stops. |
 | `limits.maxEmptyResponses` | 2 | 0–∞ | 0–10 | warn outside safe range | Empty model responses in a row before the run fails. |
 | `limits.minSecretChars` | 4 | 1–∞ | 1–8 | warn outside safe range | Shorter secrets are not masked in echoed error text (they would mangle ordinary text). |
 

@@ -2483,7 +2483,7 @@
       "additionalProperties": false,
       "properties": {
         "maxTurns": {
-          "description": "Turns of an agent that sets no budget; with \"unbounded\" a looping agent never stops. Default 50.",
+          "description": "Turn limit of an agent whose budget sets no maxTurns; with \"unbounded\" a looping agent never stops. Default 50.",
           "default": 50,
           "anyOf": [
             {

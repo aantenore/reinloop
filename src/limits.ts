@@ -222,7 +222,7 @@ const POLICY_LIMITS = {
 const LOOP_LIMITS = {
   'limits.maxTurns': {
     component: 'Run loop and redaction', path: 'limits.maxTurns', option: 'DEFAULT_BUDGET.maxTurns (Agent.budget)', default: 50, min: 1, unbounded: true, warnUnbounded: true,
-    safe: [1, 1000], why: 'Turns of an agent that sets no budget; with "unbounded" a looping agent never stops',
+    safe: [1, 1000], why: 'Turn limit of an agent whose budget sets no maxTurns; with "unbounded" a looping agent never stops',
   },
   'limits.maxEmptyResponses': {
     component: 'Run loop and redaction', path: 'limits.maxEmptyResponses', option: 'Agent.maxEmptyResponses', default: 2, min: 0, safe: [0, 10],

@@ -6,6 +6,7 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { design } from './architect.ts';
 import { loadConfig } from './config/load.ts';
+import type { Runtime } from './config/runtime.ts';
 import { addIntegration, INTEGRATIONS } from './integrations.ts';
 import { describeMembers } from './describe.ts';
 import type { RunHandle } from './loop.ts';
@@ -13,9 +14,11 @@ import { serveMcp } from './mcp/server.ts';
 import { consoleSink } from './observe/sinks.ts';
 import { defaultModel, missingCredentials } from './presets.ts';
 import { CONFIG_FILE, loadProject } from './project.ts';
-import { serve } from './serve.ts';
+import { isLoopback, serve } from './serve.ts';
+import { isTeam, type Member } from './team.ts';
 import type { Approver, RunResult } from './types.ts';
 import { errorMessage, truncate } from './util.ts';
+import { VERSION } from './version.ts';
 
 const HELP = `reinloop — agents as files, harness included
 
@@ -27,8 +30,9 @@ const HELP = `reinloop — agents as files, harness included
   reinloop add [integration]     Connect an existing technology (RAG, memory, GitHub, tracing, evals...)
   reinloop serve                 HTTP API + web console (default http://127.0.0.1:7878)
   reinloop mcp                   Expose agents as MCP tools over stdio
-  reinloop resume <runId> [task] Resume an interrupted run or continue a session
+  reinloop resume <runId> [task] Resume an interrupted run or continue a session (needs a file store)
   reinloop runs | validate       Stored runs | check configuration
+  reinloop version               Print the version
 
 Options:
   -a, --agent <name>      Agent or team (default: defaultAgent or the only one)
@@ -38,6 +42,7 @@ Options:
       --skills <dir>      Agent Skills directory (default: skills/ and .reinloop/skills/)
   -p, --profile <name>    Config profile overlay
   -y, --yes               Approve tool calls that policy marks "ask"
+  -v, --version           Print the version
       --json              Print events as JSON lines
       --debug             Verbose progress on stderr
       --port, --host, --token   Options for serve (token also from REINLOOP_API_TOKEN)
@@ -88,6 +93,40 @@ async function render(handle: RunHandle, values: Values): Promise<RunResult> {
 
 const exitCode = (r: RunResult) => (r.status === 'completed' ? 0 : r.status === 'stopped' ? 2 : 1);
 
+/**
+ * Calls `fn` once on SIGINT (Ctrl+C) or SIGTERM (containers and service managers stop processes with it) and then
+ * detaches, so a second signal ends the process the default way. Returns the function that detaches early.
+ */
+function onShutdown(fn: (signal: NodeJS.Signals) => void): () => void {
+  const handler = (signal: NodeJS.Signals) => {
+    detach();
+    fn(signal);
+  };
+  const detach = () => {
+    process.off('SIGINT', handler);
+    process.off('SIGTERM', handler);
+  };
+  process.on('SIGINT', handler).on('SIGTERM', handler);
+  return detach;
+}
+
+/** Abort reason of a run ended by a signal. */
+const interruption = (signal: NodeJS.Signals) => new Error(signal === 'SIGINT' ? 'interrupted by user' : `interrupted by ${signal}`);
+
+/** The run log outlives the process only with a configured store other than `memory`. */
+const durableStore = (rt: Runtime) => rt.config.store !== undefined && rt.config.store.type !== 'memory';
+
+/** Agent names a member runs: itself, or every agent of a team (nested teams included). */
+const agentNames = (member: Member): string[] => (isTeam(member) ? member.members.flatMap(agentNames) : [member.name]);
+
+/** Fails before any request when a built-in preset lacks its API key (the check `validate` reports): for the agents of `member`, or all of them. */
+async function requireCredentials(rt: Runtime, member?: Member): Promise<void> {
+  const only = member && new Set(agentNames(member));
+  const agents = Object.fromEntries(Object.entries(rt.config.agents ?? {}).filter(([name]) => !only || only.has(name)));
+  const problems = missingCredentials({ ...rt.config, agents });
+  if (problems.length) throw new Error(problems.join('\n'));
+}
+
 async function readStdin(): Promise<string> {
   if (process.stdin.isTTY) return '';
   const chunks: Buffer[] = [];
@@ -125,6 +164,7 @@ async function main(argv: string[]): Promise<number> {
       skills: { type: 'string', multiple: true },
       profile: { type: 'string', short: 'p' },
       yes: { type: 'boolean', short: 'y' },
+      version: { type: 'boolean', short: 'v' },
       json: { type: 'boolean' },
       debug: { type: 'boolean' },
       description: { type: 'string', short: 'd' },
@@ -139,6 +179,10 @@ async function main(argv: string[]): Promise<number> {
     },
   });
   const [command, ...rest] = positionals;
+  if (values.version || command === 'version') {
+    console.log(VERSION);
+    return 0;
+  }
   if (values.help || !command) {
     console.log(HELP);
     return values.help ? 0 : 1;
@@ -185,7 +229,13 @@ async function main(argv: string[]): Promise<number> {
       if (values.config) await loadConfig(values.config, { profile: values.profile, onWarning: () => {} }); // project() reports the warnings
       const rt = await project();
       try {
-        for (const name of rt.names()) await rt.agent(name);
+        for (const name of rt.names()) {
+          const member = await rt.agent(name);
+          // Unpriced models (every local one) cost 0, so a cost limit alone never stops them.
+          if (!isTeam(member) && member.budget?.maxCostUsd !== undefined && !member.model.pricing) {
+            console.error(`warning: agent "${name}" sets budget.maxCostUsd but ${member.model.model} has no price table, so its cost stays 0 and the limit never stops it (add "pricing" to the config)`);
+          }
+        }
         for (const warning of missingCredentials(rt.config)) console.error(`warning: ${warning}`);
         console.log(`ok: ${rt.names().join(', ')}`);
       } finally {
@@ -209,48 +259,77 @@ async function main(argv: string[]): Promise<number> {
         console.log(((await rt.store.list?.()) ?? []).join('\n'));
         return 0;
       case 'serve': {
+        await requireCredentials(rt);
         const token = values.token ?? process.env.REINLOOP_API_TOKEN;
         const served = await serve(rt, { port: values.port ? Number(values.port) : undefined, host: values.host, token, allowedHosts: values['allow-host'], allowedOrigins: values['allow-origin'], insecure: values.insecure, approve: values.yes ? () => true : undefined });
-        console.error(`reinloop serving ${rt.names().join(', ')} at ${served.url}${token ? ' (token required)' : ''}`);
-        await new Promise<void>((resolve) => process.once('SIGINT', resolve));
+        // Off loopback, clients reach the server through a name or address of their own: it must be allow-listed.
+        const hosts = values.host && !isLoopback(values.host) ? `; Host must be the bound host, localhost or an --allow-host name (also serve.allowedHosts), see docs/configuration.md#serve` : '';
+        console.error(`reinloop serving ${rt.names().join(', ')} at ${served.url}${token ? ' (token required)' : ''}${hosts}`);
+        await new Promise<void>((resolve) => onShutdown(() => resolve()));
         await served.close();
         return 0;
       }
-      case 'mcp':
-        await serveMcp(rt, { approve: values.yes ? () => true : undefined });
+      case 'mcp': {
+        const stop = new AbortController();
+        const detach = onShutdown((signal) => stop.abort(interruption(signal)));
+        await serveMcp(rt, { approve: values.yes ? () => true : undefined, signal: stop.signal }).finally(detach);
         return 0;
+      }
       case 'chat': {
+        await requireCredentials(rt, await rt.agent(values.agent));
         let rl: Interface | undefined;
-        const getRl = () => (rl ??= createInterface({ input: process.stdin, output: process.stdout }));
-        const approve = approver(values, getRl);
         let runId: string | undefined;
-        console.error(`chat with ${values.agent ?? (rt.config.defaultAgent || rt.names()[0])} — empty line or /exit to quit`);
-        for (;;) {
-          // The prompt must not contain a newline: readline redraws it on every edit (e.g. backspace).
-          process.stdout.write('\n');
-          const line = (await getRl().question('> ')).trim();
-          if (!line || line === '/exit') break;
-          const handle = await rt.stream(values.agent, line, { runId, approve });
-          const onSigint = () => handle.abort(new Error('interrupted by user'));
-          process.once('SIGINT', onSigint);
-          runId = (await render(handle, values)).runId;
-          process.off('SIGINT', onSigint);
+        let current: RunHandle | undefined;
+        let done = false;
+        // SIGINT ends the answer in progress, or the chat when none is; SIGTERM ends the chat (after that answer's
+        // run_end is recorded).
+        let quit!: () => void;
+        const quitting = new Promise<string>((resolve) => (quit = () => ((done = true), resolve(''))));
+        const onSignal = (signal: NodeJS.Signals) => {
+          current?.abort(interruption(signal));
+          if (signal !== 'SIGINT' || !current) quit();
+        };
+        // In a terminal, Ctrl+C and Ctrl+D never reach the process: readline closes itself, which counts as SIGINT (the
+        // next prompt opens a new interface). An input pipe that ended quits once the answer is complete.
+        const getRl = () =>
+          (rl ??= createInterface({ input: process.stdin, output: process.stdout }).once('close', () => {
+            rl = undefined;
+            if (process.stdin.isTTY) onSignal('SIGINT');
+            else quit();
+          }));
+        const approve = approver(values, getRl);
+        process.on('SIGINT', onSignal).on('SIGTERM', onSignal);
+        try {
+          console.error(`chat with ${values.agent ?? (rt.config.defaultAgent || rt.names()[0])} — empty line or /exit to quit`);
+          while (!done) {
+            // The prompt must not contain a newline: readline redraws it on every edit (e.g. backspace).
+            process.stdout.write('\n');
+            // A question readline cancelled (Ctrl+C, Ctrl+D) reads as an empty line.
+            const line = (await Promise.race([getRl().question('> ').catch(() => ''), quitting])).trim();
+            if (!line || line === '/exit') break;
+            current = await rt.stream(values.agent, line, { runId, approve });
+            runId = (await render(current, values)).runId;
+            current = undefined;
+          }
+        } finally {
+          process.off('SIGINT', onSignal).off('SIGTERM', onSignal);
+          rl?.close();
         }
-        rl?.close();
         return 0;
       }
       case 'run':
       case 'resume': {
         const runId = command === 'resume' ? rest.shift() : undefined;
         if (command === 'resume' && !runId) throw new Error('usage: reinloop resume <runId> [task]');
+        if (command === 'resume' && !durableStore(rt)) throw new Error(`nothing to resume: the default memory store keeps no run between commands (set "store": { "type": "file" } in ${CONFIG_FILE})`);
         const input = rest.join(' ').trim() || (await readStdin());
         if (command === 'run' && !input) throw new Error('usage: reinloop run "task"');
+        await requireCredentials(rt, await rt.agent(values.agent));
         const handle = await rt.stream(values.agent, input || undefined, { runId, approve: approver(values) });
-        process.once('SIGINT', () => handle.abort(new Error('interrupted by user')));
-        const result = await render(handle, values);
-        if (!values.json && result.status !== 'completed') {
-          process.stderr.write(`run ${result.runId} ${result.status}${result.reason ? `: ${result.reason}` : ''}\nresume with: reinloop resume ${result.runId}\n`);
-        }
+        const detach = onShutdown((signal) => handle.abort(interruption(signal)));
+        const result = await render(handle, values).finally(detach);
+        // The console sink already printed the status and reason; a run that made progress into a durable log can go on.
+        if (!values.json && result.status !== 'completed' && result.turns > 0 && durableStore(rt)) process.stderr.write(`resume with: reinloop resume ${result.runId}\n`);
         return exitCode(result);
       }
       default:

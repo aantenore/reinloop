@@ -86,6 +86,8 @@ async function drive(
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
   // Middleware that rewrites or blocks the answer (text and thinking): stream it only once every afterModel has run.
   const holdText = (agent.middleware ?? []).some((mw) => mw.holdsText);
+  // The default turn limit stays unless the agent sets its own `maxTurns` (`Infinity` lifts it).
+  const budget: Budget = { ...DEFAULT_BUDGET, ...agent.budget };
 
   const storeFailure = new AbortController();
   signal = AbortSignal.any([signal, storeFailure.signal]);
@@ -142,7 +144,7 @@ async function drive(
 
       const last = state.messages.at(-1);
       if (!last) {
-        end = { status: 'failed', reason: 'no input' };
+        end = { status: 'failed', reason: continuing && !prior.length ? `unknown run id ${runId}` : 'no input' };
         break;
       }
       // A paused hosted-tool turn is sent back as-is so the provider resumes it.
@@ -170,7 +172,7 @@ async function drive(
           outputTokens: state.usage.outputTokens - base.usage.outputTokens,
         },
       };
-      const exceeded = exceededBudget(agent.budget ?? DEFAULT_BUDGET, counters, Date.now() - started);
+      const exceeded = exceededBudget(budget, counters, Date.now() - started);
       if (exceeded) {
         end = { status: 'stopped', reason: `budget:${exceeded}` };
         break;
@@ -194,11 +196,15 @@ async function drive(
         }
       }
 
+      // Hand control to the event loop once per turn: with a provider that answers without I/O, an abort signal or a
+      // timer could otherwise never fire.
+      await new Promise((resolve) => setImmediate(resolve));
+      signal.throwIfAborted();
       offered ??= await allowedHostedTools(agent, specs, runId, opts, signal, emit);
       const turn = state.turns + 1;
       emit('turn_start', { turn });
       const params = raisedMaxTokens ? { ...agent.model.params, maxTokens: raisedMaxTokens } : agent.model.params;
-      const turnTools = capHostedUses(offered, agent.budget ?? DEFAULT_BUDGET, counters.toolCalls);
+      const turnTools = capHostedUses(offered, budget, counters.toolCalls);
       let req: ModelRequest = { model: agent.model.model, instructions: agent.instructions, messages: [...state.messages], tools: turnTools, params };
       // Always offered: providers map it to native structured output that coexists with tool calls, or skip it.
       if (agent.output) req.responseSchema = agent.output.schema;
@@ -272,14 +278,28 @@ async function drive(
           : { status: 'failed', reason: errorMessage(err) };
   }
 
-  await flush().catch((err) => {
-    end = { status: 'failed', reason: `store: ${errorMessage(err)}` };
-  });
+  const stored = await flush().then(
+    () => true,
+    (err) => {
+      end = { status: 'failed', reason: `store: ${errorMessage(err)}` };
+      return false;
+    },
+  );
   const lastAssistant = [...state.messages].reverse().find((m) => m.role === 'assistant');
   const output = stopOutput ?? textOf(lastAssistant);
   emit('run_end', { status: end!.status, reason: end!.reason, output, usage: state.usage, turns: state.turns, costUsd: state.costUsd });
-  await flush().catch(() => {});
+  // A log that lost only its `run_end` still replays; the result says so (an earlier store failure is already its reason).
+  await flush().catch((err) => {
+    if (stored) end = { ...end!, reason: incompleteLog(runId, end!.reason, err) };
+  });
   return { runId, status: end!.status, reason: end!.reason, output, data, usage: state.usage, costUsd: state.costUsd, turns: state.turns, messages: state.messages };
+}
+
+/** Reports a final append that failed (the stored log lacks `run_end`) and returns the run reason with the store error added. */
+export function incompleteLog(runId: string, reason: string | undefined, err: unknown): string {
+  const message = errorMessage(err);
+  process.emitWarning(`run ${runId}: run_end was not stored (${message}); the log is incomplete`, { type: 'ReinloopStoreWarning', code: 'REINLOOP_LOG_INCOMPLETE' });
+  return reason ? `${reason}; store: ${message}` : `store: ${message}`;
 }
 
 /** Folds, persists (non-ephemeral), fans out to sinks and to the handle's channel, in that order. */

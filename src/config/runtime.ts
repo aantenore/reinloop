@@ -5,7 +5,7 @@ import { type CacheStore, withResponseCache } from '../cache.ts';
 import type { RunHandle } from '../loop.ts';
 import { McpClient, mcpTools } from '../mcp/client.ts';
 import { createTeam } from '../patterns.ts';
-import { mergePolicies } from '../policy.ts';
+import { DEFAULT_BUDGET, mergePolicies } from '../policy.ts';
 import { defaultModel, MODEL_ALIASES, resolveModel, splitModel } from '../presets.ts';
 import { pricingFor } from '../pricing.ts';
 import { routedModel } from '../router.ts';
@@ -275,8 +275,9 @@ export async function createRuntime(config: HarnessConfig, opts: RuntimeOptions 
       instructions,
       tools,
       policy: await withPdp(mergePolicies(config.policy, a.policy), a.policy?.pdp ? `$.agents.${name}.policy` : '$.policy'),
-      // Without a budget the default one applies; `limits.maxTurns` replaces its turn limit.
-      budget: a.budget ?? (limits.maxTurns !== undefined ? { maxTurns: limits.maxTurns } : undefined),
+      // The turn limit (`limits.maxTurns`, else the default) stays unless the agent sets its own `maxTurns`: a budget
+      // with only `maxCostUsd` on a model without prices would otherwise never stop.
+      budget: { maxTurns: limits.maxTurns ?? DEFAULT_BUDGET.maxTurns, ...a.budget },
       ...(limits.maxEmptyResponses !== undefined && { maxEmptyResponses: limits.maxEmptyResponses }),
       compaction: a.compaction && {
         strategy: await make('compaction strategy', registry.compaction, a.compaction, `$.agents.${name}.compaction`),
