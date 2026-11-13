@@ -300,6 +300,29 @@ describe('loop', () => {
     assert.equal(agent.provider.requests.length, 1);
   });
 
+  it('warns once per run when maxCostUsd is set and the model has no pricing', async () => {
+    const warnings: string[] = [];
+    const onWarning = (w: Error) => {
+      if (w.name === 'ReinloopBudgetWarning') warnings.push(w.message);
+    };
+    process.on('warning', onWarning);
+    const looping = (pricing?: { inputPerMTok: number; outputPerMTok: number }): Agent => ({
+      name: 'test',
+      model: { provider: mockProvider([{ toolCalls: [{ name: 'echo', args: { text: 'a' } }] }, { text: 'done' }]), model: 'mock-1', ...(pricing && { pricing }) },
+      tools: [echoTool()],
+      budget: { maxCostUsd: 1 },
+    });
+    try {
+      await run(looping(), 'go');
+      await run(looping({ inputPerMTok: 1, outputPerMTok: 1 }), 'go');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(warnings.length, 1, 'two turns, one unpriced run: one warning');
+      assert.match(warnings[0]!, /maxCostUsd.*mock-1.*no price/);
+    } finally {
+      process.off('warning', onWarning);
+    }
+  });
+
   it('halts the run on the cost, duration and token limits', async () => {
     const priced = (budget: Budget, step: MockStep = { toolCalls: [{ name: 'echo', args: { text: 'a' } }], usage: { inputTokens: 1000, outputTokens: 1000 } }): Agent => ({
       name: 'test',

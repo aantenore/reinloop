@@ -104,6 +104,7 @@ async function drive(
   let lastStop: string | undefined;
   let emptyStreak = 0;
   let raisedMaxTokens: number | undefined;
+  let warnedUnpriced = false;
 
   emit('run_start', {
     agent: agent.name, resumed: prior.length > 0, parentRunId: opts.parentRunId,
@@ -260,6 +261,14 @@ async function drive(
         costUsd: responseCost(agent, res),
         ...(discarded && { discarded: true }),
       });
+      // A cost limit cannot fire for a model without a price: say so once per run.
+      if (!warnedUnpriced && budget.maxCostUsd !== undefined && !('pricing' in res ? res.pricing : agent.model.pricing)) {
+        warnedUnpriced = true;
+        process.emitWarning(
+          `run ${runId}: budget.maxCostUsd is set but ${res.model ?? req.model} has no price table, so its cost stays 0 and the limit never stops the run (add "pricing" to the model config)`,
+          { type: 'ReinloopBudgetWarning', code: 'REINLOOP_UNPRICED_MODEL' },
+        );
+      }
       for (const part of res.message.parts) {
         if (part.type === 'hosted_call') emit('hosted_tool_start', { callId: part.id, name: part.name, input: part.input });
         else if (part.type === 'hosted_result') {
