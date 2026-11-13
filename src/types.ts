@@ -189,11 +189,16 @@ export interface ToolContext {
   signal: AbortSignal;
   state: Readonly<RunState>;
   emit: (ev: RunEvent) => void;
-  /** Options a tool may forward when it starts nested runs (subagents); `budget` is what the calling run has left. */
+  /**
+   * Options a tool may forward when it starts nested runs (subagents). `budget` is what the calling run has left of its
+   * cost, token and time limits; for a tool marked `delegates` it is that call's reserved share.
+   */
   inherit: Pick<RunOptions, 'store' | 'approve' | 'sinks' | 'identity' | 'credentials' | 'budget'>;
   /** Who the run acts as. Never log or persist `identity.token`. */
   identity?: Identity;
   credentials?: CredentialProvider;
+  /** Registers a nested run this call started, so its spend is still counted when the call fails or times out. */
+  track?: (run: Promise<Pick<RunResult, 'usage' | 'costUsd'>>) => void;
 }
 
 export interface Tool<A = any> {
@@ -206,6 +211,11 @@ export interface Tool<A = any> {
   exclusive?: boolean;
   /** Set for provider-hosted tools (see `hostedTool`): offered to the provider, never run by the loop. */
   hosted?: HostedToolDef;
+  /**
+   * The tool starts nested runs (see `agentTool`). Each such call reserves a share of what the run has left of its cost
+   * and token limits (`ctx.inherit.budget`), so calls of one batch cannot spend the same budget twice.
+   */
+  delegates?: boolean;
   layer?: Layer;
   run(args: A, ctx: ToolContext): Promise<string | ToolOutput> | string | ToolOutput;
 }

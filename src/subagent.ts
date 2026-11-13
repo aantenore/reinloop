@@ -31,6 +31,7 @@ export function agentTool(agent: Member, opts: AgentToolOptions): Tool<{ task: s
     description: opts.description,
     // Delegation has no side effects of its own; the subagent's tools are policed by its own policy.
     risk: 'read',
+    delegates: true,
     schema: {
       type: 'object',
       properties: { task: { type: 'string', description: 'Complete, self-contained task for the subagent' } },
@@ -40,6 +41,7 @@ export function agentTool(agent: Member, opts: AgentToolOptions): Tool<{ task: s
     async run({ task }, ctx) {
       const input: Message[] = mode === 'fork' ? [...forkContext(ctx.state.messages), userMessage(task)] : [userMessage(task)];
       const child = streamMember(agent, input, { ...ctx.inherit, signal: ctx.signal, parentRunId: ctx.runId });
+      ctx.track?.(child.result);
       if (opts.forwardEvents) for await (const ev of child) ctx.emit(ev);
       const handle = await child.result;
       opts.onResult?.(handle);

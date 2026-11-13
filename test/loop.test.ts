@@ -527,6 +527,41 @@ describe('loop', () => {
     assert.equal(replay(res.runId, 'parent', await store.load(res.runId)).costUsd, 4, 'the stored log folds to the same total');
   });
 
+  it('splits what the parent has left between the delegates of one batch', async () => {
+    const pricing = { inputPerMTok: 1000, outputPerMTok: 1000 };
+    const usage = { inputTokens: 1000, outputTokens: 1000 }; // $2 per model call
+    const worker = (name: string): Agent => ({
+      name, tools: [echoTool()], budget: { maxTurns: Infinity, maxCostUsd: 100 },
+      model: { provider: mockProvider([{ toolCalls: [{ name: 'echo', args: { text: 'a' } }], usage, delayMs: 2 }], { loop: true }), model: 'mock-1', pricing },
+    });
+    const parent = makeAgent([{ toolCalls: [{ name: 'w1', args: { task: 't' } }, { name: 'w2', args: { task: 't' } }], usage }, { text: 'never' }], {
+      name: 'parent', tools: [agentTool(worker('w1'), { description: 'helper' }), agentTool(worker('w2'), { description: 'helper' })], budget: { maxCostUsd: 10 },
+    });
+    parent.model.pricing = pricing;
+    const sink = collectSink();
+    const res = await run(parent, 'go', { sinks: [sink] });
+    const ends = sink.events.filter((e) => e.type === 'run_end' && e.parentRunId === res.runId) as Array<RunEvent<'run_end'>>;
+    assert.deepEqual(ends.map((e) => [e.data.reason, e.data.costUsd]), [['budget:maxCostUsd', 4], ['budget:maxCostUsd', 4]], 'each gets half of the $8 left');
+    assert.deepEqual([res.reason, res.costUsd], ['budget:maxCostUsd', 10], 'own $2 plus two shares of $4: the limit holds for the batch');
+  });
+
+  it('counts what a delegate spent when the delegation times out', async () => {
+    const pricing = { inputPerMTok: 1000, outputPerMTok: 1000 };
+    const usage = { inputTokens: 1000, outputTokens: 1000 };
+    const child = makeAgent([{ toolCalls: [{ name: 'echo', args: { text: 'a' } }], usage }, { text: 'late', usage, delayMs: 5_000 }], { name: 'child', tools: [echoTool()] });
+    child.model.pricing = pricing;
+    const parent = makeAgent([{ toolCalls: [{ name: 'child', args: { task: 't' } }], usage }, { text: 'done', usage }], {
+      name: 'parent', tools: [agentTool(child, { description: 'helper' })], toolSettings: { timeoutMs: 40 },
+    });
+    parent.model.pricing = pricing;
+    const sink = collectSink();
+    const res = await run(parent, 'go', { sinks: [sink] });
+    const toolResult = sink.events.find((e) => e.type === 'tool_result' && !e.parentRunId) as RunEvent<'tool_result'>;
+    assert.match(toolResult.data.content, /timed out after 40ms/);
+    assert.equal(toolResult.data.costUsd, 2, 'the model call the child finished before the timeout');
+    assert.deepEqual([res.status, res.output, res.costUsd], ['completed', 'done', 6]);
+  });
+
   it('leaves a delegated run on its own budget when the parent sets no cost, token or time limit', async () => {
     const pricing = { inputPerMTok: 1000, outputPerMTok: 1000 };
     const usage = { inputTokens: 1000, outputTokens: 1000 };

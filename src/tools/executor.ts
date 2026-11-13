@@ -1,8 +1,8 @@
 import { authorizeCall } from '../identity/authorize.ts';
 import { validate } from '../schema.ts';
-import type { Agent, Approver, Budget, CredentialProvider, HookContext, Identity, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
+import type { Agent, Approver, Budget, CredentialProvider, HookContext, Identity, RunEvent, RunOptions, RunResult, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
 import { finiteTimeout, limitDefault } from '../limits.ts';
-import { errorMessage, timeoutSignal, truncate } from '../util.ts';
+import { addUsage, emptyUsage, errorMessage, timeoutSignal, truncate } from '../util.ts';
 import { normalizeOutput } from './define.ts';
 
 export interface ExecEnv {
@@ -23,6 +23,15 @@ export interface ExecEnv {
   remaining?: () => Budget | undefined;
 }
 
+/** Delegated calls of one batch that have not started, and the shares the running ones hold. */
+interface Shares { waiting: number; held: Budget[] }
+
+/** Limits split between the delegated calls of a batch; time is not split, since they run side by side. */
+const SPLIT_LIMITS = ['maxInputTokens', 'maxOutputTokens', 'maxTotalTokens', 'maxCostUsd'] as const;
+
+/** How long a failed call waits for the nested runs it started to end, before it is charged its whole share. */
+export const DELEGATE_SETTLE_MS = 5_000;
+
 export const DEFAULT_CONCURRENCY = limitDefault('tools.concurrency');
 export const DEFAULT_MAX_RESULT_CHARS = limitDefault('tools.maxResultChars');
 
@@ -34,15 +43,16 @@ export async function executeToolCalls(calls: ToolCallPart[], env: ExecEnv): Pro
   const limit = Math.max(1, env.agent.toolSettings?.concurrency ?? DEFAULT_CONCURRENCY);
   let batch: ToolCallPart[] = [];
   const flush = async () => {
-    await pool(batch, limit, (c) => executeOne(c, env));
+    await pool(batch, limit, (c) => executeOne(c, env, shares));
     batch = [];
   };
   // Over the budget, the tail of the batch is answered without running, after the allowed calls (call order is kept).
   const allowed = env.maxCalls === undefined ? calls : calls.slice(0, env.maxCalls);
+  const shares: Shares = { waiting: allowed.filter((c) => env.tools.get(c.name)?.delegates).length, held: [] };
   for (const call of allowed) {
     if (env.tools.get(call.name)?.exclusive) {
       await flush();
-      await executeOne(call, env);
+      await executeOne(call, env, shares);
     } else batch.push(call);
   }
   await flush();
@@ -68,7 +78,41 @@ async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>
   await Promise.all(workers);
 }
 
-async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
+/**
+ * What a call may hand to nested runs: the run's remaining budget minus the shares running delegated calls hold. A
+ * delegated call reserves an equal part of that for itself and leaves the rest to the delegated calls still to start,
+ * so the calls of a batch never get more than the run has left between them.
+ */
+function handOut(tool: Tool, env: ExecEnv, shares: Shares): Budget | undefined {
+  const free = env.remaining?.();
+  if (!free) return undefined;
+  const parts = tool.delegates ? Math.max(1, shares.waiting--) : 1;
+  for (const key of SPLIT_LIMITS) {
+    if (free[key] === undefined) continue;
+    const held = shares.held.reduce((sum, share) => sum + (share[key] ?? 0), 0);
+    free[key] = Math.max(0, free[key] - held) / parts;
+  }
+  if (tool.delegates) shares.held.push(free);
+  return free;
+}
+
+/**
+ * Spend of the nested runs a failed call started. They share the call's signal, so they end soon after a timeout and
+ * report their totals; when they do not, the call is charged the whole share it was handed.
+ */
+async function nestedSpend(nested: Array<Promise<Pick<RunResult, 'usage' | 'costUsd'>>>, share: Budget | undefined): Promise<Pick<ToolOutput, 'usage' | 'costUsd'> | undefined> {
+  if (!nested.length) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const grace = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), DELEGATE_SETTLE_MS);
+  });
+  const ended = await Promise.race([Promise.all(nested), grace]).catch(() => undefined);
+  clearTimeout(timer);
+  if (ended) return ended.reduce((sum, r) => ({ usage: addUsage(sum.usage, r.usage), costUsd: sum.costUsd + r.costUsd }), { usage: emptyUsage(), costUsd: 0 });
+  return share && { usage: { inputTokens: share.maxInputTokens ?? share.maxTotalTokens ?? 0, outputTokens: share.maxOutputTokens ?? 0 }, costUsd: share.maxCostUsd ?? 0 };
+}
+
+async function executeOne(original: ToolCallPart, env: ExecEnv, shares: Shares): Promise<void> {
   const started = performance.now();
   const hookCtx: HookContext = { runId: env.runId, agent: env.agent.name, state: env.state, identity: env.identity, emit: env.emit };
   let call = original;
@@ -128,21 +172,29 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   const timeoutMs = finiteTimeout(tool.timeoutMs ?? env.agent.toolSettings?.timeoutMs);
   const limit = timeoutMs ? timeoutSignal(timeoutMs, env.signal) : undefined;
   const signal = limit?.signal ?? env.signal;
+  const budget = handOut(tool, env, shares);
+  const nested: Array<Promise<Pick<RunResult, 'usage' | 'costUsd'>>> = [];
   try {
     const out = normalizeOutput(
       await raceAbort(
-        Promise.resolve(tool.run(call.args, { runId: env.runId, agent: env.agent.name, signal, state: env.state, emit: env.forward, inherit: { ...env.inherit, budget: env.remaining?.() }, identity: env.identity, credentials: env.credentials })),
+        Promise.resolve(tool.run(call.args, {
+          runId: env.runId, agent: env.agent.name, signal, state: env.state, emit: env.forward, inherit: { ...env.inherit, budget }, identity: env.identity,
+          credentials: env.credentials, track: (run) => nested.push(run),
+        })),
         signal,
       ),
     );
     const { content, artifact } = await limitSize(out.content, env);
-    return finish(content, out.isError ?? false, artifact, out.stop ? ('data' in out ? { data: out.data } : {}) : undefined, out);
+    return await finish(content, out.isError ?? false, artifact, out.stop ? ('data' in out ? { data: out.data } : {}) : undefined, out);
   } catch (err) {
     if (env.signal.aborted) throw err;
     const msg = signal.aborted ? `timed out after ${timeoutMs}ms` : errorMessage(err);
-    return finish(`Tool error: ${msg}`, true);
+    // The call failed, yet the runs it started may have spent: that still counts against this run.
+    return await finish(`Tool error: ${msg}`, true, undefined, undefined, await nestedSpend(nested, budget));
   } finally {
     limit?.stop();
+    // The share is held until the result (and with it the real spend) is recorded.
+    if (shares.held.includes(budget!)) shares.held.splice(shares.held.indexOf(budget!), 1);
   }
 }
 

@@ -109,10 +109,20 @@ A delegated run (an agent or team used as a tool) counts against the run that ca
 - `maxTurns` and `maxToolCalls` stay per run: a delegation is one tool call of the caller.
 - A caller without a cost, token or time limit hands down no ceiling, and the delegate runs on its own budget.
 
-Limits of this accounting: delegates started in the same parallel batch each get what the caller had left when they
-started, so together they can pass the caller's limit (set `tools.concurrency: 1` when it must hold exactly). A
-delegate whose result is never recorded (the delegate tool timed out, or the caller was aborted or crashed while it
-ran) is not counted.
+Several delegations in one batch of tool calls split what the caller has left: each delegated call (a tool with
+`delegates: true`, which `agentTool` sets) reserves an equal share of the remaining cost and token limits among the
+delegated calls of the batch that have not started yet, and holds it until its result is recorded. A share a delegate
+did not use is back in the pool for the calls that start later. Together the delegates of a batch can never be handed
+more than the caller has left. The time limit is not split, since they run side by side.
+
+A delegation that fails still counts. When the delegate tool times out or throws, the executor waits for the runs it
+started (`ToolContext.track`; they share the call's abort signal) and records their real spend on the error result. If
+they have not ended after `DELEGATE_SETTLE_MS` (5 s), the call is charged the whole share it reserved.
+
+Not counted: a model call that was in flight when the delegate was cut off (no usage was reported for it), and a
+delegation whose result is never recorded because the caller itself was aborted or crashed while it ran. A custom
+tool that starts runs on its own must set `delegates: true`, pass `ctx.inherit` on and return `usage` and `costUsd`
+(or call `ctx.track`) to be covered.
 
 ## Public API
 
