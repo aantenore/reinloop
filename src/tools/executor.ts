@@ -17,6 +17,8 @@ export interface ExecEnv {
   inherit: Pick<RunOptions, 'store' | 'approve' | 'sinks' | 'identity' | 'credentials'>;
   identity?: Identity;
   credentials?: CredentialProvider;
+  /** Calls of this batch that may still run (the `maxToolCalls` budget); the rest get an error result. */
+  maxCalls?: number;
 }
 
 export const DEFAULT_CONCURRENCY = limitDefault('tools.concurrency');
@@ -33,13 +35,27 @@ export async function executeToolCalls(calls: ToolCallPart[], env: ExecEnv): Pro
     await pool(batch, limit, (c) => executeOne(c, env));
     batch = [];
   };
-  for (const call of calls) {
+  // Over the budget, the tail of the batch is answered without running, after the allowed calls (call order is kept).
+  const allowed = env.maxCalls === undefined ? calls : calls.slice(0, env.maxCalls);
+  for (const call of allowed) {
     if (env.tools.get(call.name)?.exclusive) {
       await flush();
       await executeOne(call, env);
     } else batch.push(call);
   }
   await flush();
+  for (const call of calls.slice(allowed.length)) await skipCall(call, env);
+}
+
+/** A call over the `maxToolCalls` budget: not run, answered with an error result so the history stays well-formed. */
+async function skipCall(call: ToolCallPart, env: ExecEnv): Promise<void> {
+  env.emit('tool_result', {
+    callId: call.id,
+    name: call.name,
+    content: 'Tool call skipped: the maxToolCalls budget is exhausted.',
+    isError: true,
+    durationMs: 0,
+  });
 }
 
 async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {

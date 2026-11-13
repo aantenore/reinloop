@@ -89,6 +89,9 @@ async function drive(
   // The default turn limit stays unless the agent sets its own `maxTurns` (`Infinity` lifts it).
   const budget: Budget = { ...DEFAULT_BUDGET, ...agent.budget };
 
+  // Tool calls the budget still allows in this run (undefined: no limit); the batch executor enforces it per call.
+  const remainingToolCalls = () => (budget.maxToolCalls === undefined ? undefined : Math.max(0, budget.maxToolCalls - (state.toolCalls - base.toolCalls)));
+
   const storeFailure = new AbortController();
   signal = AbortSignal.any([signal, storeFailure.signal]);
   const { emit, flush } = createEmitter(state, store, opts, channel, (err) => storeFailure.abort(err));
@@ -108,9 +111,9 @@ async function drive(
   });
 
   // Runs the tool calls of the last assistant message that have no result yet.
-  const runPending = async (pending: ToolCallPart[]) => {
+  const runPending = async (pending: ToolCallPart[], maxCalls?: number) => {
     await executeToolCalls(pending, {
-      agent, tools, runId, state, signal,
+      agent, tools, runId, state, signal, maxCalls,
       emit: emit as (type: RunEvent['type'], data: any) => void,
       forward: (ev) => channel.push(ev),
       approve: opts.approve,
@@ -124,7 +127,7 @@ async function drive(
   try {
     // New input on a crashed run: finish its interrupted batch first, so no tool call is left without a result.
     const crashedBatch = continuing && input !== undefined ? pendingToolCalls(state.messages) : [];
-    if (crashedBatch.length) await runPending(crashedBatch);
+    if (crashedBatch.length) await runPending(crashedBatch, remainingToolCalls());
     for (let message of normalizeInput(input)) {
       for (const mw of agent.middleware ?? []) message = (await mw.beforeInput?.(message, hookCtx)) ?? message;
       emit('message', { message, source: 'input' });
@@ -134,7 +137,7 @@ async function drive(
 
       const pending = pendingToolCalls(state.messages);
       if (pending.length) {
-        await runPending(pending);
+        await runPending(pending, remainingToolCalls());
         continue;
       }
 

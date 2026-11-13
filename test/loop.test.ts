@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   agent, agentTool, collectSink, DEFAULT_BUDGET, defineTool, memoryArtifacts, memoryStore, mockProvider, readArtifactTool, run, stream, team, windowCompaction,
-  type Agent, type Budget, type RunEvent, type RunStore,
+  type Agent, type Budget, type MockStep, type RunEvent, type RunStore,
 } from '../src/index.ts';
 import { echoTool, makeAgent, sleepTool, thinkingAgent } from './helpers.ts';
 
@@ -285,6 +285,38 @@ describe('loop', () => {
     assert.deepEqual(roles, ['user', 'assistant', 'tool', 'tool', 'user']);
     const results = agent.provider.requests[0]!.messages.flatMap((m) => m.parts.filter((p) => p.type === 'tool_result'));
     assert.deepEqual(results.map((r) => r.type === 'tool_result' && r.callId), ['c1', 'c2']);
+  });
+
+  it('enforces maxToolCalls inside a batch: calls over the limit do not run and get an error result', async () => {
+    const tool = echoTool();
+    const calls = [1, 2, 3, 4].map((n) => ({ name: 'echo', args: { text: String(n) } }));
+    const agent = makeAgent([{ toolCalls: calls }, { text: 'never' }], { tools: [tool], budget: { maxToolCalls: 2 } });
+    const res = await run(agent, 'go');
+    assert.equal(tool.calls, 2);
+    assert.deepEqual([res.status, res.reason], ['stopped', 'budget:maxToolCalls']);
+    const results = res.messages.flatMap((m) => m.parts.filter((p) => p.type === 'tool_result'));
+    assert.equal(results.length, 4, 'every call still gets a result');
+    assert.deepEqual(results.map((r) => r.type === 'tool_result' && r.isError), [false, false, true, true]);
+    assert.equal(agent.provider.requests.length, 1);
+  });
+
+  it('halts the run on the cost, duration and token limits', async () => {
+    const priced = (budget: Budget, step: MockStep = { toolCalls: [{ name: 'echo', args: { text: 'a' } }], usage: { inputTokens: 1000, outputTokens: 1000 } }): Agent => ({
+      name: 'test',
+      model: { provider: mockProvider([step], { loop: true }), model: 'mock-1', pricing: { inputPerMTok: 1000, outputPerMTok: 1000 } },
+      tools: [echoTool()],
+      budget: { maxTurns: Infinity, ...budget },
+    });
+    const cost = await run(priced({ maxCostUsd: 3 }), 'go');
+    assert.deepEqual([cost.status, cost.reason, cost.turns], ['stopped', 'budget:maxCostUsd', 2]);
+    const total = await run(priced({ maxTotalTokens: 5000 }), 'go');
+    assert.deepEqual([total.reason, total.turns], ['budget:maxTotalTokens', 3]);
+    const input = await run(priced({ maxInputTokens: 2000 }), 'go');
+    assert.deepEqual([input.reason, input.turns], ['budget:maxInputTokens', 2]);
+    const output = await run(priced({ maxOutputTokens: 3000 }), 'go');
+    assert.deepEqual([output.reason, output.turns], ['budget:maxOutputTokens', 3]);
+    const slow = await run(priced({ maxDurationMs: 40 }, { toolCalls: [{ name: 'echo', args: { text: 'a' } }], delayMs: 25 }), 'go');
+    assert.equal(slow.reason, 'budget:maxDurationMs');
   });
 
   it('retries empty model answers and fails after repeated ones', async () => {
