@@ -266,6 +266,27 @@ describe('loop', () => {
     assert.equal(tool.calls, 1);
   });
 
+  it('runs the pending tool calls of a crashed batch before new input on resume', async () => {
+    const store = memoryStore();
+    const tool = echoTool();
+    const runId = 'r2';
+    const call = (id: string) => ({ type: 'tool_call' as const, id, name: 'echo', args: { text: id } });
+    const events = [
+      { type: 'message', data: { message: { role: 'user', parts: [{ type: 'text', text: 'go' }] }, source: 'input' } },
+      { type: 'model_response', data: { turn: 1, model: 'm', message: { role: 'assistant', parts: [call('c1'), call('c2')] }, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_calls', latencyMs: 1, costUsd: 0 } },
+      { type: 'tool_result', data: { callId: 'c1', name: 'echo', content: 'echoed:c1', isError: false, durationMs: 1 } },
+    ];
+    for (const [i, e] of events.entries()) await store.append({ runId, seq: i + 1, ts: 0, ...e } as RunEvent);
+    const agent = makeAgent([{ text: 'ok' }], { tools: [tool] });
+    const res = await run(agent, 'new task', { store, runId });
+    assert.equal(res.status, 'completed');
+    assert.equal(tool.calls, 1, 'only the missing call runs');
+    const roles = agent.provider.requests[0]!.messages.map((m) => m.role);
+    assert.deepEqual(roles, ['user', 'assistant', 'tool', 'tool', 'user']);
+    const results = agent.provider.requests[0]!.messages.flatMap((m) => m.parts.filter((p) => p.type === 'tool_result'));
+    assert.deepEqual(results.map((r) => r.type === 'tool_result' && r.callId), ['c1', 'c2']);
+  });
+
   it('retries empty model answers and fails after repeated ones', async () => {
     const ok = makeAgent([{ usage: { inputTokens: 5, outputTokens: 3 } }, { text: 'finally' }]);
     const res = await run(ok, 'go');

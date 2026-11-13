@@ -8,7 +8,7 @@ import { memoryStore } from './store/memory.ts';
 import { executeToolCalls } from './tools/executor.ts';
 import type {
   Agent, Budget, EventMap, EventType, HookContext, Message, ModelRequest, ModelResponse, Pricing, RunEvent, RunOptions, RunResult, RunState, RunStatus,
-  RunStore, ToolSpec, Usage,
+  RunStore, ToolCallPart, ToolSpec, Usage,
 } from './types.ts';
 import { addUsage, assertSafeRunId, errorMessage, estimateTokens, hasVisibleParts, newId, textOf, toolCallsOf, userMessage } from './util.ts';
 
@@ -107,7 +107,24 @@ async function drive(
     ...(opts.identity && { subject: opts.identity.subject, identityKind: opts.identity.kind }),
   });
 
+  // Runs the tool calls of the last assistant message that have no result yet.
+  const runPending = async (pending: ToolCallPart[]) => {
+    await executeToolCalls(pending, {
+      agent, tools, runId, state, signal,
+      emit: emit as (type: RunEvent['type'], data: any) => void,
+      forward: (ev) => channel.push(ev),
+      approve: opts.approve,
+      identity: opts.identity,
+      credentials: opts.credentials,
+      inherit: { store: opts.store, approve: opts.approve, sinks: opts.sinks, identity: opts.identity, credentials: opts.credentials },
+    });
+    await flush();
+  };
+
   try {
+    // New input on a crashed run: finish its interrupted batch first, so no tool call is left without a result.
+    const crashedBatch = continuing && input !== undefined ? pendingToolCalls(state.messages) : [];
+    if (crashedBatch.length) await runPending(crashedBatch);
     for (let message of normalizeInput(input)) {
       for (const mw of agent.middleware ?? []) message = (await mw.beforeInput?.(message, hookCtx)) ?? message;
       emit('message', { message, source: 'input' });
@@ -117,16 +134,7 @@ async function drive(
 
       const pending = pendingToolCalls(state.messages);
       if (pending.length) {
-        await executeToolCalls(pending, {
-          agent, tools, runId, state, signal,
-          emit: emit as (type: RunEvent['type'], data: any) => void,
-          forward: (ev) => channel.push(ev),
-          approve: opts.approve,
-          identity: opts.identity,
-          credentials: opts.credentials,
-          inherit: { store: opts.store, approve: opts.approve, sinks: opts.sinks, identity: opts.identity, credentials: opts.credentials },
-        });
-        await flush();
+        await runPending(pending);
         continue;
       }
 
