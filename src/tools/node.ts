@@ -55,6 +55,9 @@ export async function resolveInside(root: string, path: string): Promise<string>
   }
 }
 
+/** Answer of the `shell` tool on Windows: it runs `/bin/sh` in its own process group, which needs a POSIX system. */
+export const SHELL_UNSUPPORTED = 'The shell tool needs a POSIX shell (/bin/sh) and is not available on native Windows. Run reinloop inside WSL, or remove shell from this agent\'s tools.';
+
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.venv', '__pycache__', '.reinloop']);
 
 /** Path glob: `**` crosses directories, `*` and `?` stay within one segment. */
@@ -203,6 +206,7 @@ export function workspaceTools(opts: WorkspaceOptions): Record<string, Tool> {
       timeoutMs: opts.shellTimeoutMs ?? limitDefault('tools.shellTimeoutMs'),
       schema: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'], additionalProperties: false },
       run({ command }, ctx) {
+        if (process.platform === 'win32') return { content: SHELL_UNSUPPORTED, isError: true };
         return new Promise((resolvePromise, reject) => {
           // Own process group, so abort/timeout also stops anything the command spawned.
           const child = spawn('/bin/sh', ['-c', command], { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });

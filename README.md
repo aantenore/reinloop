@@ -219,7 +219,8 @@ bump the minor version. A security fix may change behaviour in a patch release (
 servers); every such change is listed under "Changed" or marked "Breaking" in [CHANGELOG.md](CHANGELOG.md).
 Current limits: text-only messages (no images or files), and teams do not resume mid-pattern
 (member runs do). Token estimates before the first response are heuristic. The `shell` tool is confined to a
-directory but is not a sandbox, so use a container for untrusted work.
+directory but is not a sandbox, so use a container for untrusted work. It needs a POSIX shell (`/bin/sh`): on Windows
+run reinloop inside WSL; on native Windows a `shell` call returns a clear error and the other tools keep working.
 
 ## Troubleshooting
 

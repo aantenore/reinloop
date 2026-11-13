@@ -60,6 +60,18 @@ describe('robustness', () => {
     assert.equal(killed.isError, true);
   });
 
+  it('answers a shell call on Windows with a clear error instead of spawning', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+    try {
+      const out = (await workspaceTools({ root: tmpdir() }).shell!.run({ command: 'echo hi' }, { signal: new AbortController().signal } as ToolContext)) as { content: string; isError: boolean };
+      assert.equal(out.isError, true);
+      assert.match(out.content, /needs a POSIX shell.*WSL/);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+    }
+  });
+
   it('rejects orchestrator workers whose tool name collides with the lead', () => {
     const worker = agent({ name: 'echo', model: 'mock/x' });
     const lead = agent({ name: 'lead', model: 'mock/x', tools: [echoTool()] });

@@ -62,7 +62,7 @@ With no model anywhere, reinloop uses `REINLOOP_MODEL`. If that is unset, it pic
 |---|---|---|
 | `read_file`, `list_dir`, `find_files`, `search_files` | read | Confined to the workspace; dependency and build folders are skipped by the finders |
 | `write_file`, `edit_file` | write | Exact-snippet edits; must be unique unless `all: true` |
-| `shell` | exec | Runs in the workspace root with a timeout |
+| `shell` | exec | Runs in the workspace root with a timeout. Needs a POSIX shell (`/bin/sh`): Linux, macOS, or WSL on Windows. On native Windows every call returns an error that says so. |
 | `remember`, `recall` | – | Durable notes (`memory` config) |
 | `read_artifact` | read | Pages through large tool outputs that were offloaded |
 
