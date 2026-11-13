@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.4.0 - 2026-11-13
+
+### Changed
+
+- Delegated runs (an agent or team used as a tool) count against the run that called it. The delegate starts under a
+  ceiling: each cost, token and time limit is the smaller of its own value and what the caller has left. Several
+  delegations in one tool batch split the remaining cost and token budget between them, and a delegation that fails or
+  times out still counts its spend. `maxTurns` and `maxToolCalls` stay per run. A custom tool that starts runs on its
+  own must set `delegates: true` and return `usage` and `costUsd` (or call `ctx.track`) to be covered.
+- Resuming an unfinished run (no `run_end` after the last `run_start`, for example after a crash) continues the same
+  budget: turns, tool calls, tokens, cost and active time all count, so restarting a crashed run any number of times
+  spends one budget. A run that ended with any status still gets the whole budget again when continued.
+- Resume runs the tool calls left pending in the log before it handles new input.
+- A run handle nobody iterates (`run`, a delegated run without `forwardEvents`, `stream` awaited through `.result`
+  alone) now keeps only the latest 256 events (`IDLE_EVENT_BUFFER`) until a consumer iterates it, so memory no longer
+  grows with the length of the run. The store and the sinks still receive every event; start the `for await` right
+  after `stream()` to see all of them.
+- The `shell` tool returns a clear error on native Windows instead of failing obscurely; it needs a POSIX shell, so
+  run reinloop inside WSL or drop `shell` from the agent's tools.
+
+### Added
+
+- Run-time warning when `maxCostUsd` is set and the model has no pricing, so the cost limit cannot fire.
+- `docs/ecosystem.md`.
+
+### Fixed
+
+- `maxToolCalls` is enforced inside a batch of tool calls, not only before the next model call.
+
+### Docs
+
+- README restructured to lead with the kernel.
+
 ## 0.3.2 - 2026-11-06
 
 ### Changed
