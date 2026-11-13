@@ -55,6 +55,11 @@ The state of a run is a fold over its events (`state.ts: reduce`):
 | `run_end` | yes | final status; clears stop requests; team runs carry `failures` |
 | `turn_start`, `model_request`, `text_delta`, `thinking_delta`, `tool_start` | no | streaming and tracing only (`text_delta` and `thinking_delta` arrive once, after `afterModel`, when a middleware sets `holdsText`) |
 
+A `RunHandle` queues events for its consumer only while one iterates it. A handle nobody iterates (`run`, a delegated
+run without `forwardEvents`, `stream` awaited through `.result` alone) keeps just the latest `IDLE_EVENT_BUFFER` (256)
+events, so memory does not grow with the length of the run; the store and the sinks still receive every event. Start
+the `for await` right after `stream()` to see all of them.
+
 Persistence is awaited at checkpoints: after each model response and after each tool batch. Crash semantics:
 
 - A crash while tools run: on resume, only calls without a `tool_result` are executed.
@@ -117,7 +122,7 @@ most code; the rest is the lower layers.
 | Area | Exports |
 |---|---|
 | Types | all of `types.ts` (`Agent`, `Tool`, `Provider`, `RunEvent`, `EventMap`, `Usage`, `Pricing`, ...) via `export type *` |
-| Loop and state | `run`, `stream`, `createHandle`, `RunHandle`, `createEmitter`, `contextTokens`, `costOf`, `responseCost`, `OUTPUT_FEEDBACK`; `reduce`, `replay`, `pendingToolCalls`, `initialState`, `EPHEMERAL` |
+| Loop and state | `run`, `stream`, `createHandle`, `RunHandle`, `createEmitter`, `contextTokens`, `costOf`, `responseCost`, `OUTPUT_FEEDBACK`; `reduce`, `replay`, `pendingToolCalls`, `initialState`, `EPHEMERAL`, `IDLE_EVENT_BUFFER` |
 | Policy and budgets | `decide`, `matchesCondition`, `mergePolicies`, `exceededBudget`, `DEFAULT_RISK_DECISIONS`, `DEFAULT_BUDGET`; `RunStop` |
 | Compaction | `windowCompaction`, `summarizeCompaction`, `DEFAULT_SUMMARY_PROMPT` |
 | Tools | `defineTool`, `objectSchema`, `safeToolName`, `memoryArtifacts`, `readArtifactTool`, `workspaceTools`, `resolveInside`, `pathGlob`, `WorkspaceOptions`; `memoryTools`, `memoryNotes`, `fileNotes`, `MemoryStore`, `Note`; `hostedTool`, `hostedRisk`, `HostedToolOptions`; `skillTool`, `discoverSkills`, `selectSkills`, `DEFAULT_SKILL_DIRS`, `Skill` |

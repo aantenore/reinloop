@@ -109,14 +109,28 @@ export function pendingToolCalls(messages: Message[]): ToolCallPart[] {
   return [];
 }
 
-/** Unbounded async queue used to expose the run as an async iterable. */
+/** Events a run keeps for a consumer that has not started iterating; older ones are dropped (store and sinks get all). */
+export const IDLE_EVENT_BUFFER = 256;
+
+/**
+ * Async queue used to expose the run as an async iterable. Until a consumer iterates it keeps only the latest
+ * `idleLimit` items, so a run nobody iterates (`run`, a delegated run) does not hold its whole event stream in memory;
+ * once a consumer iterates, nothing is dropped.
+ */
 export class Channel<T> implements AsyncIterable<T> {
   private queue: T[] = [];
   private waiters: Array<() => void> = [];
   private closed = false;
+  private attached = false;
+  private readonly idleLimit: number;
+
+  constructor(idleLimit = IDLE_EVENT_BUFFER) {
+    this.idleLimit = idleLimit;
+  }
 
   push(value: T): void {
     if (this.closed) return;
+    if (!this.attached && this.queue.length >= this.idleLimit) this.queue.shift();
     this.queue.push(value);
     this.waiters.shift()?.();
   }
@@ -126,7 +140,12 @@ export class Channel<T> implements AsyncIterable<T> {
     for (const wake of this.waiters.splice(0)) wake();
   }
 
-  async *[Symbol.asyncIterator](): AsyncIterator<T> {
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    this.attached = true;
+    return this.drain();
+  }
+
+  private async *drain(): AsyncGenerator<T> {
     while (true) {
       if (this.queue.length) {
         yield this.queue.shift()!;

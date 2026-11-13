@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  agent, agentTool, collectSink, DEFAULT_BUDGET, defineTool, memoryArtifacts, memoryStore, mockProvider, readArtifactTool, replay, run, stream, team, windowCompaction,
+  agent, agentTool, collectSink, DEFAULT_BUDGET, defineTool, IDLE_EVENT_BUFFER, memoryArtifacts, memoryStore, mockProvider, readArtifactTool, replay, run, stream, team, windowCompaction,
   type Agent, type Budget, type MockStep, type RunEvent, type RunStore,
 } from '../src/index.ts';
 import { echoTool, makeAgent, sleepTool, thinkingAgent } from './helpers.ts';
@@ -420,6 +420,27 @@ describe('loop', () => {
     setTimeout(() => ctl.abort(new Error('stop')), 20);
     const res = await run(slow, 'hi', { signal: ctl.signal });
     assert.equal(res.status, 'interrupted');
+  });
+
+  it('keeps a bounded number of events when nobody iterates the handle, and every event when a consumer does', async () => {
+    // Each turn emits text deltas, a model response and the events of one tool call.
+    const longRun = (): Agent => ({
+      name: 'test', tools: [echoTool()], budget: { maxTurns: 300 },
+      model: { provider: mockProvider([{ text: 'a b c d e f', toolCalls: [{ name: 'echo', args: { text: 'a' } }] }], { loop: true }), model: 'mock-1' },
+    });
+    const sink = collectSink();
+    const idle = stream(longRun(), 'go', { sinks: [sink] });
+    assert.equal((await idle.result).turns, 300);
+    assert.ok(sink.events.length > 10 * IDLE_EVENT_BUFFER, `the run emitted ${sink.events.length} events`);
+    const kept: RunEvent[] = [];
+    for await (const ev of idle) kept.push(ev);
+    assert.equal(kept.length, IDLE_EVENT_BUFFER, 'only the latest events were held');
+    assert.deepEqual(kept, sink.events.slice(-IDLE_EVENT_BUFFER));
+
+    const all = collectSink();
+    const seen: RunEvent[] = [];
+    for await (const ev of stream(longRun(), 'go', { sinks: [all] })) seen.push(ev);
+    assert.equal(seen.length, all.events.length, 'a consumer that iterates from the start misses nothing');
   });
 
   it('applies middleware to requests and tool calls', async () => {

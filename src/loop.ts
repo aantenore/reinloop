@@ -25,7 +25,10 @@ export const MAX_EMPTY_RESPONSES = limitDefault('limits.maxEmptyResponses');
 export const OUTPUT_FEEDBACK = (schema: unknown, problems: string) =>
   `Your final answer must be only JSON matching this schema: ${JSON.stringify(schema)}. Problems: ${problems}`;
 
-/** Runs an agent and exposes every event as an async iterable. Breaking out of the iteration aborts the run. */
+/**
+ * Runs an agent and exposes every event as an async iterable. Breaking out of the iteration aborts the run. Start
+ * iterating right away: until then only the latest `IDLE_EVENT_BUFFER` events are kept.
+ */
 export function stream(agent: Agent, input?: string | Message[], opts: RunOptions = {}): RunHandle {
   assertSafeRunId(opts.runId);
   const continuing = opts.runId !== undefined;
