@@ -64,6 +64,35 @@ export function replay(runId: string, agent: string, events: RunEvent[]): RunSta
   return events.reduce(reduce, initialState(runId, agent));
 }
 
+/**
+ * Replays a stored log and returns where its budget window stands: `base` holds the counters at the last `run_end`
+ * (budgets count from there) and `activeMs` the time the invocations after it were active (first to last event of
+ * each). A log that ends with `run_end` opens a new window; one that ends without it (a crash) continues its window.
+ */
+export function replayWindow(runId: string, agent: string, events: RunEvent[]) {
+  const counters = (s: RunState) => ({ turns: s.turns, toolCalls: s.toolCalls, usage: s.usage, costUsd: s.costUsd });
+  const state = initialState(runId, agent);
+  let base = counters(state);
+  let activeMs = 0;
+  let from: number | undefined;
+  let last = 0;
+  for (const ev of events) {
+    reduce(state, ev);
+    if (ev.type === 'run_start') {
+      if (from !== undefined) activeMs += last - from;
+      from = ev.ts;
+    }
+    last = ev.ts;
+    if (ev.type === 'run_end') {
+      base = counters(state);
+      activeMs = 0;
+      from = undefined;
+    }
+  }
+  if (from !== undefined) activeMs += last - from;
+  return { state, base, activeMs };
+}
+
 /** Tool calls of the latest assistant message that have no result yet (crash-safe resume). */
 export function pendingToolCalls(messages: Message[]): ToolCallPart[] {
   for (let i = messages.length - 1; i >= 0; i--) {

@@ -342,6 +342,39 @@ describe('loop', () => {
     assert.equal(slow.reason, 'budget:maxDurationMs');
   });
 
+  it('carries spend and active time over when a run that never ended is resumed; a finished session turn starts fresh', async () => {
+    const step = { toolCalls: [{ name: 'echo', args: { text: 'a' } }], usage: { inputTokens: 1000, outputTokens: 1000 } }; // $2 per model call
+    const priced = (budget: Budget, script: MockStep[] = [step]) => {
+      const provider = mockProvider(script, { loop: true });
+      const agent: Agent = { name: 'test', model: { provider, model: 'mock-1', pricing: { inputPerMTok: 1000, outputPerMTok: 1000 } }, tools: [echoTool()], budget: { maxTurns: Infinity, ...budget } };
+      return { agent, provider };
+    };
+    // One turn ($2) that started 10 s before its last event, stored with its run_end (finished) or without (crashed).
+    const source = memoryStore();
+    const first = await run(priced({ maxTurns: 1 }).agent, 'go', { store: source });
+    assert.deepEqual([first.reason, first.costUsd], ['budget:maxTurns', 2]);
+    const log = (await source.load(first.runId)).map((ev) => (ev.type === 'run_start' ? { ...ev, ts: ev.ts - 10_000 } : ev));
+    const stored = async (ended: boolean) => {
+      const store = memoryStore();
+      for (const ev of log) if (ended || ev.type !== 'run_end') await store.append(ev);
+      return { store, runId: first.runId };
+    };
+
+    const resumed = priced({ maxCostUsd: 3 });
+    const res = await run(resumed.agent, undefined, await stored(false));
+    assert.deepEqual([res.status, res.reason, res.costUsd], ['stopped', 'budget:maxCostUsd', 4]);
+    assert.equal(resumed.provider.requests.length, 1, 'the $2 already spent count: one more call, not two');
+    const late = priced({ maxDurationMs: 5_000 });
+    const timedOut = await run(late.agent, undefined, await stored(false));
+    assert.equal(timedOut.reason, 'budget:maxDurationMs', 'the 10 s already active count');
+    assert.equal(late.provider.requests.length, 0);
+
+    const turn = priced({ maxCostUsd: 3, maxDurationMs: 5_000 });
+    const next = await run(turn.agent, 'more', await stored(true));
+    assert.deepEqual([next.reason, next.costUsd], ['budget:maxCostUsd', 6], 'the result total stays cumulative');
+    assert.equal(turn.provider.requests.length, 2, 'a new turn on a finished session gets the whole budget again');
+  });
+
   it('retries empty model answers and fails after repeated ones', async () => {
     const ok = makeAgent([{ usage: { inputTokens: 5, outputTokens: 3 } }, { text: 'finally' }]);
     const res = await run(ok, 'go');

@@ -83,6 +83,17 @@ A session is the same mechanism: `run(agent, input, { runId })` appends new inpu
 A budget is checked before every model call, and `maxToolCalls` also inside a tool batch. A limit stops the run at the
 first check after it is reached, so the overshoot is at most the model call and tool batch that were in flight.
 
+Every limit is measured from the last `run_end` in the run's log (`state.ts: replayWindow`):
+
+- A log without a `run_end` after its last `run_start` (the process died, or the store failed) is an unfinished run.
+  Resuming it, with or without new input, continues the same budget: turns, tool calls, tokens, cost and the time it
+  was already active (first to last event of each earlier attempt) all count. Restarting a crashed run any number of
+  times spends one budget. The pause between the crash and the resume is not counted.
+- A run that ended with any status (`completed`, `stopped` by a budget, `failed`, `interrupted`) wrote `run_end`.
+  Continuing it is a new session turn and gets the whole budget again, with or without new input; this is also how a
+  caller grants more budget to a run a limit stopped.
+- `usage`, `costUsd` and `turns` in the result and in `run_end` are always totals over the whole log.
+
 A delegated run (an agent or team used as a tool) counts against the run that called it:
 
 - Its `tool_result` carries the delegate's `usage` and `costUsd` (also when the delegate failed or was stopped), and the

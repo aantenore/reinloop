@@ -2,7 +2,7 @@ import { authorizeCall } from './identity/authorize.ts';
 import { limitDefault } from './limits.ts';
 import { capBudget, DEFAULT_BUDGET, exceededBudget, remainingBudget } from './policy.ts';
 import { validate } from './schema.ts';
-import { Channel, EPHEMERAL, pendingToolCalls, reduce, replay } from './state.ts';
+import { Channel, EPHEMERAL, pendingToolCalls, reduce, replayWindow } from './state.ts';
 import { RunStop } from './stop.ts';
 import { memoryStore } from './store/memory.ts';
 import { executeToolCalls } from './tools/executor.ts';
@@ -78,9 +78,10 @@ async function drive(
   let signal = outerSignal;
   const store = opts.store ?? memoryStore();
   const prior = continuing ? await store.load(runId) : [];
-  const state = replay(runId, agent.name, prior);
-  const base = { turns: state.turns, toolCalls: state.toolCalls, usage: state.usage, costUsd: state.costUsd };
-  const started = Date.now();
+  // Budgets count from the last `run_end` of the log: a session turn starts fresh, a run that never ended (a crash)
+  // keeps what it already spent, its active time included.
+  const { state, base, activeMs } = replayWindow(runId, agent.name, prior);
+  const started = Date.now() - activeMs;
   const specs: ToolSpec[] = agent.tools.map((t) => ({ name: t.name, description: t.description, schema: t.schema, ...(t.hosted && { hosted: t.hosted }) }));
   let offered: ToolSpec[] | undefined; // tool specs after the hosted-tool policy check, done once per run
   const tools = new Map(agent.tools.map((t) => [t.name, t]));
