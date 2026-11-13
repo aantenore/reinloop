@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  agent, agentTool, collectSink, DEFAULT_BUDGET, defineTool, memoryArtifacts, memoryStore, mockProvider, readArtifactTool, run, stream, team, windowCompaction,
+  agent, agentTool, collectSink, DEFAULT_BUDGET, defineTool, memoryArtifacts, memoryStore, mockProvider, readArtifactTool, replay, run, stream, team, windowCompaction,
   type Agent, type Budget, type MockStep, type RunEvent, type RunStore,
 } from '../src/index.ts';
 import { echoTool, makeAgent, sleepTool, thinkingAgent } from './helpers.ts';
@@ -447,5 +447,48 @@ describe('loop', () => {
     assert.ok(sink.events.some((e) => e.parentRunId === res.runId && e.type === 'run_end'));
     const toolResult = sink.events.find((e) => e.type === 'tool_result' && !e.parentRunId) as RunEvent<'tool_result'>;
     assert.equal(toolResult.data.content, 'child answer');
+  });
+
+  it('counts a delegated run against the parent budget and caps it at what the parent has left', async () => {
+    const pricing = { inputPerMTok: 1000, outputPerMTok: 1000 };
+    const usage = { inputTokens: 1000, outputTokens: 1000 }; // $2 per model call
+    const child: Agent = {
+      name: 'child', tools: [echoTool()], budget: { maxTurns: Infinity, maxCostUsd: 100 },
+      model: { provider: mockProvider([{ toolCalls: [{ name: 'echo', args: { text: 'a' } }], usage }], { loop: true }), model: 'mock-1', pricing },
+    };
+    const parent = makeAgent([{ toolCalls: [{ name: 'child', args: { task: 'sub task' } }], usage }, { text: 'never' }], {
+      name: 'parent', tools: [agentTool(child, { description: 'helper' })], budget: { maxCostUsd: 3 },
+    });
+    parent.model.pricing = pricing;
+    const store = memoryStore();
+    const sink = collectSink();
+    const res = await run(parent, 'go', { store, sinks: [sink] });
+    assert.deepEqual([res.status, res.reason, res.turns], ['stopped', 'budget:maxCostUsd', 1]);
+    assert.equal(res.costUsd, 4, 'own $2 plus the $2 the child spent');
+    assert.deepEqual([res.usage.inputTokens, res.usage.outputTokens], [2000, 2000]);
+    const childEnd = sink.events.find((e) => e.type === 'run_end' && e.parentRunId === res.runId) as RunEvent<'run_end'>;
+    assert.deepEqual([childEnd.data.reason, childEnd.data.turns], ['budget:maxCostUsd', 1], 'the child stops at the $1 the parent had left, not at its own $100');
+    const toolResult = sink.events.find((e) => e.type === 'tool_result' && !e.parentRunId) as RunEvent<'tool_result'>;
+    assert.deepEqual([toolResult.data.costUsd, toolResult.data.usage?.inputTokens, toolResult.data.usage?.outputTokens], [2, 1000, 1000]);
+    assert.equal(replay(res.runId, 'parent', await store.load(res.runId)).costUsd, 4, 'the stored log folds to the same total');
+  });
+
+  it('leaves a delegated run on its own budget when the parent sets no cost, token or time limit', async () => {
+    const pricing = { inputPerMTok: 1000, outputPerMTok: 1000 };
+    const usage = { inputTokens: 1000, outputTokens: 1000 };
+    const step = { toolCalls: [{ name: 'echo', args: { text: 'a' } }], usage };
+    const child = makeAgent([step, step, { text: 'child answer', usage }], { name: 'child', tools: [echoTool()] });
+    child.model.pricing = pricing;
+    let inherited: unknown = 'unset';
+    const probe = defineTool({ name: 'probe', description: 'x', schema: { type: 'object', properties: {} }, run: (_args, ctx) => ((inherited = ctx.inherit.budget), 'ok') });
+    const parent = makeAgent([{ toolCalls: [{ name: 'child', args: { task: 'sub task' } }, { name: 'probe' }], usage }, { text: 'parent done', usage }], {
+      name: 'parent', tools: [agentTool(child, { description: 'helper' }), probe],
+    });
+    const res = await run(parent, 'go');
+    assert.deepEqual([res.status, res.output, res.turns], ['completed', 'parent done', 2]);
+    assert.equal(child.provider.requests.length, 3, 'the child ran to its own end');
+    assert.equal(inherited, undefined, 'no ceiling is handed down');
+    assert.equal(res.costUsd, 6, 'the child cost is still reported in the parent total');
+    assert.deepEqual([res.usage.inputTokens, res.usage.outputTokens], [5000, 5000]);
   });
 });

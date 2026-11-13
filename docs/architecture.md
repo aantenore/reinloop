@@ -50,7 +50,7 @@ The state of a run is a fold over its events (`state.ts: reduce`):
 | `knowledge_retrieval` | yes | (audit) `{ source, query, passages, ids, durationMs, error? }`: which passages informed a model call (ids only, no text) |
 | `guardrail` | yes | (audit) `{ guard, stage, action, reason? }` for every block, redaction and guard error; never the inspected text |
 | `hosted_tool_start`, `hosted_tool_result` | no | provider-hosted tool ran inside the model turn; derived from the response, the `hosted_call` / `hosted_result` parts are what persists |
-| `tool_result` | yes | appends a tool result; records a `stop` request; `layer` from `Tool.layer` (also on `tool_start`) |
+| `tool_result` | yes | appends a tool result; records a `stop` request; adds the `usage` and `costUsd` of a delegated run; `layer` from `Tool.layer` (also on `tool_start`) |
 | `compaction` | yes | replaces the history |
 | `run_end` | yes | final status; clears stop requests; team runs carry `failures` |
 | `turn_start`, `model_request`, `text_delta`, `thinking_delta`, `tool_start` | no | streaming and tracing only (`text_delta` and `thinking_delta` arrive once, after `afterModel`, when a middleware sets `holdsText`) |
@@ -77,6 +77,26 @@ With an `output` schema, `data` (or `content` parsed as JSON when there is no `d
 the run (`invalid structured output from tool <name>: ...`) with no retry, because the model is no longer asked.
 
 A session is the same mechanism: `run(agent, input, { runId })` appends new input to the stored log and continues.
+
+### Budgets
+
+A budget is checked before every model call, and `maxToolCalls` also inside a tool batch. A limit stops the run at the
+first check after it is reached, so the overshoot is at most the model call and tool batch that were in flight.
+
+A delegated run (an agent or team used as a tool) counts against the run that called it:
+
+- Its `tool_result` carries the delegate's `usage` and `costUsd` (also when the delegate failed or was stopped), and the
+  reducer adds them to the caller's totals. `maxCostUsd` and the token limits of the caller cover everything spent
+  below it, at any depth.
+- The delegate starts under a ceiling (`RunOptions.budget`): each of its cost, token and time limits is the smaller of
+  its own value and what the caller has left at that moment.
+- `maxTurns` and `maxToolCalls` stay per run: a delegation is one tool call of the caller.
+- A caller without a cost, token or time limit hands down no ceiling, and the delegate runs on its own budget.
+
+Limits of this accounting: delegates started in the same parallel batch each get what the caller had left when they
+started, so together they can pass the caller's limit (set `tools.concurrency: 1` when it must hold exactly). A
+delegate whose result is never recorded (the delegate tool timed out, or the caller was aborted or crashed while it
+ran) is not counted.
 
 ## Public API
 

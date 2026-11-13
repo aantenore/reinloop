@@ -21,7 +21,7 @@ export function objectSchema(properties: Record<string, JsonSchema>, required: s
 export function normalizeOutput(out: string | ToolOutput | undefined): ToolOutput {
   if (out === undefined) return { content: '' };
   if (typeof out === 'string') return { content: out };
-  return { content: out.content ?? '', isError: out.isError, ...(out.stop && { stop: true, ...('data' in out && { data: out.data }) }) };
+  return { content: out.content ?? '', isError: out.isError, ...(out.stop && { stop: true, ...('data' in out && { data: out.data }) }), ...(out.usage && { usage: out.usage }), ...(out.costUsd && { costUsd: out.costUsd }) };
 }
 
 export function memoryArtifacts(): ArtifactStore {

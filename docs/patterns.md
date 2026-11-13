@@ -50,6 +50,9 @@ Listing an agent or team in another agent's `tools` turns it into a delegate too
 context. `asTool.context: fork` passes the parent's conversation text instead of a fresh context. For most cases
 this is simpler than an orchestrator team.
 
+Delegated runs count against the caller's budget and cannot spend more than it has left
+([architecture.md](architecture.md#budgets)).
+
 Delegated runs have their own `runId` and event log, and their events carry `parentRunId`. By default they reach
 only the shared sinks and store, so the parent's stream shows just the delegate tool call and its result. With
 `forwardEvents: true` (`asTool.forwardEvents`, orchestrator option, or `agentTool(..., { forwardEvents })`) they are

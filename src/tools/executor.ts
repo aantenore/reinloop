@@ -1,6 +1,6 @@
 import { authorizeCall } from '../identity/authorize.ts';
 import { validate } from '../schema.ts';
-import type { Agent, Approver, CredentialProvider, HookContext, Identity, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
+import type { Agent, Approver, Budget, CredentialProvider, HookContext, Identity, RunEvent, RunOptions, RunState, Tool, ToolCallPart, ToolOutput, ToolResultPart } from '../types.ts';
 import { finiteTimeout, limitDefault } from '../limits.ts';
 import { errorMessage, timeoutSignal, truncate } from '../util.ts';
 import { normalizeOutput } from './define.ts';
@@ -19,6 +19,8 @@ export interface ExecEnv {
   credentials?: CredentialProvider;
   /** Calls of this batch that may still run (the `maxToolCalls` budget); the rest get an error result. */
   maxCalls?: number;
+  /** What the run has left of its cost, token and time limits, read when a call starts (handed to delegated runs). */
+  remaining?: () => Budget | undefined;
 }
 
 export const DEFAULT_CONCURRENCY = limitDefault('tools.concurrency');
@@ -70,7 +72,7 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   const started = performance.now();
   const hookCtx: HookContext = { runId: env.runId, agent: env.agent.name, state: env.state, identity: env.identity, emit: env.emit };
   let call = original;
-  const finish = async (content: string, isError: boolean, artifact?: string, stop?: Pick<ToolOutput, 'data'>) => {
+  const finish = async (content: string, isError: boolean, artifact?: string, stop?: Pick<ToolOutput, 'data'>, spent?: Pick<ToolOutput, 'usage' | 'costUsd'>) => {
     let result: ToolResultPart = { type: 'tool_result', callId: original.id, name: original.name, content, isError };
     for (const mw of env.agent.middleware ?? []) result = (await mw.afterTool?.(result, hookCtx)) ?? result;
     const stops = stop && !result.isError;
@@ -84,6 +86,8 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
       artifact,
       ...(layer && { layer }),
       ...(stops && { stop: true, ...('data' in stop && { data: stop.data }) }),
+      ...(spent?.usage && { usage: spent.usage }),
+      ...(spent?.costUsd && { costUsd: spent.costUsd }),
     });
   };
 
@@ -127,12 +131,12 @@ async function executeOne(original: ToolCallPart, env: ExecEnv): Promise<void> {
   try {
     const out = normalizeOutput(
       await raceAbort(
-        Promise.resolve(tool.run(call.args, { runId: env.runId, agent: env.agent.name, signal, state: env.state, emit: env.forward, inherit: env.inherit, identity: env.identity, credentials: env.credentials })),
+        Promise.resolve(tool.run(call.args, { runId: env.runId, agent: env.agent.name, signal, state: env.state, emit: env.forward, inherit: { ...env.inherit, budget: env.remaining?.() }, identity: env.identity, credentials: env.credentials })),
         signal,
       ),
     );
     const { content, artifact } = await limitSize(out.content, env);
-    return finish(content, out.isError ?? false, artifact, out.stop ? ('data' in out ? { data: out.data } : {}) : undefined);
+    return finish(content, out.isError ?? false, artifact, out.stop ? ('data' in out ? { data: out.data } : {}) : undefined, out);
   } catch (err) {
     if (env.signal.aborted) throw err;
     const msg = signal.aborted ? `timed out after ${timeoutMs}ms` : errorMessage(err);

@@ -20,7 +20,10 @@ export interface AgentToolOptions {
   forwardEvents?: boolean;
 }
 
-/** Exposes an agent or team as a tool: isolated context, own budget, own event log linked by parentRunId. */
+/**
+ * Exposes an agent or team as a tool: isolated context, own event log linked by parentRunId. The delegated run keeps
+ * its own budget, capped by what the calling run has left, and its tokens and cost count against the calling run.
+ */
 export function agentTool(agent: Member, opts: AgentToolOptions): Tool<{ task: string }> {
   const mode = opts.context ?? 'fresh';
   return defineTool({
@@ -40,10 +43,11 @@ export function agentTool(agent: Member, opts: AgentToolOptions): Tool<{ task: s
       if (opts.forwardEvents) for await (const ev of child) ctx.emit(ev);
       const handle = await child.result;
       opts.onResult?.(handle);
+      const spent = { usage: handle.usage, costUsd: handle.costUsd };
       if (handle.status !== 'completed') {
-        return { content: `Subagent ${agent.name} ${handle.status}${handle.reason ? `: ${handle.reason}` : ''}. Partial output: ${handle.output}`, isError: true };
+        return { content: `Subagent ${agent.name} ${handle.status}${handle.reason ? `: ${handle.reason}` : ''}. Partial output: ${handle.output}`, isError: true, ...spent };
       }
-      return handle.data !== undefined ? JSON.stringify(handle.data) : handle.output;
+      return { content: handle.data !== undefined ? JSON.stringify(handle.data) : handle.output, ...spent };
     },
   });
 }

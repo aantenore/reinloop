@@ -1,4 +1,5 @@
 import { createEmitter, createHandle, incompleteLog, normalizeInput, type RunHandle, stream } from './loop.ts';
+import { remainingBudget } from './policy.ts';
 import { initialState } from './state.ts';
 import { memoryStore } from './store/memory.ts';
 import type { Agent, MemberFailure, Message, RunOptions, RunResult, RunStatus, Usage } from './types.ts';
@@ -59,6 +60,7 @@ export function streamTeam(team: Team, input?: string | Message[], opts: RunOpti
     let costUsd = 0;
     let turns = 0;
     const sessions = new Map<string, RunResult>();
+    const started = Date.now();
 
     emit('run_start', {
       agent: team.name, resumed: false, parentRunId: opts.parentRunId,
@@ -76,6 +78,7 @@ export function streamTeam(team: Team, input?: string | Message[], opts: RunOpti
         const previous = o.session && !isTeam(member) ? sessions.get(o.session) : undefined;
         const handle = streamMember(member, memberInput, {
           store, sinks: opts.sinks, approve: opts.approve, identity: opts.identity, credentials: opts.credentials, signal, parentRunId: runId, runId: previous?.runId,
+          budget: remainingBudget(opts.budget, { usage, costUsd }, Date.now() - started),
         });
         for await (const ev of handle) channel.push(ev);
         const result = await handle.result;

@@ -1,6 +1,6 @@
 import { authorizeCall } from './identity/authorize.ts';
 import { limitDefault } from './limits.ts';
-import { DEFAULT_BUDGET, exceededBudget } from './policy.ts';
+import { capBudget, DEFAULT_BUDGET, exceededBudget, remainingBudget } from './policy.ts';
 import { validate } from './schema.ts';
 import { Channel, EPHEMERAL, pendingToolCalls, reduce, replay } from './state.ts';
 import { RunStop } from './stop.ts';
@@ -87,7 +87,9 @@ async function drive(
   // Middleware that rewrites or blocks the answer (text and thinking): stream it only once every afterModel has run.
   const holdText = (agent.middleware ?? []).some((mw) => mw.holdsText);
   // The default turn limit stays unless the agent sets its own `maxTurns` (`Infinity` lifts it).
-  const budget: Budget = { ...DEFAULT_BUDGET, ...agent.budget };
+  // A delegated run also gets what its parent has left (`opts.budget`): the smaller limit wins.
+  const budget: Budget = capBudget({ ...DEFAULT_BUDGET, ...agent.budget }, opts.budget);
+  const spent = () => ({ costUsd: state.costUsd - base.costUsd, usage: { inputTokens: state.usage.inputTokens - base.usage.inputTokens, outputTokens: state.usage.outputTokens - base.usage.outputTokens } });
 
   // Tool calls the budget still allows in this run (undefined: no limit); the batch executor enforces it per call.
   const remainingToolCalls = () => (budget.maxToolCalls === undefined ? undefined : Math.max(0, budget.maxToolCalls - (state.toolCalls - base.toolCalls)));
@@ -115,6 +117,7 @@ async function drive(
   const runPending = async (pending: ToolCallPart[], maxCalls?: number) => {
     await executeToolCalls(pending, {
       agent, tools, runId, state, signal, maxCalls,
+      remaining: () => remainingBudget(budget, spent(), Date.now() - started),
       emit: emit as (type: RunEvent['type'], data: any) => void,
       forward: (ev) => channel.push(ev),
       approve: opts.approve,
@@ -175,15 +178,7 @@ async function drive(
         continue;
       }
 
-      const counters = {
-        turns: state.turns - base.turns,
-        toolCalls: state.toolCalls - base.toolCalls,
-        costUsd: state.costUsd - base.costUsd,
-        usage: {
-          inputTokens: state.usage.inputTokens - base.usage.inputTokens,
-          outputTokens: state.usage.outputTokens - base.usage.outputTokens,
-        },
-      };
+      const counters = { turns: state.turns - base.turns, toolCalls: state.toolCalls - base.toolCalls, ...spent() };
       const exceeded = exceededBudget(budget, counters, Date.now() - started);
       if (exceeded) {
         end = { status: 'stopped', reason: `budget:${exceeded}` };

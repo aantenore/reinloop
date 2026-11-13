@@ -48,6 +48,35 @@ export function mergePolicies(base: PolicyConfig | undefined, override: PolicyCo
   };
 }
 
+/** Limits a run shares with the runs it delegates to; turn and tool-call limits stay per run. */
+const SHARED_LIMITS = ['maxInputTokens', 'maxOutputTokens', 'maxTotalTokens', 'maxCostUsd', 'maxDurationMs'] as const;
+
+/** What is left of the cost, token and time limits of `budget`; undefined when it sets none of them. */
+export function remainingBudget(budget: Budget | undefined, spent: Pick<RunState, 'usage' | 'costUsd'>, elapsedMs: number): Budget | undefined {
+  const used = {
+    maxInputTokens: spent.usage.inputTokens,
+    maxOutputTokens: spent.usage.outputTokens,
+    maxTotalTokens: spent.usage.inputTokens + spent.usage.outputTokens,
+    maxCostUsd: spent.costUsd,
+    maxDurationMs: elapsedMs,
+  };
+  let left: Budget | undefined;
+  for (const key of SHARED_LIMITS) {
+    const max = budget?.[key];
+    if (max !== undefined) (left ??= {})[key] = Math.max(0, max - used[key]);
+  }
+  return left;
+}
+
+/** Lowers each limit of `budget` to the one `ceiling` sets (the smaller wins); limits the ceiling leaves out stay. */
+export function capBudget(budget: Budget, ceiling: Budget | undefined): Budget {
+  const out = { ...budget };
+  for (const [key, max] of Object.entries(ceiling ?? {}) as Array<[keyof Budget, number | undefined]>) {
+    if (max !== undefined) out[key] = Math.min(out[key] ?? Infinity, max);
+  }
+  return out;
+}
+
 /** Returns the exceeded budget name, or undefined when the run may continue. */
 export function exceededBudget(
   budget: Budget | undefined,

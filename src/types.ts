@@ -175,6 +175,12 @@ export interface ToolOutput {
    */
   stop?: boolean;
   data?: unknown;
+  /**
+   * Tokens and cost of the runs this call started (delegation). They are added to the calling run's totals, so its
+   * budget covers them; also on error results.
+   */
+  usage?: Usage;
+  costUsd?: number;
 }
 
 export interface ToolContext {
@@ -183,8 +189,8 @@ export interface ToolContext {
   signal: AbortSignal;
   state: Readonly<RunState>;
   emit: (ev: RunEvent) => void;
-  /** Options a tool may forward when it starts nested runs (subagents). */
-  inherit: Pick<RunOptions, 'store' | 'approve' | 'sinks' | 'identity' | 'credentials'>;
+  /** Options a tool may forward when it starts nested runs (subagents); `budget` is what the calling run has left. */
+  inherit: Pick<RunOptions, 'store' | 'approve' | 'sinks' | 'identity' | 'credentials' | 'budget'>;
   /** Who the run acts as. Never log or persist `identity.token`. */
   identity?: Identity;
   credentials?: CredentialProvider;
@@ -376,7 +382,8 @@ export interface EventMap {
   /** The model's arguments for a call were malformed JSON: repaired and run, or answered with a tool error. */
   tool_args_invalid: { callId: string; name: string; error: string; repaired: boolean };
   tool_decision: { callId: string; name: string; allowed: boolean; reason: string };
-  tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string; stop?: boolean; data?: unknown; layer?: Layer };
+  /** `usage` / `costUsd`: spend of the runs the call delegated to, added to this run's totals. */
+  tool_result: { callId: string; name: string; content: string; isError: boolean; durationMs: number; artifact?: string; stop?: boolean; data?: unknown; layer?: Layer; usage?: Usage; costUsd?: number };
   /** A provider-hosted tool ran inside the model turn (derived from the response; not persisted). */
   hosted_tool_start: { callId: string; name: string; input: unknown };
   hosted_tool_result: { callId: string; name: string; summary: string; isError: boolean; sources?: Array<{ url: string; title?: string }> };
@@ -467,6 +474,11 @@ export interface RunOptions {
   parentRunId?: string;
   identity?: Identity;
   credentials?: CredentialProvider;
+  /**
+   * Ceiling over the agent's own budget: every limit set here lowers the agent's one (the smaller wins). Delegation
+   * passes what the calling run has left of its cost, token and time limits.
+   */
+  budget?: Budget;
 }
 
 // ---- Layers and adapter contracts ------------------------------------------

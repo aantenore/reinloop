@@ -30,6 +30,9 @@ export function reduce(state: RunState, ev: RunEvent): RunState {
       break;
     case 'tool_result':
       state.toolCalls += 1;
+      // Spend of the runs the call delegated to counts as this run's own.
+      if (ev.data.usage) state.usage = addUsage(state.usage, ev.data.usage);
+      state.costUsd += ev.data.costUsd ?? 0;
       state.messages.push({
         role: 'tool',
         parts: [{ type: 'tool_result', callId: ev.data.callId, name: ev.data.name, content: ev.data.content, isError: ev.data.isError }],
