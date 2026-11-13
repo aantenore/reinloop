@@ -3,45 +3,38 @@
 [![npm](https://img.shields.io/npm/v/reinloop)](https://www.npmjs.com/package/reinloop)
 [![license](https://img.shields.io/npm/l/reinloop)](LICENSE)
 
-**Agents as files. Harness included.**
+**Agents as files. Harness included.** A zero-dependency runtime that runs Markdown agent files headless on any
+model, with budgets, permissions and resume built in.
 
-reinloop runs agents written as Markdown files, including the subagent files you already keep for other tools,
-headless on any model: in a terminal, a script, CI, an HTTP server or an MCP client. The harness that production
-agents need is already there: budgets, approvals, crash-safe resume, OpenTelemetry tracing, context compaction,
-parallel tools, MCP, retries, caching and multi-agent patterns. It has zero runtime dependencies and a loop you can
-read in five minutes.
+## What it is
 
-It is for you if you want agents that live in git as reviewable text, run the same on a local Ollama model and a
-hosted one, and stop at a hard limit instead of a surprise bill.
+An agent is a Markdown file: the body is the prompt, the frontmatter names its model, tools and limits. reinloop runs
+that file in a terminal, a script, CI, an HTTP server or an MCP client. The same file runs on a local Ollama model
+and on a hosted one, and subagent files written for other tools run unchanged.
 
-| | reinloop | A typical agent framework |
-|---|---|---|
-| An agent is | a Markdown file you diff, review and run with one command | code that builds an object graph |
-| Limits, approvals, resume, tracing | configuration, with safe defaults | libraries to pick and code to write |
+Three choices define it:
 
-How it compares with the alternatives, including where they win: [docs/why-simple.md](docs/why-simple.md).
-
-```bash
-npm i -g reinloop        # Node >= 22.18
-npx reinloop --help      # or try it without installing
-```
-
-From source: `git clone https://github.com/aantenore/reinloop && cd reinloop && npm install && npm run build && npm link`.
+1. **The unit is a file, not a class.** Agents live in git as text people and agents can diff, review and edit.
+2. **The harness is policy, not code.** Limits, approvals, durability and tracing are configured, with safe defaults.
+3. **The loop stays yours.** Under 500 lines, every step an event and a hook, no hidden prompts, zero runtime
+   dependencies.
 
 ## 60 seconds
 
 ```bash
 mkdir my-agents && cd my-agents
-reinloop new researcher                          # writes agents/researcher.md
-REINLOOP_MODEL=mock/echo reinloop run "hi"       # keyless check with the offline echo model
-reinloop run "What does this folder contain?"
+npx reinloop new researcher                          # writes agents/researcher.md (Node >= 22.18)
+REINLOOP_MODEL=mock/echo npx reinloop run "hi"       # keyless check with the offline echo model
+npx reinloop run "What does this folder contain?"    # a real model
 ```
 
-Without a `model` in the file, reinloop uses `REINLOOP_MODEL`, else the first provider whose key is set
-(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`), else the local Ollama model
-`ollama/qwen3:8b`: run `ollama pull qwen3:8b`, or `export REINLOOP_MODEL=ollama/<a model you have>`. A hosted model
-without its key stops before the first request with the variable to set. `reinloop --version` prints the version;
+`npm i -g reinloop` installs the `reinloop` command used in the rest of this page. Without a `model` in the file,
+reinloop uses `REINLOOP_MODEL`, else the first provider whose key is set (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`OPENROUTER_API_KEY`, `GEMINI_API_KEY`), else the local Ollama model `ollama/qwen3:8b` (`ollama pull qwen3:8b`). A
+hosted model without its key stops before the first request and names the variable to set.
 [Troubleshooting](#troubleshooting) covers the first-run errors.
+
+## The file format
 
 `agents/researcher.md` after editing the template:
 
@@ -50,22 +43,17 @@ without its key stops before the first request with the variable to set. `reinlo
 description: Answers questions about the files in this folder
 model: openai/gpt-5-mini          # or anthropic/…, gemini/…, ollama/…, openrouter/…; omit for the default above
 tools: [read_file, find_files, search_files]
-budget: { maxTurns: 20 }
+budget: { maxTurns: 20, maxCostUsd: 0.5 }
 ---
 You are a precise researcher. Read the files before answering and cite paths.
 ```
 
-That file is the whole agent. The body is the prompt. The frontmatter lists its tools, model and limits. API keys
-come from the usual environment variables (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, ...). Without any agent file,
-`reinloop run "..."` still works with a read-only default assistant.
+That file is the whole agent. Without any agent file, `reinloop run "..."` still works with a read-only default
+assistant. Files in the common subagent format (`name`, `description`, `tools: Read, Grep, Bash`, `model: sonnet`)
+run as they are: `reinloop run --agents <their folder> -a reviewer "..."`
+([docs/agent-files.md](docs/agent-files.md#agent-files-from-other-tools)).
 
-Agent files follow the common subagent format (`name`, `description`, `tools: Read, Grep, Bash`, `model: sonnet`),
-so agents you already wrote for other tools run here on **any** model: `reinloop run --agents <their folder> -a reviewer "..."`.
-See [docs/agent-files.md](docs/agent-files.md#agent-files-from-other-tools) for mapping `model: sonnet` to a local model.
-
-## Multi-agent in one file
-
-A file with a `pattern` defines a team. Teams run, stream, nest and delegate exactly like agents.
+A file with a `pattern` is a team. Teams run, stream, nest and delegate exactly like agents:
 
 ```markdown
 ---
@@ -76,70 +64,37 @@ options: { maxRounds: 3 }
 Implements a change and iterates until the independent reviewer approves it.
 ```
 
-| Pattern | Roles | Use it for |
-|---|---|---|
-| `chain` | `steps[]` | Pipelines: outline → draft → edit |
-| `parallel` | `workers[]`, `aggregator?` | Sectioning and voting, map-reduce |
-| `router` | `router`, `routes[]` | Triage to specialists |
-| `evaluator` | `generator`, `evaluator` | Quality loops: write → critique → revise |
-| `orchestrator` | `orchestrator`, `workers[]` | A lead that plans and delegates |
-| *yours* | *your roles* | Register a pattern from a plugin ([example](examples/custom-pattern/plugins/debate.mjs)) |
+Built-in patterns are `chain`, `parallel`, `router`, `evaluator` and `orchestrator`; a plugin can register more
+([example](examples/custom-pattern/plugins/debate.mjs)). Any agent listed in another agent's `tools` becomes a
+delegate with an isolated context ([docs/patterns.md](docs/patterns.md)). `reinloop create "a team that triages
+GitHub issues and drafts replies"` has a built-in architect agent write and validate the files for you.
 
-Any agent listed in another agent's `tools` becomes a delegate with an isolated context. See [docs/patterns.md](docs/patterns.md).
+## What it promises
 
-## Or describe it
+**Budgets.** A run can be limited in turns (50 by default), tool calls, input, output and total tokens, USD and
+time. Limits are checked before every model call, and the tool-call limit also inside a batch of calls. A run stops
+at the first check after a limit is reached, with status `stopped` and reason `budget:<limit>`, so it can pass a
+limit by at most the model call and tool batch that were in flight. Runs an agent delegates to count against its
+cost and token limits and start with only what it has left; delegates called in one batch split that between them.
+A USD limit needs a price for the model: a model without one (every local model) costs 0, the run says so in a
+warning, and the turn limit is what stops it. Details and the cases that are not counted:
+[docs/architecture.md](docs/architecture.md#budgets).
 
-```bash
-reinloop create "a team that triages GitHub issues and drafts replies, with a reviewer that checks tone"
-```
+**Permissions.** Every tool carries a risk: `read` calls are allowed, `write` and `exec` calls ask for approval,
+unless ordered allow/deny/ask rules say otherwise (the first matching rule wins). A terminal prompts; where nobody
+can answer (CI, pipes, `serve`, `mcp`) an `ask` is a denial unless you pass `-y` or add an allow rule. Workspace
+tools refuse path and symlink escapes. The `shell` tool is confined to a directory but is not a sandbox, so use a
+container for untrusted work.
 
-A built-in architect agent writes the agent and team files. It validates them and fixes its own errors. It can only
-write inside `agents/`. The result is plain files you own, version and edit, not a canvas locked inside a tool.
+**Resume.** Every run is an append-only event log. With `store: { type: file }` (the default `memory` store keeps
+nothing between commands), `reinloop resume <runId>` continues a crashed run: tool calls that have a stored result
+are not run again, the ones without are. Tools therefore run at least once: one that finished just before the crash,
+before its result was stored, runs again, so make side effects idempotent. A resumed crashed run keeps the budget it
+already spent, turns and active time included. Continuing a run that ended (completed, failed, interrupted or
+stopped by a limit) is a new session turn with the whole budget again. Teams do not resume mid-pattern; their member
+runs do.
 
-## Connect what already exists
-
-reinloop does not ship a vector DB, an eval platform or guardrail models. It connects the maintained ones through
-open standards: MCP for tools, RAG and memory; Agent Skills for procedures; OpenAI-compatible gateways; OTLP for
-tracing.
-
-```bash
-reinloop add            # catalogue: qdrant, chroma, memory-graph, fetch, git, github, playwright, litellm, otel, langfuse, promptfoo
-reinloop add qdrant     # writes the MCP config; then give an agent  tools: [qdrant__*]
-```
-
-Skills in the open `SKILL.md` format are loaded on demand with `skills: [name]`. See [docs/integrations.md](docs/integrations.md),
-which also explains what is deliberately not built and why (for example, why semantic caching stays out of the agent loop).
-
-## Ecosystem
-
-### The family
-
-- **reinloop** is the runtime: agents as files, budgets, approvals, durable resume, OpenTelemetry, zero dependencies.
-- **[agent-layers](https://github.com/aantenore/agent-layers)** is the eleven-layer SDK where reinloop is one runtime
-  adapter (`@agent-layers/adapters/reinloop`).
-- **[agent-plexus](https://github.com/aantenore/agent-plexus)** is multi-agent composition where an agent-layers stack
-  is the host.
-- **[Lorebase](https://github.com/aantenore/lorebase)** is the governed, versioned knowledge graph agents read over MCP.
-
-### Layer integrations
-
-reinloop provides the hooks; agent-layers provides the layers. reinloop keeps the contracts (`Identity`,
-`IdentityVerifier`, `CredentialProvider`, `Authorizer`, `Guard`, `KnowledgeSource`, `ModelRouter`, `Evaluator`), the
-places they plug in (run identity and credentials, policy `when` rules and the `policy.pdp` hook, `serve` bearer
-verification, MCP per-call auth, `guardMiddleware`, `knowledgeMiddleware`, routed models, layer tags on OTLP spans and
-metrics) and registry entries that plugins fill. Implementations such as OIDC, OPA/AuthZEN, Presidio, LLM Guard,
-knowledge sources, HTTP/OpenAPI tools, rule routing and evaluation are agent-layers adapters in
-`@agent-layers/adapters` (0.4.0 or later). See [docs/layers/README.md](docs/layers/README.md).
-
-### Pi packages
-
-The parts of this work that fill gaps in the [Pi](https://github.com/earendil-works/pi) ecosystem ship as Pi packages:
-[`@aantenore/pi-otel`](https://github.com/aantenore/pi-otel) (OpenTelemetry for Pi; passes Pi's telemetry
-conformance suite) and [`@aantenore/pi-budget`](https://github.com/aantenore/pi-budget) (hard USD, token, turn,
-tool-call and time limits for Pi). Use reinloop for a standalone, zero-dependency runtime; use the Pi packages if you
-already run Pi.
-
-## Use them anywhere
+## Use it anywhere
 
 ```bash
 reinloop chat -a researcher      # interactive session with memory of the conversation
@@ -169,21 +124,19 @@ complete, `output`, parsed `data`, usage and cost; it does not throw on a model 
 keeps a conversation going. The lower layer (`stream(agentObject)`, providers, stores, sinks, middleware) is public
 too. See [docs/architecture.md](docs/architecture.md).
 
-## What you get without writing code
+## What else is in the box
 
 | Need | How |
 |---|---|
 | Any model, no SDKs | `provider/model` strings: openai, anthropic, gemini, openrouter, groq, mistral, deepseek, xai, together, ollama, lmstudio, vllm; or any OpenAI-compatible URL |
-| Safety | Tools carry a risk (`read`/`write`/`exec`); writes and commands ask for approval; ordered allow/deny/ask rules; workspace tools refuse path and symlink escapes |
-| Cost control | Budgets per run: turns, tool calls, tokens, USD, time. The default is 50 turns. |
-| Durability | Every run is an append-only event log. With `store: { type: file }` (the default `memory` store keeps nothing between commands) a crashed run resumes without re-running finished tools, and the same log keeps chat sessions. |
 | Long tasks | Compaction (`window` or `summarize`); large tool outputs offloaded to artifacts with a paging tool |
 | Speed | Parallel tool calls, streaming, ~30 ms cold import, ~30 µs kernel overhead per turn |
 | Caching | Provider prompt caching (Anthropic breakpoints on by default, 5m/1h TTL, cache reads and writes priced in `costUsd`); optional response cache (memory/file, TTL) for dev, tests and evals |
 | Memory | `remember` / `recall` tools with durable notes, shared or per agent; richer memory via MCP |
 | Web | `web_search` / `web_fetch` tools (Tavily, Anthropic native search, or your own backend) with results marked untrusted; provider-hosted tools (Anthropic web search, web fetch, code execution) with policy, budgets and per-search cost. See [docs/web-tools.md](docs/web-tools.md) |
 | Public signals | Keyless research tools over public APIs: `search_discussions` (Hacker News), `search_projects` (GitHub), `search_questions` (Stack Overflow), `search_papers` (arXiv), or your own source; compact, untrusted-marked, cached. See [docs/signal-tools.md](docs/signal-tools.md) |
-| Skills | Open Agent Skills (`SKILL.md` folders), progressively disclosed |
+| Integrations | No vector DB, eval platform or guardrail model is bundled; the maintained ones connect through MCP, OpenAI-compatible gateways and OTLP. `reinloop add` lists the catalogue (qdrant, chroma, memory-graph, fetch, git, github, playwright, litellm, otel, langfuse, promptfoo) and `reinloop add qdrant` writes the MCP config. See [docs/integrations.md](docs/integrations.md) |
+| Skills | Open Agent Skills (`SKILL.md` folders), loaded on demand with `skills: [name]` |
 | Structured output | JSON Schema validated with retries; sent natively (`response_format`, Anthropic `output_config.format`, also with tools) when the provider supports it; tolerant parsing |
 | Tools | Built-ins (files, search, edit, shell), MCP servers (stdio/HTTP), your functions, other agents and teams |
 | Observability | Typed events, console, JSONL traces, OTLP export with OpenTelemetry GenAI spans. Nothing leaves your machine unless you add a sink. |
@@ -192,35 +145,37 @@ too. See [docs/architecture.md](docs/architecture.md).
 Configuration reference: [docs/configuration.md](docs/configuration.md). Agent file format: [docs/agent-files.md](docs/agent-files.md).
 Models it has been run against, with results: [docs/models.md](docs/models.md).
 
-## Why another agent framework?
+## How it compares
 
-It is deliberately not one. Practitioners consistently report the same failures: hidden loops and prompts, a
-70-80% quality ceiling, dependency weight, lock-in, missing operational basics. The orchestration layer is
-commoditised ([research](docs/research.md)). reinloop's bet is the opposite of a framework:
+| Project | Where it wins | Where reinloop differs |
+|---|---|---|
+| [opencode](https://github.com/anomalyco/opencode) | Markdown agents on any model inside a widely adopted interactive tool; for interactive coding work it is the obvious first pick. | An embeddable runtime for non-interactive and backend use: CLI, HTTP and MCP server, code API, budgets and resume, not a terminal UI. |
+| [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) | A mature agent loop, tools and context management with native support for the subagent Markdown format, tuned for Claude models. | Runs the same subagent files on any model, with budgets in USD, tokens and time and a provider-neutral OTLP export. |
+| [LangGraph.js](https://github.com/langchain-ai/langgraphjs), [Mastra](https://github.com/mastra-ai/mastra) | Far more prebuilt connectors, larger communities and years of production use; LangGraph's graphs express arbitrary cycles over typed shared state, which reinloop's patterns do not. | Agents and teams are files, not code; limits, approvals, resume and tracing are configuration; zero dependencies. Breadth comes from MCP servers. |
 
-1. **The unit is a file, not a class.** Agents are portable, diffable, reviewable and editable by people and by agents.
-2. **The harness is policy, not code.** Safety, budgets, durability and tracing are configured, not re-implemented.
-3. **The loop stays yours.** Under 500 lines, every step an event and a hook, no hidden prompts. Copy it if you outgrow it.
+The full comparison, with more projects and the trade-offs to weigh before choosing, is in
+[docs/why-simple.md](docs/why-simple.md); the research behind the design is in [docs/research.md](docs/research.md).
 
-An honest comparison with OpenAI Agents SDK, PydanticAI, LangGraph, CrewAI, Vercel AI SDK and Mastra, and with the
-closer alternatives (fast-agent, Pi, Claude Agent SDK, Vercel Ash, opencode), including where they are better, is in
-[docs/why-simple.md](docs/why-simple.md).
+## Using it inside agent-layers
 
-## Performance
-
-`npm run bench` (Node 24, zero-latency mock model, one tool call per turn): cold import ~30 ms, kernel overhead ~30 µs
-per turn in memory and ~1 ms with the durable JSONL log (fs append per event), 0 runtime dependencies. Model latency dominates by
-orders of magnitude, so the harness is never the bottleneck.
+reinloop is the harness layer of [agent-layers](https://github.com/aantenore/agent-layers), an SDK that puts
+identity, guardrails, knowledge, routing and evaluation around an agent runtime; the adapter is
+`@agent-layers/adapters/reinloop`. reinloop keeps the contracts and the hooks those layers plug into, agent-layers
+ships the implementations, and nothing on this page needs it. The hooks are in
+[docs/layers/README.md](docs/layers/README.md); the related projects, the layer integrations and the Pi packages are
+in [docs/ecosystem.md](docs/ecosystem.md).
 
 ## Status and limits
 
 Version 0.x. The agent file format, config schema and event protocol are the contract, and planned breaking changes
 bump the minor version. A security fix may change behaviour in a patch release (0.3.1 did, for `serve` and stdio MCP
 servers); every such change is listed under "Changed" or marked "Breaking" in [CHANGELOG.md](CHANGELOG.md).
-Current limits: text-only messages (no images or files), and teams do not resume mid-pattern
-(member runs do). Token estimates before the first response are heuristic. The `shell` tool is confined to a
-directory but is not a sandbox, so use a container for untrusted work. It needs a POSIX shell (`/bin/sh`): on Windows
-run reinloop inside WSL; on native Windows a `shell` call returns a clear error and the other tools keep working.
+Current limits: text-only messages (no images or files). Token estimates before the first response are heuristic.
+The `shell` tool needs a POSIX shell (`/bin/sh`): on Windows run reinloop inside WSL; on native Windows a `shell`
+call returns a clear error and the other tools keep working.
+
+Overhead (`npm run bench`, Node 24, zero-latency mock model): cold import ~30 ms, ~30 µs per turn in memory and
+~1 ms with the durable JSONL log.
 
 ## Troubleshooting
 
